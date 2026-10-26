@@ -33,6 +33,9 @@ type Session struct {
 	// Ask, if set, is called right before the session waits for input, so a UI can
 	// show the right control: kind is "line" (one answer) or "block" (free text).
 	Ask func(kind, label, def string)
+	// Card, if set, receives structured output a UI draws as rich elements. Where a
+	// card replaces text, the text is not printed; the terminal leaves this nil.
+	Card func(Card)
 }
 
 func (s *Session) now() time.Time {
@@ -60,13 +63,12 @@ func (s *Session) convo(system string, tools ...string) *Convo {
 
 // readLine prompts and returns a trimmed line; def is used for an empty answer.
 func (s *Session) readLine(label, def string) (string, error) {
-	if def != "" {
+	if s.Ask != nil {
+		s.Ask("line", label, def) // a UI shows the label next to its input, so it is not printed
+	} else if def != "" {
 		s.printf("%s [%s]: ", label, def)
 	} else {
 		s.printf("%s: ", label)
-	}
-	if s.Ask != nil {
-		s.Ask("line", label, def) // after the question is printed, so a UI shows it first
 	}
 	line, err := s.In.ReadString('\n')
 	if err != nil && line == "" {
@@ -125,6 +127,7 @@ func (s *Session) Prepare(ctx context.Context, topic, source string) (string, er
 		prompt += "\n\nSOURCE MATERIAL (excerpts from the learner's document):\n" + g
 	}
 
+	s.card(Card{Kind: CardPhase, Phase: "prepare"})
 	s.printf("Preparando la guía de «%s» (busca material en línea, puede tardar)...\n", topic)
 	c := s.convo(prompts.Get("prepare", s.Cfg.Language), "WebSearch", "WebFetch")
 	resp, err := c.Say(ctx, prompt, nil)
@@ -172,7 +175,11 @@ func (s *Session) Prepare(ctx context.Context, topic, source string) (string, er
 	if err := s.V.SaveHandoff(slug, handoff); err != nil {
 		return "", err
 	}
-	s.printf("\n%s\n\nGuardado en %s/topics/%s.md\n", guide, s.V.Root, slug)
+	s.printf("\n%s\n\n", guide)
+	if len(resources) > 0 {
+		s.card(Card{Kind: CardResources, Resources: resources})
+	}
+	s.printf("Guardado en %s/topics/%s.md\n", s.V.Root, slug)
 	return slug, nil
 }
 
@@ -267,6 +274,7 @@ func (s *Session) Quiz(ctx context.Context, slug string, n int, difficulty strin
 	system := prompts.Get("quiz", s.Cfg.Language)
 	genPrompt := fmt.Sprintf("GENERATE a test.\nTopic: %s\nWhat the learner studied: %s\nNumber of questions: %d\nDifficulty: %s",
 		note.Meta.Title, s.V.LoadHandoff(slug), n, difficulty)
+	s.card(Card{Kind: CardPhase, Phase: "quiz"})
 	s.printf("Generando la prueba...\n")
 	resp, err := s.convo(system).Say(ctx, genPrompt, nil)
 	if err != nil {
@@ -284,9 +292,11 @@ func (s *Session) Quiz(ctx context.Context, slug string, n int, difficulty strin
 
 	answers := make(map[int]string)
 	for i, q := range gen.Questions {
-		s.printf("\n%d/%d. %s\n", i+1, len(gen.Questions), q.Question)
-		for _, ch := range q.Choices {
-			s.printf("   %s\n", ch)
+		if !s.card(Card{Kind: CardQuestion, N: i + 1, Total: len(gen.Questions), Question: q.Question, Choices: q.Choices}) {
+			s.printf("\n%d/%d. %s\n", i+1, len(gen.Questions), q.Question)
+			for _, ch := range q.Choices {
+				s.printf("   %s\n", ch)
+			}
 		}
 		a, err := s.readLine("Respuesta", "")
 		if err != nil {
@@ -310,8 +320,8 @@ func (s *Session) Quiz(ctx context.Context, slug string, n int, difficulty strin
 		return err
 	}
 
+	header := fmt.Sprintf("Puntaje: **%d/100** (dificultad: %s)\n\n", g.Score, difficulty)
 	var rep strings.Builder
-	fmt.Fprintf(&rep, "Puntaje: **%d/100** (dificultad: %s)\n\n", g.Score, difficulty)
 	byID := map[int]question{}
 	for _, q := range gen.Questions {
 		byID[q.ID] = q
@@ -326,9 +336,13 @@ func (s *Session) Quiz(ctx context.Context, slug string, n int, difficulty strin
 	if len(g.Gaps) > 0 {
 		rep.WriteString("\nPara repasar: " + strings.Join(g.Gaps, "; ") + "\n")
 	}
-	s.printf("\n%s", rep.String())
+	if s.card(Card{Kind: CardScore, Label: "Prueba", Score: g.Score, Detail: "dificultad " + difficulty}) {
+		s.printf("\n%s", rep.String()) // the card already shows the score
+	} else {
+		s.printf("\n%s%s", header, rep.String())
+	}
 
-	if err := s.V.AppendSection(slug, "Prueba", rep.String()); err != nil {
+	if err := s.V.AppendSection(slug, "Prueba", header+rep.String()); err != nil {
 		return err
 	}
 	note, _ = s.V.Load(slug)
@@ -353,6 +367,7 @@ func (s *Session) Feynman(ctx context.Context, slug string) error {
 	c := s.convo(prompts.Get("feynman", s.Cfg.Language))
 	header := fmt.Sprintf("Topic: %s\nStudy summary (ground truth): %s\n\n", note.Meta.Title, s.V.LoadHandoff(slug))
 
+	s.card(Card{Kind: CardPhase, Phase: "feynman"})
 	s.printf("\nExplícame «%s» como si yo no supiera nada.\n", note.Meta.Title)
 	s.printf("Escribe tu explicación; una línea con solo «.» la envía, «/fin» termina la sesión.\n\n")
 
@@ -387,7 +402,7 @@ func (s *Session) Feynman(ctx context.Context, slug string) error {
 		score, body, ok := extractScore(resp.Text)
 		s.printf("\n%s\n", body)
 		fmt.Fprintf(&transcript, "**Evaluación final:** %s\n", body)
-		if ok {
+		if ok && !s.card(Card{Kind: CardScore, Label: "Feynman", Score: score}) {
 			s.printf("\nPuntaje Feynman: %d/100\n", score)
 		}
 		return s.saveFeynman(slug, transcript.String(), score, ok)

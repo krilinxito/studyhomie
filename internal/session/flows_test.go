@@ -5,10 +5,12 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/krilinxito/studyhomie/internal/config"
 	"github.com/krilinxito/studyhomie/internal/provider"
 	"github.com/krilinxito/studyhomie/internal/vault"
 )
@@ -221,6 +223,48 @@ func TestDailyRerollAcceptAndResume(t *testing.T) {
 	}
 	if _, err := s.V.LoadFrom("daily", "2026-10-28"); err == nil {
 		t.Error("rejecting every proposal must not create a daily note")
+	}
+}
+
+func TestDailyAllFieldsAndCustomField(t *testing.T) {
+	proposal := jsonReply(`{"field":"X","topic":"Tema","hook":"Gancho"}`)
+	rejectAll := strings.Repeat("n\n", maxRerolls)
+	replies := func() []provider.Response {
+		var r []provider.Response
+		for i := 0; i < maxRerolls; i++ {
+			r = append(r, proposal)
+		}
+		return r
+	}
+
+	// AllFields draws from the built-in fields plus configured extras, without duplicates
+	s, _ := newSession(t, &fake{replies: replies()}, rejectAll)
+	s.Now = func() time.Time { return time.Date(2026, 10, 27, 9, 0, 0, 0, time.UTC) }
+	s.Cfg.Interests = []string{"Historia", "Astronomía", "historia del ARTE"}
+	var got []int
+	s.Pick = func(n int) int { got = append(got, n); return n - 1 }
+	if err := s.Daily(context.Background(), AllFields); err != nil {
+		t.Fatal(err)
+	}
+	want := len(config.DefaultInterests()) + 1 // Astronomía is the only extra
+	if len(got) == 0 || got[0] != want {
+		t.Errorf("all-fields pool = %v, want %d", got, want)
+	}
+
+	// any text is accepted as a one-off field
+	f := &fake{replies: replies()}
+	s, _ = newSession(t, f, rejectAll)
+	s.Now = func() time.Time { return time.Date(2026, 10, 27, 9, 0, 0, 0, time.UTC) }
+	s.Pick = func(n int) int { return 0 }
+	if err := s.Daily(context.Background(), "  Arquitectura "); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(f.reqs[0].Prompt, "Field: Arquitectura\n") {
+		t.Errorf("custom field must reach the prompt trimmed: %q", f.reqs[0].Prompt)
+	}
+
+	if !slices.Contains(config.DefaultInterests(), "Historia del arte") {
+		t.Error("Historia del arte must be a default field")
 	}
 }
 

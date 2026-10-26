@@ -18,12 +18,14 @@ import (
 
 // Event is one message from a running flow to the browser.
 type Event struct {
-	Type  string `json:"type"` // out | in | ask | done
+	Type  string `json:"type"` // out | in | ask | card | done
 	Text  string `json:"text,omitempty"`
 	Kind  string `json:"kind,omitempty"` // ask: line | block
 	Label string `json:"label,omitempty"`
 	Def   string `json:"def,omitempty"`
 	Error string `json:"error,omitempty"` // done
+	// Card is a structured element the browser draws instead of plain text.
+	Card *session.Card `json:"card,omitempty"` // card
 }
 
 // inputBuf feeds the session's reader with what the browser sends. Writes never block.
@@ -268,10 +270,11 @@ func (s *Server) StartRun(req StartReq) (*Run, error) {
 	s.mu.Unlock()
 
 	sess := &session.Session{
-		P: s.P, V: s.V, Cfg: s.Cfg,
-		In:  bufio.NewReader(run.in),
-		Out: outWriter{run},
-		Ask: func(kind, label, def string) { run.emit(Event{Type: "ask", Kind: kind, Label: label, Def: def}) },
+		P: s.P, V: s.V, Cfg: s.Cfg, CheckLinks: s.CheckLinks,
+		In:   bufio.NewReader(run.in),
+		Out:  outWriter{run},
+		Ask:  func(kind, label, def string) { run.emit(Event{Type: "ask", Kind: kind, Label: label, Def: def}) },
+		Card: func(c session.Card) { run.emit(Event{Type: "card", Card: &c}) },
 	}
 	go func() {
 		defer cancel()

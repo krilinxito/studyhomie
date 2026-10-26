@@ -16,6 +16,7 @@ import (
 
 	"github.com/krilinxito/studyhomie/internal/config"
 	"github.com/krilinxito/studyhomie/internal/provider"
+	"github.com/krilinxito/studyhomie/internal/session"
 	"github.com/krilinxito/studyhomie/internal/vault"
 )
 
@@ -128,7 +129,10 @@ func TestPageHasStrictHeaders(t *testing.T) {
 			t.Errorf("CSP lacks %q: %s", want, csp)
 		}
 	}
-	for _, f := range []string{"/app.js", "/style.css", "/vendor/marked.min.js", "/vendor/purify.min.js", "/vendor/cytoscape.min.js", "/vendor/katex/katex.min.js", "/vendor/katex/fonts/KaTeX_Main-Regular.woff2"} {
+	if !strings.Contains(csp, "frame-src 'self' https://www.youtube-nocookie.com;") || strings.Contains(csp, "youtube.com") {
+		t.Errorf("only the no-cookie YouTube player may be framed: %s", csp)
+	}
+	for _, f := range []string{"/app.js", "/style.css", "/vendor/mermaid.min.js", "/vendor/marked.min.js", "/vendor/purify.min.js", "/vendor/cytoscape.min.js", "/vendor/katex/katex.min.js", "/vendor/katex/fonts/KaTeX_Main-Regular.woff2"} {
 		if res, _ := do(t, ts, "GET", f, nil, nil); res.StatusCode != 200 {
 			t.Errorf("%s = %d", f, res.StatusCode)
 		}
@@ -324,6 +328,51 @@ func startRunHTTP(t *testing.T, ts *httptest.Server, body any) (int, int) {
 	}
 	json.Unmarshal(data, &out)
 	return res.StatusCode, out.ID
+}
+
+func TestStudyRunEmitsCards(t *testing.T) {
+	guide := "La intuición es X.\n\n```json\n{\"resources\":[{\"type\":\"video\",\"title\":\"Charla\",\"url\":\"https://www.youtube.com/watch?v=dQw4w9WgXcQ\",\"why\":\"Visual\"},{\"type\":\"book\",\"title\":\"Un libro\",\"why\":\"Profundiza\"}],\"handoff\":\"resumen\"}\n```"
+	s, ts := newTestServer(t, &scripted{replies: []string{guide}})
+	s.CheckLinks = func(_ context.Context, urls []string) map[string]bool {
+		ok := map[string]bool{}
+		for _, u := range urls {
+			ok[u] = true
+		}
+		return ok
+	}
+	_, id := startRunHTTP(t, ts, map[string]string{"cmd": "study", "topic": "Bayes"})
+	evs := readEvents(t, ts, id, 0, func(e []Event) bool { return has(e, "ask") != nil })
+
+	var kinds []string
+	var res *session.Card
+	for i := range evs {
+		if evs[i].Type == "card" {
+			kinds = append(kinds, evs[i].Card.Kind+":"+evs[i].Card.Phase)
+			if evs[i].Card.Kind == session.CardResources {
+				res = evs[i].Card
+			}
+		}
+	}
+	if len(kinds) < 2 || kinds[0] != "phase:prepare" {
+		t.Fatalf("expected the prepare phase card first, got %v", kinds)
+	}
+	if res == nil || len(res.Resources) != 2 || res.Resources[0].Type != "video" {
+		t.Fatalf("expected a resources card with both items, got %+v", res)
+	}
+	ask := has(evs, "ask")
+	if ask == nil || strings.Contains(outText(evs), "(s/n)") {
+		t.Errorf("the prompt belongs in the ask event, not in the transcript text: %q", outText(evs))
+	}
+}
+
+func outText(evs []Event) string {
+	var b strings.Builder
+	for _, e := range evs {
+		if e.Type == "out" {
+			b.WriteString(e.Text)
+		}
+	}
+	return b.String()
 }
 
 func TestStudyRunOverSSE(t *testing.T) {

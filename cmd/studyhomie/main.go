@@ -30,7 +30,7 @@ Uso (sin argumentos abre la interfaz web):
   studyhomie roadmap <materia>          te pregunta el alcance y traza el grafo de temas
   studyhomie material <archivo>...      roadmap a partir de txt, md, pdf, pptx, docx o imágenes
   studyhomie next <roadmap>             siguiente tema cuyos prerrequisitos ya dominas
-  studyhomie daily [campo]              reto del día de tus campos de interés
+  studyhomie daily [campo|todos]        reto del día de tus campos de interés ("todos": cualquier campo)
   studyhomie study <tema>               preparación → prueba → Feynman
   studyhomie prepare <tema>             solo la guía de estudio
   studyhomie quiz <tema> [n] [dificultad]
@@ -93,7 +93,11 @@ func run(ctx context.Context, cmd string, args []string) error {
 	s := &session.Session{P: p, V: v, Cfg: cfg, In: bufio.NewReader(os.Stdin), Out: os.Stdout}
 
 	if cmd == "daily" {
-		return s.Daily(ctx, strings.Join(args, " "))
+		field := strings.Join(args, " ")
+		if strings.EqualFold(field, "todos") {
+			field = session.AllFields
+		}
+		return s.Daily(ctx, field)
 	}
 	if len(args) == 0 {
 		return fmt.Errorf("falta el argumento\n\n%s", usage)

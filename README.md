@@ -13,7 +13,7 @@ Puedes empezar de tres maneras, y todas llevan al mismo ciclo de estudio:
 |---|---|
 | **Roadmap** | Te pregunta tu objetivo y nivel, y traza un grafo de temas con prerrequisitos y conexiones, al estilo Obsidian. |
 | **Material** | Estudias desde tus propios apuntes: txt, md, pdf, pptx, docx o imágenes. |
-| **Daily** | Un tema aleatorio de los campos que elijas (filosofía, historia, física, medicina, informática…), para aprenderlo en un día. |
+| **Daily** | Un tema aleatorio de los campos que elijas (filosofía, historia, historia del arte, física, medicina, informática…), para aprenderlo en un día. Puedes sortear entre tus intereses, entre todos los campos, o escribir un campo nuevo. |
 
 Cada tema pasa por **tres fases**:
 
@@ -69,6 +69,15 @@ Para parar el programa, `Ctrl+C` en la terminal. Cada carpeta es un vault indepe
 
 > Si al arrancar ves un aviso rojo, falta configurar la IA (ver la siguiente sección).
 
+## Interfaz
+
+La sesión no es solo texto: el reto del día aparece como tarjeta, las preguntas de la prueba con opciones clicables, un indicador de fase (Guía → Prueba → Feynman) y el puntaje como medidor. Las guías y notas admiten:
+
+- **Avisos** con la sintaxis de callouts de Obsidian (`> [!info] Definición`, `> [!example]`, `> [!tip]`, `> [!warning]`, `> [!question]`), que también se ven bien en Obsidian.
+- **Tablas** y **fórmulas** (`$...$`).
+- **Diagramas Mermaid** (` ```mermaid `), dibujados en local; si uno no se puede dibujar, se muestra su código.
+- **Recursos como tarjetas**, con tipo y dominio. Los videos de YouTube se reproducen dentro de la nota, pero solo cargan YouTube (`youtube-nocookie.com`) cuando haces clic en reproducir; hasta entonces no hay ninguna petición externa.
+
 ## Elegir la IA
 
 Por defecto usa **Claude Code** (`claude-cli`). Para cambiar, ejecuta `studyhomie init` dentro de tu carpeta: crea `studyhomie.toml`, que puedes editar.
@@ -103,7 +112,7 @@ Todo es opcional; sin el archivo se usan estos valores.
 | `port` | `8765` | Puerto de la interfaz web |
 | `language` | `"español"` | Idioma de guías, pruebas y tutor |
 | `vault` | `"vault"` | Carpeta de las notas |
-| `interests` | lista amplia | Campos de los que sale el reto diario |
+| `interests` | lista amplia | Campos de los que sale el reto diario. "Totalmente aleatorio" suma además los campos por defecto |
 | `context_window` / `compact_at` | `200000` / `0.6` | Cuándo se resume una conversación larga para que no se acumule el contexto |
 
 ## Tu vault
@@ -127,7 +136,7 @@ Todo lo que hace la interfaz web también se puede hacer sin ella:
 studyhomie roadmap "Teoría de juegos"     # alcance + grafo de temas
 studyhomie material apuntes.pdf           # roadmap desde tus apuntes
 studyhomie next teoría-de-juegos          # siguiente tema cuyos prerrequisitos ya dominas
-studyhomie daily                          # reto del día (o: daily Física)
+studyhomie daily                          # reto del día (o: daily Física, daily todos)
 studyhomie study "Teorema de Bayes"       # preparación → prueba → Feynman
 studyhomie prepare | quiz | feynman | interactive <tema>
 studyhomie graph                          # temas y conexiones
@@ -138,7 +147,7 @@ studyhomie help
 ## Privacidad y seguridad
 
 - **Qué se envía al modelo:** el tema que estudias, tus respuestas y explicaciones, y los fragmentos de tus apuntes que sean relevantes. Tus notas y tu vault se quedan en tu computadora.
-- **La interfaz web solo escucha en `127.0.0.1`.** Rechaza peticiones con un `Host` que no sea local y exige `Origin` propio en todo lo que modifica algo, de modo que otra página abierta en tu navegador no puede usarla.
+- **La interfaz web solo escucha en `127.0.0.1`.** Rechaza peticiones con un `Host` que no sea local y exige `Origin` propio en todo lo que modifica algo, de modo que otra página abierta en tu navegador no puede usarla. La única página externa que puede incrustar es el reproductor de YouTube, y solo después de que pulses reproducir.
 - **Las simulaciones las escribe la IA**, así que se sirven aisladas: sin red, sin acceso a la app ni a tus datos, y se rechazan las que intenten cargar recursos externos.
 
 ## Desarrollo

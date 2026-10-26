@@ -3,6 +3,7 @@
 package web
 
 import (
+	"context"
 	"crypto/rand"
 	"embed"
 	"encoding/hex"
@@ -45,6 +46,8 @@ type Server struct {
 	Now func() time.Time
 	// Warning, if set, is shown in the UI: the AI backend is not ready.
 	Warning string
+	// CheckLinks verifies cited URLs; nil uses the real check. Tests replace it.
+	CheckLinks func(ctx context.Context, urls []string) map[string]bool
 
 	mu     sync.Mutex
 	runs   map[int]*Run
@@ -104,7 +107,7 @@ func guard(next http.Handler) http.Handler {
 func pageHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
-		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; frame-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; frame-src 'self' https://www.youtube-nocookie.com; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Cache-Control", "no-cache")

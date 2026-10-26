@@ -103,7 +103,87 @@ function renderMd(src, { breaks = false } = {}) {
 function mdBlock(src, opts) {
   const d = h('div', { class: 'md' });
   d.innerHTML = renderMd(src, opts);
+  enhanceCallouts(d);
+  enhanceDiagrams(d);
   return d;
+}
+
+/* ---------- rich blocks inside Markdown: callouts and diagrams ---------- */
+// Obsidian callout syntax ("> [!tip] Title"), so the same notes look right in both apps.
+const CALLOUT = {
+  info: ['info', 'ℹ️', 'Nota'], note: ['info', 'ℹ️', 'Nota'], abstract: ['info', 'ℹ️', 'Resumen'], summary: ['info', 'ℹ️', 'Resumen'],
+  tip: ['tip', '💡', 'Intuición'], hint: ['tip', '💡', 'Pista'], important: ['tip', '💡', 'Importante'], success: ['tip', '✅', 'Listo'],
+  example: ['example', '🧪', 'Ejemplo'],
+  warning: ['warn', '⚠️', 'Ojo'], caution: ['warn', '⚠️', 'Ojo'], danger: ['warn', '⚠️', 'Ojo'], failure: ['warn', '⚠️', 'Error'], bug: ['warn', '⚠️', 'Error'],
+  question: ['question', '🤔', 'Piénsalo'], todo: ['question', '🤔', 'Piénsalo'], help: ['question', '🤔', 'Piénsalo'],
+  quote: ['quote', '❝', 'Cita'], cite: ['quote', '❝', 'Cita'],
+};
+
+function enhanceCallouts(root) {
+  for (const bq of $$('blockquote', root)) {
+    const p = bq.firstElementChild;
+    const first = p && p.tagName === 'P' && p.firstChild;
+    if (!first || first.nodeType !== Node.TEXT_NODE) continue;
+    const m = /^\s*\[!([A-Za-z]+)\][+-]?[ \t]*([^\n]*)(?:\n|$)/.exec(first.nodeValue);
+    const def = m && CALLOUT[m[1].toLowerCase()];
+    if (!def) continue;
+    first.nodeValue = first.nodeValue.slice(m[0].length);
+    if (p.firstChild && p.firstChild.nodeName === 'BR') p.firstChild.remove(); // breaks:true turns the newline into <br>
+    if (!p.textContent.trim() && !p.firstElementChild) p.remove();
+    bq.classList.add('callout', `callout-${def[0]}`);
+    bq.setAttribute('role', 'note');
+    bq.prepend(h('div', { class: 'callout-title' }, h('span', { 'aria-hidden': 'true' }, def[1]), m[2].trim() || def[2]));
+  }
+}
+
+// Mermaid is large, so it loads the first time a note actually has a diagram.
+let mermaidReady = null;
+function loadMermaid() {
+  mermaidReady ??= new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'vendor/mermaid.min.js';
+    s.onload = () => {
+      const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+      window.mermaid.initialize({
+        startOnLoad: false, securityLevel: 'strict', theme: dark ? 'dark' : 'neutral',
+        htmlLabels: false, flowchart: { htmlLabels: false }, fontFamily: getComputedStyle(document.body).fontFamily,
+      });
+      resolve(window.mermaid);
+    };
+    s.onerror = () => { mermaidReady = null; reject(new Error('mermaid')); };
+    document.head.append(s);
+  });
+  return mermaidReady;
+}
+
+const diagramCache = new Map(); // a streaming bubble re-renders often; do not redraw what is already drawn
+let diagramQueue = Promise.resolve();
+let diagramSeq = 0;
+
+function enhanceDiagrams(root) {
+  for (const code of $$('pre > code.language-mermaid', root)) {
+    const src = code.textContent;
+    const body = h('div', { class: 'diagram-body', 'aria-busy': 'true' }, h('span', { class: 'hint' }, 'Dibujando el diagrama…'));
+    code.parentElement.replaceWith(h('figure', { class: 'diagram', role: 'img', 'aria-label': 'Diagrama' }, body));
+    drawDiagram(body, src);
+  }
+}
+
+function drawDiagram(body, src) {
+  const done = () => { body.removeAttribute('aria-busy'); };
+  if (diagramCache.has(src)) { body.innerHTML = diagramCache.get(src); done(); return; }
+  diagramQueue = diagramQueue.then(async () => {
+    const id = `mmd${++diagramSeq}`;
+    try {
+      const { svg } = await (await loadMermaid()).render(id, src);
+      diagramCache.set(src, svg);
+      body.innerHTML = svg; // mermaid's strict mode has already sanitised the labels
+    } catch {
+      document.getElementById(`d${id}`)?.remove(); // mermaid leaves its error box in the page
+      body.replaceChildren(h('p', { class: 'hint' }, 'No pude dibujar este diagrama. Este es su código:'), h('pre', {}, h('code', {}, src)));
+    }
+    done();
+  });
 }
 
 /* ---------- state ---------- */
@@ -169,13 +249,29 @@ async function loadDaily() {
     ].filter(Boolean)); // append() would print a literal "false"
     return;
   }
+  const OTHER = '\0other'; // cannot collide with a field name typed by the user
   const sel = h('select', { id: 'daily-field', 'aria-label': 'Campo del reto' },
     h('option', { value: '' }, 'Cualquiera de mis intereses'),
-    ((S.info && S.info.interests) || []).map((f) => h('option', { value: f }, f)));
+    h('option', { value: '*' }, 'Totalmente aleatorio (todos los campos)'),
+    ((S.info && S.info.interests) || []).map((f) => h('option', { value: f }, f)),
+    h('option', { value: OTHER }, 'Otro campo…'));
+  const custom = h('input', { id: 'daily-custom', type: 'text', maxlength: 80, placeholder: 'Ej.: Arquitectura, Astronomía, Música…', 'aria-label': 'Campo del conocimiento' });
+  custom.hidden = true;
+  sel.addEventListener('change', () => {
+    custom.hidden = sel.value !== OTHER;
+    if (!custom.hidden) custom.focus();
+  });
+  const draw = () => {
+    const field = sel.value === OTHER ? custom.value.trim() : sel.value;
+    if (sel.value === OTHER && !field) { toast('Escribe el campo del conocimiento.'); custom.focus(); return; }
+    startRun({ cmd: 'daily', field }, 'Reto de hoy');
+  };
+  custom.addEventListener('keydown', (e) => { if (e.key === 'Enter') draw(); });
   box.append(h('div', { class: 'daily-pick' },
     h('p', { class: 'hint' }, 'Un tema aleatorio para ampliar tu cultura polímata, y un día para entenderlo.'),
     sel,
-    h('button', { class: 'btn primary', type: 'button', onclick: () => startRun({ cmd: 'daily', field: sel.value }, 'Reto de hoy') }, 'Sortear reto')));
+    custom,
+    h('button', { class: 'btn primary', type: 'button', onclick: draw }, 'Sortear reto')));
 }
 
 /* ---------- roadmaps ---------- */
@@ -418,7 +514,7 @@ function renderPanel(n) {
 
   const res = m.resources || [];
   if (res.length) {
-    p.append(h('h4', {}, 'Material recomendado'), h('ul', { class: 'res-list' }, res.map((r) => resourceItem(r, n, title))));
+    p.append(h('h4', {}, 'Material recomendado'), h('ul', { class: 'res-list' }, res.map((r) => resourceCard(r, { slug: n.slug, title }))));
   }
   p.append(h('h4', {}, 'Nota'), mdBlock(stripSection(n.body, 'Recursos')));
   if (n.requires && n.requires.length) p.append(h('h4', {}, 'Requiere'), linkChips(n.requires));
@@ -426,20 +522,49 @@ function renderPanel(n) {
   p.scrollTop = 0;
 }
 
-function resourceItem(r, n, title) {
-  const type = h('span', { class: 'type' }, TYPE[r.type] || r.type);
+const TYPE_ICON = { video: '▶', web: '🌐', book: '📖', paper: '📄', interactive: '🧪' };
+const YOUTUBE = /^https?:\/\/(?:www\.|m\.)?(?:youtube\.com\/watch\?(?:[^#]*&)?v=|youtu\.be\/)([\w-]{11})(?![\w-])/i;
+const youtubeId = (url) => { const m = YOUTUBE.exec(url || ''); return m && m[1]; };
+const hostOf = (url) => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; } };
+
+// A video is only loaded from YouTube once the learner asks for it.
+function videoPlayer(r, id) {
+  const frame = h('div', { class: 'video-frame' });
+  frame.append(h('button', {
+    class: 'video-play', type: 'button', 'aria-label': `Reproducir: ${r.title}`,
+    onclick: () => frame.replaceChildren(h('iframe', {
+      src: `https://www.youtube-nocookie.com/embed/${id}?rel=0&autoplay=1`, title: r.title, loading: 'lazy',
+      allow: 'accelerometer; autoplay; encrypted-media; picture-in-picture; fullscreen', allowfullscreen: '',
+      referrerpolicy: 'strict-origin-when-cross-origin',
+    })),
+  }, h('span', { class: 'play-icon', 'aria-hidden': 'true' }, '▶'), h('span', {}, 'Reproducir aquí'), h('small', {}, 'Carga YouTube al hacer clic')));
+  return frame;
+}
+
+// One recommended resource as a card. ctx.slug/title identify the note it belongs to (for simulations).
+function resourceCard(r, ctx = {}) {
+  const external = r.url && /^https?:\/\//i.test(r.url);
+  const host = external ? hostOf(r.url) : '';
+  const head = (titleEl) => h('div', { class: 'res-head' },
+    h('span', { class: `res-icon t-${r.type}`, 'aria-hidden': 'true' }, TYPE_ICON[r.type] || '🔗'),
+    h('div', { class: 'res-main' }, titleEl, h('span', { class: 'res-meta' }, [TYPE[r.type] || r.type, host].filter(Boolean).join(' · '))));
   const why = r.why && h('span', { class: 'why' }, r.why);
-  if (r.url && /^https?:\/\//i.test(r.url)) {
-    return h('li', { class: 'res' }, type, h('a', { href: r.url, target: '_blank', rel: 'noopener noreferrer' }, r.title), why);
-  }
-  if (r.url && r.url.startsWith('interactive/')) {
-    return h('li', { class: 'res' }, type, h('button', { class: 'link', type: 'button', onclick: () => openSim(n.slug, title) }, r.title), why);
+  const link = () => h('a', { href: r.url, target: '_blank', rel: 'noopener noreferrer' }, r.title);
+
+  const yt = external && youtubeId(r.url);
+  if (yt) return h('li', { class: 'res res-video' }, head(link()), videoPlayer(r, yt), why);
+  if (external) return h('li', { class: 'res' }, head(link()), why);
+
+  const local = r.url && /^interactive\/([^/]+)\.html$/.exec(r.url);
+  if (local) {
+    const slug = ctx.slug || local[1];
+    return h('li', { class: 'res' }, head(h('button', { class: 'link', type: 'button', onclick: () => openSim(slug, ctx.title) }, r.title)), why);
   }
   if (r.type === 'interactive') {
-    return h('li', { class: 'res' }, type, h('strong', {}, `${r.title} (propuesta)`), why,
-      h('div', {}, h('button', { class: 'btn small', type: 'button', onclick: () => startRun({ cmd: 'interactive', slug: n.slug, brief: r.why || '' }, `Simulación: ${title}`) }, 'Generar')));
+    return h('li', { class: 'res' }, head(h('strong', {}, `${r.title} (propuesta)`)), why,
+      ctx.slug && h('div', {}, h('button', { class: 'btn small', type: 'button', onclick: () => startRun({ cmd: 'interactive', slug: ctx.slug, brief: r.why || '' }, `Simulación: ${ctx.title}`) }, 'Generar')));
   }
-  return h('li', { class: 'res' }, type, h('strong', {}, r.title), why);
+  return h('li', { class: 'res' }, head(h('strong', {}, r.title)), why);
 }
 
 function linkChips(list) {
@@ -469,7 +594,8 @@ const T = { raw: '', bubble: null, timer: null, auto: true };
 
 function resetTranscript() {
   $('#transcript').replaceChildren();
-  T.raw = ''; T.bubble = null;
+  T.raw = ''; T.bubble = null; T.choiceCard = null;
+  $('#stepper').hidden = true;
 }
 
 function scrollDown() {
@@ -514,23 +640,129 @@ function setWorking(on, text) {
   if (text) $('#working-text').textContent = text;
 }
 
+// Questions with a closed set of answers are asked with buttons instead of a text box.
+function quickOptions(e) {
+  const label = e.label || '';
+  if (e.kind !== 'line') return null;
+  if (/\(s\/n\)\s*$/i.test(label)) {
+    const [yes, no] = /aceptas/i.test(label) ? ['Aceptar', 'Otro tema']
+      : /prueba/i.test(label) ? ['Hacer la prueba', 'Ahora no']
+        : /feynman/i.test(label) ? ['Explicarlo (Feynman)', 'Terminar aquí']
+          : /genero/i.test(label) ? ['Generar', 'Omitir']
+            : /empezamos/i.test(label) ? ['Empezar', 'Ahora no'] : ['Sí', 'No'];
+    return [{ label: yes, reply: 's', primary: true }, { label: no, reply: 'n' }];
+  }
+  if (/dificultad/i.test(label)) return ['básica', 'media', 'avanzada'].map((d) => ({ label: d[0].toUpperCase() + d.slice(1), reply: d, primary: d === 'media' }));
+  if (/cuántas preguntas/i.test(label)) return [3, 5, 8, 10].map((n) => ({ label: `${n} preguntas`, reply: String(n), primary: n === 5 }));
+  return null;
+}
+
 function setAsk(e) {
   closeBubble();
   setWorking(false);
   const block = e.kind === 'block';
   const form = $('#composer');
   const ta = $('#reply');
+  const label = (e.label || '').replace(/\s*\(s\/n\)\s*$/i, '').trim();
+
+  // a multiple-choice question is answered with the buttons of its own card
+  if (T.choiceCard && !T.choiceCard.answered && /^respuesta$/i.test(label)) {
+    form.hidden = true;
+    const first = T.choiceCard.buttons[0];
+    if (first) first.focus({ preventScroll: true });
+    scrollDown();
+    return;
+  }
+
+  const opts = quickOptions(e);
   form.hidden = false;
   form.dataset.kind = e.kind;
+  $('#composer-label').textContent = label;
+  $('#composer-label').hidden = !label;
+  $('#quick').replaceChildren(...(opts || []).map((o) => h('button', {
+    type: 'button', class: `btn${o.primary ? ' primary' : ''}`, onclick: () => { T.echo = { reply: o.reply, label: o.label }; sendReply(o.reply, false); },
+  }, o.label)));
+  $('#quick').hidden = !opts;
+  $('#freeform').hidden = !!opts;
   ta.value = '';
   ta.rows = block ? 7 : 1;
   ta.placeholder = block ? 'Explícalo con tus palabras, como si el otro no supiera nada…' : (e.def ? `Enter para usar «${e.def}»` : 'Escribe tu respuesta');
   $('#composer-hint').textContent = block ? 'Ctrl + Enter para enviar' : '';
   $('#btn-finish').hidden = !block;
-  $('#quick').hidden = !/\(s\/n\)/i.test(e.label || '');
   $('#btn-send').disabled = false;
-  ta.focus();
+  if (opts) $('#quick .primary').focus({ preventScroll: true }); else ta.focus();
   scrollDown();
+}
+
+/* ---------- cards: structured output drawn as elements ---------- */
+const PHASES = ['prepare', 'quiz', 'feynman'];
+
+function setPhase(phase) {
+  const at = PHASES.indexOf(phase);
+  if (at < 0) return;
+  $('#stepper').hidden = false;
+  $$('#stepper li').forEach((li, i) => {
+    li.dataset.state = i < at ? 'done' : i === at ? 'current' : 'todo';
+    if (i === at) li.setAttribute('aria-current', 'step'); else li.removeAttribute('aria-current');
+  });
+}
+
+function scoreTone(score) { return score >= 70 ? 'good' : score >= 40 ? 'mid' : 'low'; }
+
+function renderCard(c) {
+  switch (c.kind) {
+    case 'phase': setPhase(c.phase); break;
+    case 'daily':
+      addMsg('card', h('div', { class: 'rich rich-daily' },
+        h('div', { class: 'rich-eyebrow' }, 'Reto de hoy', c.field && h('span', { class: 'chip' }, c.field)),
+        h('h3', {}, c.topic),
+        c.hook && h('p', {}, c.hook)));
+      break;
+    case 'question': addMsg('card', questionCard(c)); break;
+    case 'score': {
+      const tone = scoreTone(c.score);
+      const verdict = tone === 'good' ? 'Muy bien' : tone === 'mid' ? 'Vas por buen camino' : 'Hay huecos por repasar';
+      addMsg('card', h('div', { class: `rich rich-score tone-${tone}` },
+        h('div', { class: 'score-ring', style: `--p:${Math.max(0, Math.min(100, c.score))}`, role: 'img', 'aria-label': `${c.score} de 100` }, h('span', {}, c.score)),
+        h('div', {}, h('strong', {}, `${c.label}: ${verdict}`), c.detail && h('div', { class: 'hint' }, c.detail))));
+      break;
+    }
+    case 'resources':
+      addMsg('card', h('div', { class: 'rich rich-resources' },
+        h('div', { class: 'rich-eyebrow' }, 'Material recomendado'),
+        h('ul', { class: 'res-list' }, (c.resources || []).map((r) => resourceCard(r)))));
+      break;
+  }
+}
+
+function questionCard(c) {
+  const card = h('div', { class: 'rich rich-question' },
+    h('div', { class: 'rich-eyebrow' }, c.total ? `Pregunta ${c.n} de ${c.total}` : 'Pregunta'),
+    h('p', { class: 'q-text' }, c.question));
+  if (!c.choices || !c.choices.length) return card;
+  const state = { answered: false, buttons: [] };
+  const list = h('div', { class: 'choices', role: 'group', 'aria-label': 'Opciones' });
+  for (const choice of c.choices) {
+    const b = h('button', { type: 'button', class: 'choice', onclick: () => {
+      if (state.answered || !S.run || S.run.done) return;
+      state.answered = true;
+      b.classList.add('picked');
+      state.buttons.forEach((x) => { x.disabled = true; });
+      sendReply(choice, false);
+    } }, choice);
+    state.buttons.push(b);
+    list.append(b);
+  }
+  card.append(list);
+  T.choiceCard = state;
+  return card;
+}
+
+// once the learner has answered, or the run is over, an earlier question's buttons are no longer live
+function closeChoices() {
+  if (!T.choiceCard) return;
+  T.choiceCard.answered = true;
+  T.choiceCard.buttons.forEach((x) => { x.disabled = true; });
 }
 
 async function sendReply(text, finish = false) {
@@ -559,7 +791,6 @@ $('#reply').addEventListener('keydown', (e) => {
   if (block ? (e.ctrlKey || e.metaKey) : !e.shiftKey) { e.preventDefault(); $('#composer').requestSubmit(); }
 });
 $('#btn-finish').addEventListener('click', () => sendReply($('#reply').value, true));
-$$('#quick button').forEach((b) => b.addEventListener('click', () => sendReply(b.dataset.reply, false)));
 
 $('#btn-cancel').addEventListener('click', async () => {
   if (!S.run || S.run.done) return;
@@ -595,7 +826,15 @@ function handleEvent(run, e) {
   if (run !== S.run) return;
   switch (e.type) {
     case 'out': botText(e.text); break;
-    case 'in': addMsg('user', mdBlock(e.text, { breaks: true })); break;
+    case 'in': {
+      closeChoices();
+      // a button answers with a short code ("s", "media"); show what the learner actually clicked
+      const shown = T.echo && T.echo.reply === e.text ? T.echo.label : e.text;
+      T.echo = null;
+      addMsg('user', mdBlock(shown, { breaks: true }));
+      break;
+    }
+    case 'card': closeBubble(); renderCard(e.card); break;
     case 'ask': setAsk(e); break;
     case 'done': finishRun(run, e); break;
   }
@@ -605,6 +844,9 @@ async function finishRun(run, e) {
   run.done = true;
   run.es.close();
   closeBubble();
+  closeChoices();
+  const current = $('#stepper li[aria-current]');
+  if (current && !e.error) current.dataset.state = 'done';
   setWorking(false);
   $('#composer').hidden = true;
   $('#btn-cancel').hidden = true;

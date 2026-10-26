@@ -94,19 +94,24 @@
             <button class="btn" id="btn-back" type="button" hidden>Volver al mapa</button>
           </div>
         </div>
+        <ol class="stepper" id="stepper" aria-label="Fases del tema" hidden>
+          <li data-state="todo"><span class="step-n">1</span>Guía</li>
+          <li data-state="todo"><span class="step-n">2</span>Prueba</li>
+          <li data-state="todo"><span class="step-n">3</span>Feynman</li>
+        </ol>
         <div id="transcript" class="transcript" aria-live="polite"></div>
         <div class="working" id="working" hidden><span class="pulse"></span><span id="working-text">Pensando…</span></div>
         <form class="composer" id="composer" hidden>
-          <div class="quick" id="quick" hidden>
-            <button type="button" class="btn primary" data-reply="s">Sí</button>
-            <button type="button" class="btn" data-reply="n">No</button>
-          </div>
-          <label class="sr-only" for="reply">Tu respuesta</label>
-          <textarea id="reply" rows="1" placeholder="Escribe tu respuesta"></textarea>
-          <div class="composer-row">
-            <span class="hint" id="composer-hint"></span>
-            <button class="btn" type="button" id="btn-finish" hidden>Terminar y evaluar</button>
-            <button class="btn primary" type="submit" id="btn-send">Enviar</button>
+          <div class="composer-label" id="composer-label" hidden></div>
+          <div class="quick" id="quick" hidden></div>
+          <div class="freeform" id="freeform">
+            <label class="sr-only" for="reply">Tu respuesta</label>
+            <textarea id="reply" rows="1" placeholder="Escribe tu respuesta"></textarea>
+            <div class="composer-row">
+              <span class="hint" id="composer-hint"></span>
+              <button class="btn" type="button" id="btn-finish" hidden>Terminar y evaluar</button>
+              <button class="btn primary" type="submit" id="btn-send">Enviar</button>
+            </div>
           </div>
         </form>
       </section>

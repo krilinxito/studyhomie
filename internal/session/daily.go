@@ -5,15 +5,37 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/krilinxito/studyhomie/internal/config"
 	"github.com/krilinxito/studyhomie/internal/prompts"
 	"github.com/krilinxito/studyhomie/internal/vault"
 )
 
 const maxRerolls = 5
 
+// AllFields as the Daily field draws from every built-in field plus the configured
+// interests, however the config was customised.
+const AllFields = "*"
+
+// allFields is the built-in fields followed by any configured interest not already in it.
+func allFields(interests []string) []string {
+	fields := config.DefaultInterests()
+	seen := map[string]bool{}
+	for _, f := range fields {
+		seen[strings.ToLower(f)] = true
+	}
+	for _, f := range interests {
+		if !seen[strings.ToLower(f)] {
+			seen[strings.ToLower(f)] = true
+			fields = append(fields, f)
+		}
+	}
+	return fields
+}
+
 // Daily proposes today's challenge topic and studies it. field restricts the draw
-// to one knowledge field; empty draws from the configured interests. Running it
-// again the same day resumes today's topic instead of drawing a new one.
+// to one knowledge field (any text, not only the configured ones) or is AllFields;
+// empty draws from the configured interests. Running it again the same day resumes
+// today's topic instead of drawing a new one.
 func (s *Session) Daily(ctx context.Context, field string) error {
 	date := s.now().Format("2006-01-02")
 	if n, err := s.V.LoadFrom("daily", date); err == nil {
@@ -33,7 +55,11 @@ func (s *Session) Daily(ctx context.Context, field string) error {
 	}
 
 	fields := s.Cfg.Interests
-	if field != "" {
+	switch field = strings.TrimSpace(field); field {
+	case "":
+	case AllFields:
+		fields = allFields(fields)
+	default:
 		fields = []string{field}
 	}
 	if len(fields) == 0 {
@@ -57,7 +83,9 @@ func (s *Session) Daily(ctx context.Context, field string) error {
 		if p.Field == "" {
 			p.Field = f
 		}
-		s.printf("\nReto de hoy [%s]: %s\n%s\n", p.Field, p.Topic, p.Hook)
+		if !s.card(Card{Kind: CardDaily, Field: p.Field, Topic: p.Topic, Hook: p.Hook}) {
+			s.printf("\nReto de hoy [%s]: %s\n%s\n", p.Field, p.Topic, p.Hook)
+		}
 		if ok, _ := s.confirm("¿Lo aceptas?"); !ok {
 			seen = append(seen, p.Topic)
 			continue

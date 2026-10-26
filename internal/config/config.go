@@ -21,6 +21,14 @@ type Config struct {
 	CompactAt     float64  `toml:"compact_at"`     // fraction of the window that triggers compaction
 }
 
+// DefaultInterests are the fields the Daily draws from when none are configured.
+func DefaultInterests() []string {
+	return []string{
+		"Filosofía", "Historia", "Historia del arte", "Ciencias sociales", "Matemática", "Física",
+		"Química", "Biología", "Medicina", "Ciencias de la computación",
+	}
+}
+
 func Default() Config {
 	return Config{
 		Provider:      "claude-cli",
@@ -29,10 +37,7 @@ func Default() Config {
 		Vault:         "vault",
 		ContextWindow: 200000,
 		CompactAt:     0.6,
-		Interests: []string{
-			"Filosofía", "Historia", "Ciencias sociales", "Matemática", "Física",
-			"Química", "Biología", "Medicina", "Ciencias de la computación",
-		},
+		Interests:     DefaultInterests(),
 	}
 }
 

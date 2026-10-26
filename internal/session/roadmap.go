@@ -26,7 +26,9 @@ func (s *Session) Roadmap(ctx context.Context, subject string) (string, error) {
 	}
 	var scope strings.Builder
 	for i, q := range qs.Questions {
-		s.printf("\n%d/%d. %s\n", i+1, len(qs.Questions), q)
+		if !s.card(Card{Kind: CardQuestion, N: i + 1, Total: len(qs.Questions), Question: q}) {
+			s.printf("\n%d/%d. %s\n", i+1, len(qs.Questions), q)
+		}
 		a, err := s.readLine("Respuesta", "")
 		if err != nil {
 			return "", err
