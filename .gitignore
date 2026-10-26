@@ -1,0 +1,8 @@
+# build output
+/studyhomie
+/studyhomie.exe
+/dist/
+
+# a vault created by running the app from the repo folder
+/vault/
+/studyhomie.toml

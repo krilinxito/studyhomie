@@ -1,0 +1,1 @@
+Summarize the conversation so far in at most 200 words so it can continue in a fresh context. Keep: what the learner has explained correctly, the errors and gaps already pointed out, and the open follow-up questions. Drop pleasantries and repetition. Write in {{language}}. Output only the summary.
