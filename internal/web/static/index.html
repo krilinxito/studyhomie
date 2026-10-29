@@ -4,103 +4,107 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>StudyHomie</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231f7a6d'/%3E%3Ccircle cx='10' cy='11' r='3' fill='white'/%3E%3Ccircle cx='23' cy='10' r='3' fill='white'/%3E%3Ccircle cx='16' cy='23' r='3' fill='white'/%3E%3Cpath d='M10 11 23 10 16 23Z' fill='none' stroke='white' stroke-width='1.6'/%3E%3C/svg%3E">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="stylesheet" href="vendor/katex/katex.min.css">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header class="top">
-    <div class="brand">
-      <svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8"/><circle cx="10" cy="11" r="3"/><circle cx="23" cy="10" r="3"/><circle cx="16" cy="23" r="3"/><path d="M10 11 23 10 16 23Z"/></svg>
+    <a class="brand" href="#inicio" aria-label="StudyHomie, ir al inicio">
+      <img class="logo" src="favicon.svg" alt="" width="34" height="34">
       <span>StudyHomie</span>
-    </div>
-    <nav class="tabs" role="tablist" aria-label="Vistas">
-      <button role="tab" id="tab-map" aria-selected="true" data-view="map">Mapa</button>
-      <button role="tab" id="tab-session" aria-selected="false" data-view="session">Sesión <span class="dot" id="session-dot" hidden></span></button>
+    </a>
+    <nav class="tabs" role="tablist" aria-label="Secciones">
+      <button role="tab" id="tab-home" aria-selected="true" data-view="home">Inicio</button>
+      <button role="tab" id="tab-map" aria-selected="false" data-view="map">Mapa</button>
+      <button role="tab" id="tab-session" aria-selected="false" data-view="session">Sesiones <span class="dot" id="session-dot" hidden></span></button>
     </nav>
-    <div class="top-meta"><span class="badge" id="provider-badge" title="Proveedor de IA"></span></div>
+    <div class="top-meta">
+      <button class="btn" id="btn-notes" type="button" aria-expanded="false" aria-controls="drawer">Notas</button>
+      <span class="start-group" role="group" aria-label="Empezar a estudiar">
+        <button class="btn green" id="btn-daily" type="button">Daily</button>
+        <button class="btn blue" id="btn-material" type="button">Material</button>
+        <button class="btn red" id="btn-roadmap" type="button">Roadmap</button>
+      </span>
+      <span class="badge" id="provider-badge" title="Proveedor de IA"></span>
+    </div>
   </header>
 
   <div class="banner" id="banner" role="alert" hidden></div>
 
-  <div class="layout">
-    <aside class="side" aria-label="Acciones">
-      <section class="card" id="daily-card" aria-labelledby="daily-h">
-        <h2 id="daily-h">Reto de hoy</h2>
-        <div id="daily-body"></div>
-      </section>
-
-      <section class="card" aria-labelledby="start-h">
-        <h2 id="start-h">Empezar a estudiar</h2>
-        <div class="seg" role="tablist" aria-label="Tipo de inicio">
-          <button type="button" role="tab" aria-selected="true" data-form="topic">Un tema</button>
-          <button type="button" role="tab" aria-selected="false" data-form="roadmap">Roadmap</button>
-          <button type="button" role="tab" aria-selected="false" data-form="material">Material</button>
+  <main>
+    <!-- inicio -->
+    <section id="view-home" class="page">
+      <div class="home">
+        <div class="home-hero">
+          <p class="eyebrow">Hoy</p>
+          <div id="daily-body"></div>
+          <p class="hint topic-link">¿Algo concreto en mente? <button class="link" id="link-topic" type="button">Explora un tema suelto</button></p>
         </div>
-        <form class="start-form" id="form-topic">
-          <label for="in-topic">¿Qué quieres entender?</label>
-          <input id="in-topic" required maxlength="120" placeholder="Teorema de Bayes" autocomplete="off">
-          <button class="btn primary" type="submit">Preparar y estudiar</button>
-        </form>
-        <form class="start-form" id="form-roadmap" hidden>
-          <label for="in-subject">Materia a aprender</label>
-          <input id="in-subject" required maxlength="120" placeholder="Teoría de juegos" autocomplete="off">
-          <p class="hint">Te haré unas preguntas sobre tu objetivo y nivel, y trazaré el grafo de temas.</p>
-          <button class="btn primary" type="submit">Trazar roadmap</button>
-        </form>
-        <form class="start-form" id="form-material" hidden>
-          <label for="in-files">Tus apuntes</label>
-          <input id="in-files" type="file" multiple required accept=".txt,.md,.markdown,.pdf,.pptx,.docx,.png,.jpg,.jpeg,.webp,.gif">
-          <p class="hint">PDF con texto, PPTX, DOCX, texto o imágenes. Armo un roadmap a partir de ellos.</p>
-          <button class="btn primary" type="submit">Subir y planificar</button>
-        </form>
-      </section>
-
-      <section class="card" aria-labelledby="rm-h">
-        <h2 id="rm-h">Mis roadmaps</h2>
-        <ul class="rm-list" id="roadmaps"></ul>
-      </section>
-    </aside>
-
-    <main>
-      <section id="view-map">
-        <div class="toolbar">
-          <label class="sr-only" for="search">Buscar tema</label>
-          <input id="search" type="search" placeholder="Buscar tema…" autocomplete="off">
-          <label class="sr-only" for="filter-rm">Filtrar por roadmap</label>
-          <select id="filter-rm"><option value="">Todos los temas</option></select>
-          <ul class="legend" aria-label="Leyenda">
-            <li><i class="sw s-new"></i>Nuevo</li>
-            <li><i class="sw s-prepared"></i>Guía lista</li>
-            <li><i class="sw s-tested"></i>Probado</li>
-            <li><i class="sw s-explained"></i>Explicado</li>
-          </ul>
+        <div class="home-cols">
+          <section aria-labelledby="lines-h">
+            <h2 id="lines-h" class="section-title">Tus líneas</h2>
+            <ul class="rm-list" id="roadmaps"></ul>
+          </section>
+          <section aria-labelledby="recent-h">
+            <h2 id="recent-h" class="section-title">Para seguir</h2>
+            <ul class="recent-list" id="recent"></ul>
+          </section>
         </div>
-        <div class="map-wrap">
-          <div id="cy" role="img" aria-label="Grafo de temas y sus conexiones"></div>
-          <div class="empty" id="map-empty" hidden>
-            <h3>Tu vault está vacío</h3>
-            <p>Empieza con un tema suelto, traza un roadmap o sube tus apuntes. Cada tema que estudies aparecerá aquí, conectado con los demás.</p>
-          </div>
-          <article class="panel" id="note-panel" hidden aria-label="Detalle del tema"></article>
-        </div>
-      </section>
+      </div>
+    </section>
 
-      <section id="view-session" hidden>
+    <!-- mapa -->
+    <section id="view-map" class="page" hidden>
+      <div class="toolbar">
+        <label class="sr-only" for="search">Buscar tema</label>
+        <input id="search" type="search" placeholder="Buscar tema…" autocomplete="off">
+        <div class="line-chips" id="filter-rm" role="group" aria-label="Filtrar por línea"></div>
+        <ul class="legend" aria-label="Leyenda">
+          <li><i class="st st-new"></i>Por descubrir</li>
+          <li><i class="st st-prepared"></i>Guía lista</li>
+          <li><i class="st st-tested"></i>Comprobado</li>
+          <li><i class="st st-explained"></i>Explicado</li>
+        </ul>
+      </div>
+      <div class="map-wrap">
+        <div id="cy" role="img" aria-label="Plano de temas: cada roadmap es una línea y cada tema una estación"></div>
+        <div class="empty" id="map-empty" hidden>
+          <h3>Tu mapa está vacío</h3>
+          <p>Elige algo que te dé curiosidad. Cada tema que explores aparecerá aquí como una estación, conectada con los demás.</p>
+        </div>
+        <article class="station" id="note-panel" hidden aria-label="Detalle del tema"></article>
+      </div>
+    </section>
+
+    <!-- página de lectura -->
+    <section id="view-note" class="page" hidden>
+      <div class="reader" id="reader"></div>
+    </section>
+
+    <!-- sesiones -->
+    <section id="view-session" class="page" hidden>
+      <div class="history" id="history">
+        <h2 class="section-title">Sesiones anteriores</h2>
+        <ul class="history-list" id="history-list"></ul>
+      </div>
+      <div class="live" id="live" hidden>
         <div class="session-head">
           <h2 id="session-title">Sesión</h2>
           <div class="session-actions">
-            <button class="btn" id="btn-cancel" type="button" hidden>Cancelar</button>
-            <button class="btn" id="btn-back" type="button" hidden>Volver al mapa</button>
+            <button class="btn red" id="btn-cancel" type="button" hidden>Cancelar</button>
+            <button class="btn blue" id="btn-open-note" type="button" hidden>Abrir como página</button>
+            <button class="btn green" id="btn-resume" type="button" hidden>Continuar</button>
+            <button class="btn" id="btn-back" type="button" hidden>Todas las sesiones</button>
           </div>
         </div>
         <ol class="stepper" id="stepper" aria-label="Fases del tema" hidden>
-          <li data-state="todo"><span class="step-n">1</span>Guía</li>
-          <li data-state="todo"><span class="step-n">2</span>Prueba</li>
-          <li data-state="todo"><span class="step-n">3</span>Feynman</li>
+          <li data-state="todo"><span class="step-n">1</span>Estudiar</li>
+          <li data-state="todo"><span class="step-n">2</span>Responder preguntas</li>
+          <li data-state="todo"><span class="step-n">3</span>Explicar</li>
         </ol>
         <div id="transcript" class="transcript" aria-live="polite"></div>
-        <div class="working" id="working" hidden><span class="pulse"></span><span id="working-text">Pensando…</span></div>
+        <div class="working" id="working" hidden><span class="pulse"></span><span id="working-text">Pensando…</span><button class="btn small red" id="btn-working-cancel" type="button">Cancelar</button></div>
         <form class="composer" id="composer" hidden>
           <div class="composer-label" id="composer-label" hidden></div>
           <div class="quick" id="quick" hidden></div>
@@ -114,9 +118,56 @@
             </div>
           </div>
         </form>
-      </section>
-    </main>
-  </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- cajón de notas -->
+  <div class="scrim" id="scrim" hidden></div>
+  <aside class="drawer" id="drawer" aria-label="Notas" aria-hidden="true" inert>
+    <div class="drawer-head">
+      <h2>Notas</h2>
+      <button class="btn small" id="drawer-close" type="button" aria-label="Cerrar el cajón">✕</button>
+    </div>
+    <label class="sr-only" for="drawer-search">Buscar en las notas</label>
+    <input id="drawer-search" type="search" placeholder="Buscar en mis notas…" autocomplete="off">
+    <div class="drawer-body" id="drawer-body"></div>
+  </aside>
+
+  <!-- nuevo estudio -->
+  <dialog id="start-dialog" class="modal" aria-labelledby="start-h">
+    <form method="dialog" class="modal-close"><button class="btn small" aria-label="Cerrar">✕</button></form>
+    <p class="eyebrow">Nuevo estudio</p>
+    <h2 id="start-h">¿Qué te da curiosidad?</h2>
+    <p class="lead">No hace falta una razón. Aprender porque sí también cuenta.</p>
+    <div class="seg" role="tablist" aria-label="Cómo empezar">
+      <button type="button" role="tab" aria-selected="true" data-form="daily">Daily</button>
+      <button type="button" role="tab" aria-selected="false" data-form="material">Material</button>
+      <button type="button" role="tab" aria-selected="false" data-form="roadmap">Roadmap</button>
+      <button type="button" role="tab" aria-selected="false" data-form="topic">Un tema</button>
+    </div>
+    <div class="start-form" id="form-daily">
+      <p class="hint">Un tema al azar para ampliar tu cultura, sin examen ni prisa. Elige de qué campo.</p>
+      <div id="form-daily-body"></div>
+    </div>
+    <form class="start-form" id="form-topic" hidden>
+      <label for="in-topic">Un tema suelto</label>
+      <input id="in-topic" required maxlength="120" placeholder="Teorema de Bayes" autocomplete="off">
+      <button class="btn orange" type="submit">Explorarlo</button>
+    </form>
+    <form class="start-form" id="form-roadmap" hidden>
+      <label for="in-subject">La materia a aprender</label>
+      <input id="in-subject" required maxlength="120" placeholder="Teoría de juegos" autocomplete="off">
+      <p class="hint">Te haré unas preguntas sobre tu objetivo y nivel, y trazaré la línea de temas.</p>
+      <button class="btn red" type="submit">Trazar la línea</button>
+    </form>
+    <form class="start-form" id="form-material" hidden>
+      <label for="in-files">Tus apuntes</label>
+      <input id="in-files" type="file" multiple required accept=".txt,.md,.markdown,.pdf,.pptx,.docx,.png,.jpg,.jpeg,.webp,.gif">
+      <p class="hint">PDF con texto, PPTX, DOCX, texto o imágenes. Armo una línea a partir de ellos.</p>
+      <button class="btn blue" type="submit">Subir y planificar</button>
+    </form>
+  </dialog>
 
   <dialog id="sim-dialog" aria-label="Simulación interactiva">
     <div class="dlg-head"><strong id="sim-title">Simulación</strong><button class="btn" type="button" id="sim-close">Cerrar</button></div>

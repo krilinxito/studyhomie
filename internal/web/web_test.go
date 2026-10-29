@@ -384,7 +384,7 @@ func TestStudyRunOverSSE(t *testing.T) {
 	// wait for the question that comes after the guide
 	evs := readEvents(t, ts, id, 0, func(e []Event) bool { return has(e, "ask") != nil })
 	ask := has(evs, "ask")
-	if ask == nil || ask.Kind != "line" || !strings.Contains(ask.Label, "prueba") {
+	if ask == nil || ask.Kind != "line" || !strings.Contains(ask.Label, "Respondemos") {
 		t.Fatalf("expected the quiz question, got %+v", evs)
 	}
 	var out strings.Builder
@@ -454,6 +454,7 @@ func TestStartValidation(t *testing.T) {
 		{"cmd": "nope"},
 		{"cmd": "study"},
 		{"cmd": "quiz"},
+		{"cmd": "extend"},
 		{"cmd": "roadmap", "subject": "  "},
 		{"cmd": "material"},
 		{"cmd": "material", "files": []string{"../../etc/passwd"}},
@@ -535,5 +536,131 @@ func TestBlockInputCannotEndEarly(t *testing.T) {
 	n, _ = run.in.Read(buf)
 	if !strings.HasSuffix(string(buf[:n]), "listo\n/fin\n") {
 		t.Errorf("finish must send /fin: %q", buf[:n])
+	}
+}
+
+func guidedNote(t *testing.T, s *Server) {
+	t.Helper()
+	if err := s.V.Save(vault.Note{Slug: "cumpleanos", Meta: vault.Meta{Title: "Paradoja del cumpleaños", Status: "prepared"}, Body: "## Guía\n\nEn un grupo de 23 personas..."}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestExtendEndpointAnswersWithTheTextAndSavesIt(t *testing.T) {
+	s, ts := newTestServer(t, &scripted{replies: []string{"### Probabilidad\n\nContar casos."}})
+	guidedNote(t, s)
+	res, data := do(t, ts, "POST", "/api/notes/cumpleanos/extend", map[string]string{}, nil)
+	var out struct{ Text string }
+	json.Unmarshal(data, &out)
+	if res.StatusCode != 200 || !strings.Contains(out.Text, "Contar casos.") {
+		t.Fatalf("extend = %d %s", res.StatusCode, data)
+	}
+	n, _ := s.V.Load("cumpleanos")
+	if !strings.Contains(n.Body, "## Conceptos base") || n.Meta.Status != "prepared" {
+		t.Errorf("section not saved, or progress changed:\n%s\n%+v", n.Body, n.Meta)
+	}
+	if rows := s.runs; len(rows) != 0 {
+		t.Errorf("an instant action must not appear in the session history: %v", rows)
+	}
+}
+
+func TestDoubtEndpointSavesTheExchangeAndOffersConcepts(t *testing.T) {
+	reply := "Se multiplican porque piden las dos cosas, ver [[Probabilidad condicional]].\n\n```json\n" + `{"concepts":[{"title":"Probabilidad condicional","summary":"Cómo cambia una probabilidad al saber algo más."}]}` + "\n```"
+	s, ts := newTestServer(t, &scripted{replies: []string{reply}})
+	guidedNote(t, s)
+
+	res, data := do(t, ts, "POST", "/api/notes/cumpleanos/doubt", map[string]string{"question": "¿Por qué se multiplican?"}, nil)
+	var ans struct {
+		Entry    string
+		Concepts []struct{ Title, Slug string }
+	}
+	json.Unmarshal(data, &ans)
+	if res.StatusCode != 200 || !strings.HasPrefix(ans.Entry, "### ¿Por qué se multiplican?") || len(ans.Concepts) != 1 || ans.Concepts[0].Slug != "probabilidad-condicional" {
+		t.Fatalf("doubt = %d %s", res.StatusCode, data)
+	}
+	n, _ := s.V.Load("cumpleanos")
+	if !strings.Contains(n.Body, "## Dudas") || !strings.Contains(n.Body, "piden las dos cosas") {
+		t.Errorf("the exchange must be saved in the note:\n%s", n.Body)
+	}
+
+	// adding the concept creates an empty note, once
+	for i, want := range []bool{true, false} {
+		res, data = do(t, ts, "POST", "/api/notes/cumpleanos/concept", map[string]string{"title": "Probabilidad condicional", "summary": "x"}, nil)
+		var c struct {
+			Slug    string
+			Created bool
+		}
+		json.Unmarshal(data, &c)
+		if res.StatusCode != 200 || c.Slug != "probabilidad-condicional" || c.Created != want {
+			t.Fatalf("concept #%d = %d %s", i, res.StatusCode, data)
+		}
+	}
+	if c, err := s.V.Load("probabilidad-condicional"); err != nil || c.Meta.Status != "new" {
+		t.Errorf("the concept note was not created: %v %+v", err, c.Meta)
+	}
+}
+
+func TestShortActionsRejectBadRequests(t *testing.T) {
+	s, ts := newTestServer(t, &scripted{})
+	guidedNote(t, s)
+	s.V.Save(vault.Note{Slug: "sin-guia", Meta: vault.Meta{Title: "Sin guía"}, Body: ""})
+	cases := []struct {
+		path string
+		body map[string]string
+		want int
+	}{
+		{"/api/notes/cumpleanos/doubt", map[string]string{"question": "  "}, 400},
+		{"/api/notes/sin-guia/doubt", map[string]string{"question": "¿y esto?"}, 400},
+		{"/api/notes/sin-guia/extend", map[string]string{}, 400},
+		{"/api/notes/no-existe/extend", map[string]string{}, 400},
+		{"/api/notes/Mal Slug/extend", map[string]string{}, 400},
+		{"/api/notes/cumpleanos/concept", map[string]string{"title": " "}, 400},
+		{"/api/notes/no-existe/concept", map[string]string{"title": "Algo"}, 400},
+	}
+	for _, c := range cases {
+		if res, data := do(t, ts, "POST", strings.ReplaceAll(c.path, " ", "%20"), c.body, nil); res.StatusCode != c.want {
+			t.Errorf("%s %v = %d, want %d (%s)", c.path, c.body, res.StatusCode, c.want, data)
+		}
+	}
+	// nothing that changes a note may be done from another origin
+	res, _ := do(t, ts, "POST", "/api/notes/cumpleanos/doubt", map[string]string{"question": "x"}, func(r *http.Request) { r.Header.Set("Origin", "http://evil.example") })
+	if res.StatusCode != 403 {
+		t.Errorf("foreign origin = %d, want 403", res.StatusCode)
+	}
+}
+
+func TestCancellingAShortActionStopsTheModelAndSavesNothing(t *testing.T) {
+	hold := make(chan struct{}) // the model never answers
+	s, ts := newTestServer(t, &scripted{hold: hold, replies: []string{"nunca se usa"}})
+	guidedNote(t, s)
+	for _, path := range []string{"/api/notes/cumpleanos/extend", "/api/notes/cumpleanos/doubt"} {
+		ctx, cancel := context.WithCancel(context.Background())
+		body := strings.NewReader(`{"question":"¿por qué?"}`)
+		req, _ := http.NewRequestWithContext(ctx, "POST", ts.URL+path, body)
+		req.Header.Set("Origin", ts.URL)
+		req.Header.Set("Content-Type", "application/json")
+		done := make(chan error, 1)
+		go func() {
+			res, err := http.DefaultClient.Do(req)
+			if res != nil {
+				res.Body.Close()
+			}
+			done <- err
+		}()
+		time.Sleep(150 * time.Millisecond) // the request is now waiting for the model
+		cancel()
+		select {
+		case err := <-done:
+			if err == nil {
+				t.Errorf("%s: the request should have been cancelled", path)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatalf("%s: cancelling did not release the request", path)
+		}
+	}
+	time.Sleep(200 * time.Millisecond) // let the handlers notice and finish
+	n, _ := s.V.Load("cumpleanos")
+	if strings.Contains(n.Body, "## Dudas") || strings.Contains(n.Body, "## Conceptos base") {
+		t.Errorf("a cancelled action must not change the note:\n%s", n.Body)
 	}
 }

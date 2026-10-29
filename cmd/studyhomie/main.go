@@ -35,6 +35,8 @@ Uso (sin argumentos abre la interfaz web):
   studyhomie prepare <tema>             solo la guía de estudio
   studyhomie quiz <tema> [n] [dificultad]
   studyhomie feynman <tema>
+  studyhomie extend <tema>              añade los conceptos base que la guía da por sabidos
+  studyhomie doubt <tema> "pregunta"    responde una duda y la guarda en la sección Dudas de la nota
   studyhomie interactive <tema>         genera una simulación interactiva del tema
   studyhomie graph                      temas y conexiones del vault
 `
@@ -123,6 +125,26 @@ func run(ctx context.Context, cmd string, args []string) error {
 	case "prepare":
 		_, err := s.Prepare(ctx, strings.Join(args, " "), "adhoc")
 		return err
+	case "extend":
+		text, err := s.Extend(ctx, vault.Slugify(strings.Join(args, " ")))
+		if err != nil {
+			return err
+		}
+		fmt.Println(text)
+		return nil
+	case "doubt":
+		if len(args) < 2 {
+			return fmt.Errorf("uso: studyhomie doubt <tema> \"pregunta\"\n\n%s", usage)
+		}
+		ans, err := s.Doubt(ctx, vault.Slugify(topic), strings.Join(args[1:], " "))
+		if err != nil {
+			return err
+		}
+		fmt.Println(ans.Entry)
+		for _, c := range ans.Concepts {
+			fmt.Printf("Podría ser su propio tema: %s\n", c.Title)
+		}
+		return nil
 	case "interactive":
 		return s.Interactive(ctx, vault.Slugify(strings.Join(args, " ")), "")
 	case "quiz":

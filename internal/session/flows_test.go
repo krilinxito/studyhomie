@@ -177,7 +177,7 @@ func TestDailyRerollAcceptAndResume(t *testing.T) {
 	first := `{"field":"Historia","topic":"La Biblioteca de Alejandría","hook":"¿Qué se perdió realmente?"}`
 	second := `{"field":"Física","topic":"Por qué el cielo es azul","hook":"No es el reflejo del mar."}`
 	f := &fake{replies: []provider.Response{jsonReply(first), jsonReply(second), reply(prepReply, 10)}}
-	// n = reject first proposal, s = accept second, then EOF at "¿Pasamos a la prueba?"
+	// n = reject first proposal, s = accept second, then EOF at "¿Respondemos unas preguntas?"
 	s, out := newSession(t, f, "n\ns\n")
 	s.Now = func() time.Time { return time.Date(2026, 10, 27, 9, 0, 0, 0, time.UTC) }
 	s.Cfg.Interests = []string{"Historia", "Física"}

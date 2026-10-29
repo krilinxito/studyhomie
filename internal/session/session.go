@@ -336,7 +336,7 @@ func (s *Session) Quiz(ctx context.Context, slug string, n int, difficulty strin
 	if len(g.Gaps) > 0 {
 		rep.WriteString("\nPara repasar: " + strings.Join(g.Gaps, "; ") + "\n")
 	}
-	if s.card(Card{Kind: CardScore, Label: "Prueba", Score: g.Score, Detail: "dificultad " + difficulty}) {
+	if s.card(Card{Kind: CardScore, Label: "Preguntas", Score: g.Score, Detail: "dificultad " + difficulty}) {
 		s.printf("\n%s", rep.String()) // the card already shows the score
 	} else {
 		s.printf("\n%s%s", header, rep.String())
@@ -402,7 +402,7 @@ func (s *Session) Feynman(ctx context.Context, slug string) error {
 		score, body, ok := extractScore(resp.Text)
 		s.printf("\n%s\n", body)
 		fmt.Fprintf(&transcript, "**Evaluación final:** %s\n", body)
-		if ok && !s.card(Card{Kind: CardScore, Label: "Feynman", Score: score}) {
+		if ok && !s.card(Card{Kind: CardScore, Label: "Explicación", Score: score}) {
 			s.printf("\nPuntaje Feynman: %d/100\n", score)
 		}
 		return s.saveFeynman(slug, transcript.String(), score, ok)
@@ -452,7 +452,7 @@ func (s *Session) Study(ctx context.Context, topic, source string) error {
 
 // afterPrepare continues with the test and the Feynman phase of an already prepared topic.
 func (s *Session) afterPrepare(ctx context.Context, slug string) error {
-	if ok, _ := s.confirm("\n¿Pasamos a la prueba?"); !ok {
+	if ok, _ := s.confirm("\n¿Respondemos unas preguntas?"); !ok {
 		return nil
 	}
 	nStr, err := s.readLine("¿Cuántas preguntas?", "5")
@@ -470,7 +470,7 @@ func (s *Session) afterPrepare(ctx context.Context, slug string) error {
 	if err := s.Quiz(ctx, slug, n, diff); err != nil {
 		return err
 	}
-	if ok, _ := s.confirm("\n¿Pasamos a la fase Feynman?"); !ok {
+	if ok, _ := s.confirm("\n¿Lo explicas con tus palabras?"); !ok {
 		return nil
 	}
 	return s.Feynman(ctx, slug)
