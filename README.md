@@ -17,9 +17,14 @@ Puedes empezar de tres maneras, y todas llevan al mismo ciclo de estudio:
 
 Cada tema pasa por **tres fases**:
 
-1. **Preparación.** La IA busca material en línea y escribe una guía imparcial que construye intuición. Los recursos externos (videos de YouTube, webs, libros, papers) van **siempre con su enlace**, y los enlaces se comprueban antes de guardarlos. Si el tema lo pide, genera una simulación interactiva.
-2. **Prueba.** Un test de la longitud y dificultad que elijas.
-3. **Feynman.** Le explicas el tema a la IA como si no supiera nada, y te señala los huecos, errores y saltos que encuentra.
+1. **Estudiar.** La IA busca material en línea y escribe una guía imparcial que construye intuición. Los recursos externos (videos de YouTube, webs, libros, papers) van **siempre con su enlace**, y los enlaces se comprueban antes de guardarlos. Si el tema lo pide, genera una simulación interactiva.
+2. **Responder preguntas.** Un test de la longitud y dificultad que elijas.
+3. **Explicar** (método Feynman). Le explicas el tema a la IA como si no supiera nada, y te señala los huecos, errores y saltos que encuentra.
+
+Y hay dos extras opcionales, que se hacen dentro del propio artículo y no cambian tu avance:
+
+- **Extender, conceptos base.** Si la guía da por sabido algo que no dominas (la paradoja del cumpleaños pide algo de probabilidad), el botón añade al artículo una sección que lo explica desde cero, en pocas líneas y con ejemplos pequeños. No se genera por defecto.
+- **Dudas.** Un apartado al final de la guía donde preguntas como en un chat (por ejemplo, «entiendo qué es una probabilidad, pero no por qué se multiplican»). La respuesta tiene en cuenta lo que ya preguntaste, y tu duda con su respuesta se guardan en el artículo. Si en la respuesta se explica un concepto que da para un tema propio, te ofrece añadirlo al vault como artículo, ya conectado con el original.
 
 ![Nota de un tema](docs/img/nota.png)
 
@@ -63,7 +68,7 @@ go build -o studyhomie ./cmd/studyhomie
    studyhomie
    ```
 
-3. **Empieza a estudiar desde el navegador:** escribe un tema, traza un roadmap, sube tus apuntes o sortea el reto del día. Las sesiones corren en vivo; solo tienes que ir respondiendo.
+3. **Empieza a estudiar desde el navegador:** con «Nuevo estudio» escribe un tema, traza un roadmap o sube tus apuntes, o sortea el reto del día en Inicio. Las sesiones corren en vivo; solo tienes que ir respondiendo.
 
 Para parar el programa, `Ctrl+C` en la terminal. Cada carpeta es un vault independiente: puedes tener una por materia, o una sola para todo.
 
@@ -71,12 +76,19 @@ Para parar el programa, `Ctrl+C` en la terminal. Cada carpeta es un vault indepe
 
 ## Interfaz
 
-La sesión no es solo texto: el reto del día aparece como tarjeta, las preguntas de la prueba con opciones clicables, un indicador de fase (Guía → Prueba → Feynman) y el puntaje como medidor. Las guías y notas admiten:
+Todo se navega desde la barra superior: **Inicio** (el reto de hoy, tus líneas y lo que dejaste a medias), **Mapa** y **Sesiones**. **Nuevo estudio** abre un cuadro para empezar con un tema, una materia o tus apuntes, y **Notas** abre un cajón con todas tus notas agrupadas por línea.
+
+- **El mapa es un plano de metro.** Cada roadmap es una línea de color y cada tema una estación: vacía si aún no lo exploras, medio llena con la guía lista, llena si ya lo comprobaste y con anillo cuando lo explicaste.
+- **Cada nota es una página de lectura**, con índice lateral, la guía como artículo, los recursos al final y los temas que vienen antes y después en la línea. Arriba tiene los tres pasos en orden (Estudiar, Responder preguntas, Explicar): el siguiente aparece resaltado y los ya hechos se pueden repetir. Junto a ellos están «Extender: conceptos base», «Tengo una duda» y la simulación.
+- **La sesión no es solo texto:** el reto del día aparece como tarjeta, las preguntas con opciones clicables, un indicador de fases (Estudiar → Responder preguntas → Explicar) y el puntaje como medidor. La idea es aprender porque sí: comprobar y explicar sirven para ver lo que ya entiendes, no para aprobar nada.
+- **Las sesiones se guardan** en `vault/.studyhomie/sessions/` (un JSON por sesión). En **Sesiones** puedes releerlas, eliminarlas o continuar un tema por su siguiente fase (comprobar, explicar). Una sesión no se reanuda a mitad de un turno: si cierras la aplicación mientras corre, queda marcada como interrumpida, y desde ahí se continúa por fase.
+
+Las guías y notas admiten:
 
 - **Avisos** con la sintaxis de callouts de Obsidian (`> [!info] Definición`, `> [!example]`, `> [!tip]`, `> [!warning]`, `> [!question]`), que también se ven bien en Obsidian.
 - **Tablas** y **fórmulas** (`$...$`).
 - **Diagramas Mermaid** (` ```mermaid `), dibujados en local; si uno no se puede dibujar, se muestra su código.
-- **Recursos como tarjetas**, con tipo y dominio. Los videos de YouTube se reproducen dentro de la nota, pero solo cargan YouTube (`youtube-nocookie.com`) cuando haces clic en reproducir; hasta entonces no hay ninguna petición externa.
+- **Recursos en lista**, con tipo y dominio. Los videos de YouTube se reproducen dentro de la nota, pero solo cargan YouTube (`youtube-nocookie.com`) cuando haces clic en reproducir; hasta entonces no hay ninguna petición externa.
 
 ## Elegir la IA
 
@@ -109,6 +121,7 @@ Todo es opcional; sin el archivo se usan estos valores.
 |---|---|---|
 | `provider` | `"claude-cli"` | `claude-cli` o `anthropic-api` |
 | `model` | vacío | Modelo a usar; vacío = el del proveedor |
+| `quick_model` | vacío | Modelo para las respuestas cortas (conceptos base y dudas); vacío = `model`. Poner uno más rápido y barato hace que respondan antes |
 | `port` | `8765` | Puerto de la interfaz web |
 | `language` | `"español"` | Idioma de guías, pruebas y tutor |
 | `vault` | `"vault"` | Carpeta de las notas |
@@ -125,7 +138,7 @@ vault/
   roadmaps/      el plan de cada roadmap
   daily/         un registro por día
   interactive/   simulaciones generadas (HTML)
-  .studyhomie/   estado interno (resúmenes entre fases, apuntes subidos)
+  .studyhomie/   estado interno (resúmenes entre fases, apuntes subidos, sesiones guardadas)
 ```
 
 ## Desde la terminal
@@ -138,7 +151,8 @@ studyhomie material apuntes.pdf           # roadmap desde tus apuntes
 studyhomie next teoría-de-juegos          # siguiente tema cuyos prerrequisitos ya dominas
 studyhomie daily                          # reto del día (o: daily Física, daily todos)
 studyhomie study "Teorema de Bayes"       # preparación → prueba → Feynman
-studyhomie prepare | quiz | feynman | interactive <tema>
+studyhomie prepare | quiz | feynman | extend | interactive <tema>
+studyhomie doubt <tema> "tu pregunta"     # responde una duda y la guarda en el artículo
 studyhomie graph                          # temas y conexiones
 studyhomie serve --port 9000 --no-open    # interfaz web en otro puerto, sin abrir el navegador
 studyhomie help

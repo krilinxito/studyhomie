@@ -112,3 +112,30 @@ func TestAppendSectionReplaces(t *testing.T) {
 		t.Errorf("other content lost:\n%s", n.Body)
 	}
 }
+
+func TestSectionAndPlaceSection(t *testing.T) {
+	body := "## Guía\n\nTexto de la guía.\n\n## Recursos\n\n- uno\n\n## Prueba\n\nPuntaje."
+	if got := Section(body, "Guía"); got != "Texto de la guía." {
+		t.Errorf("Section = %q", got)
+	}
+	if Section(body, "Feynman") != "" {
+		t.Error("a missing section must be empty")
+	}
+
+	placed := PlaceSection(body, "Conceptos base", "### Probabilidad\n\nBase.", "Guía")
+	guide, extra, res := strings.Index(placed, "## Guía"), strings.Index(placed, "## Conceptos base"), strings.Index(placed, "## Recursos")
+	if guide >= extra || extra >= res || !strings.Contains(placed, "## Prueba") || !strings.Contains(placed, "- uno") {
+		t.Errorf("section not placed after the guide:\n%s", placed)
+	}
+	again := PlaceSection(placed, "Conceptos base", "Nuevo.", "Guía")
+	if strings.Count(again, "## Conceptos base") != 1 || strings.Contains(again, "Probabilidad") || strings.Index(again, "## Conceptos base") != extra {
+		t.Errorf("an existing section must be replaced where it is:\n%s", again)
+	}
+	if got := PlaceSection("Intro.", "X", "y", "Guía"); !strings.HasSuffix(got, "## X\n\ny\n") {
+		t.Errorf("without the anchor section it is appended:\n%s", got)
+	}
+	// the model cannot open sections of its own
+	if got := PlaceSection(body, "X", "## Colado\ntexto", "Guía"); strings.Contains(got, "\n## Colado") {
+		t.Errorf("heading leaked:\n%s", got)
+	}
+}

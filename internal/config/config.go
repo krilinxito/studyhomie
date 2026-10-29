@@ -11,9 +11,10 @@ import (
 const FileName = "studyhomie.toml"
 
 type Config struct {
-	Provider      string   `toml:"provider"` // claude-cli | anthropic-api
-	Model         string   `toml:"model"`    // empty = the provider's default
-	Port          int      `toml:"port"`     // local web UI
+	Provider      string   `toml:"provider"`    // claude-cli | anthropic-api
+	Model         string   `toml:"model"`       // empty = the provider's default
+	QuickModel    string   `toml:"quick_model"` // for short answers (base concepts, doubts); empty = Model
+	Port          int      `toml:"port"`        // local web UI
 	Language      string   `toml:"language"`
 	Vault         string   `toml:"vault"`
 	Interests     []string `toml:"interests"`      // fields the Daily draws from

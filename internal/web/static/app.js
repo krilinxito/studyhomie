@@ -20,7 +20,7 @@ function h(tag, attrs, ...kids) {
 }
 
 async function api(path, opts = {}) {
-  const init = { method: opts.method || 'GET', headers: {} };
+  const init = { method: opts.method || 'GET', headers: {}, signal: opts.signal };
   if (opts.body instanceof FormData) init.body = opts.body;
   else if (opts.body !== undefined) {
     init.headers['Content-Type'] = 'application/json';
@@ -53,7 +53,27 @@ function slugify(s) {
   return out.replace(/-+$/, '');
 }
 
-const STATUS = { new: 'Nuevo', prepared: 'Guía lista', tested: 'Probado', explained: 'Explicado' };
+const STATUS = { new: 'Por descubrir', prepared: 'Guía lista', tested: 'Comprobado', explained: 'Explicado' };
+
+// Each roadmap is a metro line with its own colour (--l0 … --l7). The colour comes from the slug,
+// probing forward on a clash, so a roadmap keeps its colour as long as the others do not change.
+const LINES = 8;
+function assignLines(roadmaps) {
+  const taken = new Set(), out = new Map();
+  for (const slug of roadmaps.map((r) => r.slug).sort()) {
+    let h32 = 2166136261;
+    for (const ch of slug) h32 = Math.imul(h32 ^ ch.codePointAt(0), 16777619) >>> 0;
+    let i = h32 % LINES;
+    for (let tries = 0; tries < LINES && taken.has(i); tries++) i = (i + 1) % LINES;
+    taken.add(i);
+    out.set(slug, i);
+  }
+  return out;
+}
+// CSS colour of a roadmap's line, or the neutral grey for a topic that belongs to none
+const lineColor = (slug) => `var(--${S.lines.has(slug) ? `l${S.lines.get(slug)}` : 'l-none'})`;
+const roadmapTitle = (slug) => (S.roadmaps.find((r) => r.slug === slug) || {}).title || slug;
+const SECTION = { 'Guía': 'La guía', 'Conceptos base': 'Conceptos base', 'Dudas': 'Dudas', 'Prueba': 'Preguntas', 'Feynman': 'Explicación', 'Conexiones': 'Conexiones' };
 const TYPE = { video: 'Video', web: 'Web', book: 'Libro', paper: 'Paper', interactive: 'Interactivo' };
 const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 
@@ -111,12 +131,12 @@ function mdBlock(src, opts) {
 /* ---------- rich blocks inside Markdown: callouts and diagrams ---------- */
 // Obsidian callout syntax ("> [!tip] Title"), so the same notes look right in both apps.
 const CALLOUT = {
-  info: ['info', 'ℹ️', 'Nota'], note: ['info', 'ℹ️', 'Nota'], abstract: ['info', 'ℹ️', 'Resumen'], summary: ['info', 'ℹ️', 'Resumen'],
-  tip: ['tip', '💡', 'Intuición'], hint: ['tip', '💡', 'Pista'], important: ['tip', '💡', 'Importante'], success: ['tip', '✅', 'Listo'],
-  example: ['example', '🧪', 'Ejemplo'],
-  warning: ['warn', '⚠️', 'Ojo'], caution: ['warn', '⚠️', 'Ojo'], danger: ['warn', '⚠️', 'Ojo'], failure: ['warn', '⚠️', 'Error'], bug: ['warn', '⚠️', 'Error'],
-  question: ['question', '🤔', 'Piénsalo'], todo: ['question', '🤔', 'Piénsalo'], help: ['question', '🤔', 'Piénsalo'],
-  quote: ['quote', '❝', 'Cita'], cite: ['quote', '❝', 'Cita'],
+  info: ['info', 'Nota'], note: ['info', 'Nota'], abstract: ['info', 'Resumen'], summary: ['info', 'Resumen'],
+  tip: ['tip', 'Intuición'], hint: ['tip', 'Pista'], important: ['tip', 'Importante'], success: ['tip', 'Listo'],
+  example: ['example', 'Ejemplo'],
+  warning: ['warn', 'Ojo'], caution: ['warn', 'Ojo'], danger: ['warn', 'Ojo'], failure: ['warn', 'Error'], bug: ['warn', 'Error'],
+  question: ['question', 'Piénsalo'], todo: ['question', 'Piénsalo'], help: ['question', 'Piénsalo'],
+  quote: ['quote', 'Cita'], cite: ['quote', 'Cita'],
 };
 
 function enhanceCallouts(root) {
@@ -132,7 +152,7 @@ function enhanceCallouts(root) {
     if (!p.textContent.trim() && !p.firstElementChild) p.remove();
     bq.classList.add('callout', `callout-${def[0]}`);
     bq.setAttribute('role', 'note');
-    bq.prepend(h('div', { class: 'callout-title' }, h('span', { 'aria-hidden': 'true' }, def[1]), m[2].trim() || def[2]));
+    bq.prepend(h('div', { class: 'callout-title' }, m[2].trim() || def[1]));
   }
 }
 
@@ -143,9 +163,8 @@ function loadMermaid() {
     const s = document.createElement('script');
     s.src = 'vendor/mermaid.min.js';
     s.onload = () => {
-      const dark = matchMedia('(prefers-color-scheme: dark)').matches;
       window.mermaid.initialize({
-        startOnLoad: false, securityLevel: 'strict', theme: dark ? 'dark' : 'neutral',
+        startOnLoad: false, securityLevel: 'strict', theme: 'neutral',
         htmlLabels: false, flowchart: { htmlLabels: false }, fontFamily: getComputedStyle(document.body).fontFamily,
       });
       resolve(window.mermaid);
@@ -187,33 +206,79 @@ function drawDiagram(body, src) {
 }
 
 /* ---------- state ---------- */
-const S = { cy: null, graph: null, selected: null, note: null, roadmaps: [], info: null, run: null };
+const S = {
+  cy: null, graph: null, selected: null, note: null, roadmaps: [], info: null, run: null,
+  lines: new Map(), view: 'home', readerSlug: null, filterRm: '',
+};
 
 /* ---------- views ---------- */
+const VIEWS = ['home', 'map', 'note', 'session'];
 function showView(name) {
-  for (const v of ['map', 'session']) {
-    $(`#view-${v}`).hidden = v !== name;
-    $(`#tab-${v}`).setAttribute('aria-selected', String(v === name));
-  }
-  if (name === 'map' && S.cy) S.cy.resize();
+  S.view = name;
+  for (const v of VIEWS) $(`#view-${v}`).hidden = v !== name;
+  // the reading page belongs to the map, so that tab stays lit
+  const tab = name === 'note' ? 'map' : name;
+  for (const b of $$('.tabs button')) b.setAttribute('aria-selected', String(b.dataset.view === tab));
+  if (name === 'map') fitMap();
+  if (name === 'session' && !S.run) showHistory();
 }
-$$('.tabs button').forEach((b) => b.addEventListener('click', () => showView(b.dataset.view)));
 
-/* ---------- start forms ---------- */
-$$('.seg button').forEach((b) => b.addEventListener('click', () => {
-  $$('.seg button').forEach((x) => x.setAttribute('aria-selected', String(x === b)));
-  for (const f of ['topic', 'roadmap', 'material']) $(`#form-${f}`).hidden = f !== b.dataset.form;
+// Cytoscape cannot fit a graph into a hidden container, so a new layout waits until the map is on screen.
+function fitMap() {
+  if (!S.cy || S.view !== 'map') return;
+  S.cy.resize();
+  if (S.needsFit) { S.cy.fit(undefined, 50); S.needsFit = false; }
+}
+$$('.tabs button').forEach((b) => b.addEventListener('click', () => {
+  // leaving a finished session open would hide the history behind it
+  if (b.dataset.view === 'session' && S.run && S.run.done && S.view === 'session') leaveSession();
+  showView(b.dataset.view);
 }));
+$('.brand').addEventListener('click', (e) => { e.preventDefault(); showView('home'); });
+
+/* ---------- start dialog ---------- */
+const startDialog = $('#start-dialog');
+function openStart(form = 'topic') {
+  if (S.run && !S.run.done) { toast('Ya hay una sesión en curso. Termínala o cancélala primero.'); showView('session'); return; }
+  pickForm(form);
+  startDialog.showModal();
+  const first = { daily: '#daily-field', roadmap: '#in-subject', material: '#in-files', topic: '#in-topic' }[form];
+  $(first).focus();
+}
+function pickForm(form) {
+  $$('.seg button').forEach((x) => x.setAttribute('aria-selected', String(x.dataset.form === form)));
+  for (const f of ['daily', 'material', 'roadmap', 'topic']) $(`#form-${f}`).hidden = f !== form;
+  if (form === 'daily') $('#form-daily-body').replaceChildren(dailyPicker());
+}
+// The three ways to start live in the top bar. A daily topic already drawn for today is picked up, not drawn again.
+$('#btn-daily').addEventListener('click', () => {
+  const d = S.daily;
+  if (!d || !d.topic) return openStart('daily');
+  if (d.status === 'explained') return openNote(d.slug);
+  if (S.run && !S.run.done) return openStart('daily'); // explains that a session is running
+  startRun({ cmd: 'daily', title: d.topic }, d.topic);
+});
+$('#btn-material').addEventListener('click', () => openStart('material'));
+$('#btn-roadmap').addEventListener('click', () => openStart('roadmap'));
+$('#link-topic').addEventListener('click', () => openStart('topic'));
+$$('.seg button').forEach((b) => b.addEventListener('click', () => pickForm(b.dataset.form)));
+startDialog.addEventListener('click', (e) => { if (e.target === startDialog) startDialog.close(); }); // a click on the backdrop
 
 $('#form-topic').addEventListener('submit', (e) => {
   e.preventDefault();
   const topic = $('#in-topic').value.trim();
-  if (topic) startRun({ cmd: 'study', topic }, `Estudiando: ${topic}`);
+  if (!topic) return;
+  startDialog.close();
+  $('#in-topic').value = '';
+  startRun({ cmd: 'study', topic, title: topic }, topic);
 });
 $('#form-roadmap').addEventListener('submit', (e) => {
   e.preventDefault();
   const subject = $('#in-subject').value.trim();
-  if (subject) startRun({ cmd: 'roadmap', subject }, `Roadmap: ${subject}`);
+  if (!subject) return;
+  startDialog.close();
+  $('#in-subject').value = '';
+  startRun({ cmd: 'roadmap', subject, title: subject }, `Línea: ${subject}`);
 });
 $('#form-material').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -225,30 +290,85 @@ $('#form-material').addEventListener('submit', async (e) => {
   btn.disabled = true;
   try {
     const up = await api('/api/upload', { method: 'POST', body: fd });
-    await startRun({ cmd: 'material', files: up.files }, `Material: ${files[0].name}`);
+    startDialog.close();
+    $('#in-files').value = '';
+    await startRun({ cmd: 'material', files: up.files, title: `Apuntes: ${files[0].name}` }, `Apuntes: ${files[0].name}`);
   } catch (err) { toast(err.message); } finally { btn.disabled = false; }
 });
+
+/* ---------- note drawer ---------- */
+const drawer = $('#drawer');
+function setDrawer(open) {
+  drawer.classList.toggle('open', open);
+  drawer.toggleAttribute('inert', !open);
+  drawer.setAttribute('aria-hidden', String(!open));
+  $('#scrim').hidden = !open;
+  $('#btn-notes').setAttribute('aria-expanded', String(open));
+  if (open) { renderDrawer(); $('#drawer-search').focus(); } else $('#btn-notes').focus({ preventScroll: true });
+}
+$('#btn-notes').addEventListener('click', () => setDrawer(!drawer.classList.contains('open')));
+$('#drawer-close').addEventListener('click', () => setDrawer(false));
+$('#scrim').addEventListener('click', () => setDrawer(false));
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && drawer.classList.contains('open') && !startDialog.open) setDrawer(false); });
+$('#drawer-search').addEventListener('input', renderDrawer);
+
+// every note, grouped by the line (roadmap) it belongs to
+function renderDrawer() {
+  const body = $('#drawer-body');
+  body.replaceChildren();
+  const nodes = (S.graph && S.graph.nodes) || [];
+  const q = slugify($('#drawer-search').value);
+  const shown = nodes.filter((n) => !q || slugify(n.label).includes(q) || n.id.includes(q));
+  if (!shown.length) {
+    body.append(h('p', { class: 'drawer-empty' }, nodes.length ? 'Ninguna nota coincide.' : 'Aún no tienes notas. Cada tema que explores quedará guardado aquí.'));
+    return;
+  }
+  const groups = new Map();
+  for (const n of [...shown].sort((a, b) => (a.order || 0) - (b.order || 0) || a.label.localeCompare(b.label))) {
+    const k = n.roadmap || '';
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(n);
+  }
+  const keys = [...groups.keys()].filter(Boolean).sort((a, b) => roadmapTitle(a).localeCompare(roadmapTitle(b)));
+  if (groups.has('')) keys.push('');
+  for (const k of keys) {
+    body.append(h('section', { class: 'dg', style: `--lc: ${lineColor(k)}` },
+      h('h3', {}, k ? roadmapTitle(k) : 'Temas sueltos'),
+      h('ul', {}, groups.get(k).map((n) => h('li', {},
+        h('button', { class: `dn${n.id === S.readerSlug && S.view === 'note' ? ' on' : ''}`, type: 'button', onclick: () => { setDrawer(false); openNote(n.id); } },
+          h('i', { class: `st st-${n.status}`, title: STATUS[n.status] || n.status }), n.label))))));
+  }
+}
 
 /* ---------- daily ---------- */
 async function loadDaily() {
   const d = await api('/api/daily');
+  S.daily = d;
   const box = $('#daily-body');
   box.replaceChildren();
   if (d.topic) {
     const done = d.status === 'explained';
     box.append(...[
-      h('p', { class: 'daily-topic' }, d.topic),
+      h('h1', { class: 'daily-topic' }, d.topic),
       h('div', { class: 'daily-meta' },
         d.field && h('span', { class: 'chip' }, d.field),
-        h('span', { class: 'chip status', style: `--c: var(--s-${d.status || 'new'})` }, STATUS[d.status] || 'Nuevo')),
+        h('span', { class: 'chip status', style: `--c: var(--s-${d.status || 'new'})` }, STATUS[d.status] || STATUS.new)),
       h('div', { class: 'actions' },
         done
-          ? h('button', { class: 'btn', type: 'button', onclick: () => selectNode(d.slug, true) }, 'Ver mi nota')
-          : h('button', { class: 'btn primary', type: 'button', onclick: () => startRun({ cmd: 'daily' }, `Reto de hoy: ${d.topic}`) }, 'Continuar')),
-      done && h('p', { class: 'hint' }, 'Completado. Mañana habrá un tema nuevo.'),
+          ? h('button', { class: 'btn primary', type: 'button', onclick: () => openNote(d.slug) }, 'Leer mi nota')
+          : h('button', { class: 'btn green', type: 'button', onclick: () => startRun({ cmd: 'daily', title: d.topic }, d.topic) }, 'Seguir con esto')),
+      done && h('p', { class: 'hint' }, 'Hecho por hoy. Mañana habrá otra cosa por descubrir.'),
     ].filter(Boolean)); // append() would print a literal "false"
     return;
   }
+  box.append(h('div', { class: 'daily-pick' },
+    h('p', { class: 'lead' }, '¿Qué te gustaría descubrir hoy?'),
+    h('p', { class: 'hint' }, 'Un tema al azar para ampliar tu cultura, sin examen ni prisa. Solo porque sí.'),
+    dailyPicker()));
+}
+
+// the field chooser and the draw button, shared by the home page and the Daily dialog
+function dailyPicker() {
   const OTHER = '\0other'; // cannot collide with a field name typed by the user
   const sel = h('select', { id: 'daily-field', 'aria-label': 'Campo del reto' },
     h('option', { value: '' }, 'Cualquiera de mis intereses'),
@@ -264,60 +384,100 @@ async function loadDaily() {
   const draw = () => {
     const field = sel.value === OTHER ? custom.value.trim() : sel.value;
     if (sel.value === OTHER && !field) { toast('Escribe el campo del conocimiento.'); custom.focus(); return; }
-    startRun({ cmd: 'daily', field }, 'Reto de hoy');
+    if (startDialog.open) startDialog.close();
+    startRun({ cmd: 'daily', field, title: 'Lo de hoy' }, 'Lo de hoy');
   };
   custom.addEventListener('keydown', (e) => { if (e.key === 'Enter') draw(); });
-  box.append(h('div', { class: 'daily-pick' },
-    h('p', { class: 'hint' }, 'Un tema aleatorio para ampliar tu cultura polímata, y un día para entenderlo.'),
-    sel,
-    custom,
-    h('button', { class: 'btn primary', type: 'button', onclick: draw }, 'Sortear reto')));
+  return h('div', { class: 'daily-fields' }, sel, custom, h('button', { class: 'btn green', type: 'button', onclick: draw }, 'Sorpréndeme'));
 }
 
-/* ---------- roadmaps ---------- */
+/* ---------- roadmaps (lines) ---------- */
 async function loadRoadmaps() {
   S.roadmaps = await api('/api/roadmaps');
+  S.lines = assignLines(S.roadmaps);
+  if (S.filterRm && !S.roadmaps.some((r) => r.slug === S.filterRm)) S.filterRm = '';
   const ul = $('#roadmaps');
   ul.replaceChildren();
-  const filter = $('#filter-rm');
-  const cur = filter.value;
-  filter.replaceChildren(h('option', { value: '' }, 'Todos los temas'),
-    ...S.roadmaps.map((r) => h('option', { value: r.slug }, r.title))); // native DOM methods do not take arrays
-  filter.value = S.roadmaps.some((r) => r.slug === cur) ? cur : '';
   for (const r of S.roadmaps) {
     const pct = r.total ? Math.round((100 * r.done) / r.total) : 0;
-    ul.append(h('li', { class: 'rm-item' },
-      h('button', { class: 'rm-title', type: 'button', onclick: () => { filter.value = r.slug; applyFilters(); showView('map'); } }, r.title),
-      h('div', { class: 'bar', role: 'progressbar', 'aria-valuenow': pct, 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-label': `Progreso de ${r.title}` }, h('i', { style: `width:${pct}%` })),
+    ul.append(h('li', { class: 'rm-item', style: `--lc: ${lineColor(r.slug)}` },
+      h('span', { class: 'rm-bullet', 'aria-hidden': 'true' }),
+      h('button', { class: 'rm-title', type: 'button', onclick: () => { S.filterRm = r.slug; renderChips(); applyFilters(); showView('map'); } }, r.title),
       h('div', { class: 'rm-foot' },
-        h('span', {}, `${r.done}/${r.total} dominados`),
-        r.next
-          ? h('button', { class: 'btn small primary', type: 'button', title: r.next.title, onclick: () => startRun({ cmd: 'next', roadmap: r.slug }, `Siguiente: ${r.next.title}`) }, 'Siguiente')
-          : h('span', {}, r.total ? 'Completo' : ''))));
+        h('div', { class: 'bar', role: 'progressbar', 'aria-valuenow': pct, 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-label': `Progreso de ${r.title}` }, h('i', { style: `width:${pct}%` })),
+        h('span', {}, `${r.done} de ${r.total}`)),
+      r.next
+        ? h('button', { class: 'btn small primary', type: 'button', title: r.next.title, onclick: () => startRun({ cmd: 'next', roadmap: r.slug, title: r.next.title }, r.next.title) }, 'Siguiente')
+        : h('span', { class: 'hint' }, r.total ? 'Completa' : '')));
+  }
+  renderChips();
+}
+
+// one chip per line filters the map
+function renderChips() {
+  const box = $('#filter-rm');
+  box.replaceChildren();
+  if (S.roadmaps.length < 1) return;
+  const chip = (slug, label) => h('button', {
+    class: `line-chip${slug ? '' : ' all'}`, type: 'button', 'aria-pressed': String(S.filterRm === slug),
+    style: slug ? `--lc: ${lineColor(slug)}` : null,
+    onclick: () => { S.filterRm = S.filterRm === slug ? '' : slug; renderChips(); applyFilters(); },
+  }, label);
+  box.append(chip('', 'Todas'), ...S.roadmaps.map((r) => chip(r.slug, r.title)));
+}
+
+// topics you started but have not finished: where to go next
+function renderRecent() {
+  const ul = $('#recent');
+  ul.replaceChildren();
+  const next = { new: 'Estudiarlo', prepared: 'Responder preguntas', tested: 'Explicarlo' };
+  const nodes = ((S.graph && S.graph.nodes) || []).filter((n) => n.status === 'prepared' || n.status === 'tested');
+  for (const n of nodes.slice(0, 7)) {
+    ul.append(h('li', {}, h('button', { class: 'recent-item', type: 'button', onclick: () => openNote(n.id) },
+      h('i', { class: `st st-${n.status}` }),
+      h('span', { class: 'recent-title' }, n.label),
+      h('span', { class: 'recent-meta' }, next[n.status]))));
   }
 }
 
 /* ---------- graph ---------- */
+// A transit map: each roadmap is a thick coloured line, each topic a station on it.
+// A station is an empty ring (to discover), half filled (guide ready), filled (checked), filled with an outer ring (explained).
 function cyStyle() {
-  const ink = cssVar('--ink'), muted = cssVar('--muted'), accent = cssVar('--accent');
-  const st = { new: cssVar('--s-new'), prepared: cssVar('--s-prepared'), tested: cssVar('--s-tested'), explained: cssVar('--s-explained') };
+  const ink = cssVar('--ink'), bg = cssVar('--bg'), muted = cssVar('--muted');
+  const lineOf = (i) => cssVar(i < 0 ? '--l-none' : `--l${i}`);
   const s = [
     { selector: 'node', style: {
-      'background-color': st.new, label: 'data(label)', color: ink, 'font-size': 13, 'font-family': cssVar('--font'),
-      'text-valign': 'bottom', 'text-margin-y': 5, 'text-wrap': 'wrap', 'text-max-width': 120,
-      width: 'mapData(mastery, 0, 100, 22, 40)', height: 'mapData(mastery, 0, 100, 22, 40)',
-      'border-width': 2, 'border-color': cssVar('--surface'), 'transition-property': 'opacity', 'transition-duration': '150ms' } },
-    { selector: 'edge', style: { width: 1.5, 'line-color': muted, 'curve-style': 'bezier', opacity: .5 } },
-    { selector: 'edge[kind="requires"]', style: { 'target-arrow-shape': 'triangle', 'target-arrow-color': muted, 'arrow-scale': .9 } },
-    { selector: 'edge[kind="related"]', style: { 'line-style': 'dashed', width: 1, opacity: .28, 'line-color': muted } },
-    { selector: 'node:selected', style: { 'border-width': 4, 'border-color': accent } },
-    { selector: 'edge.hl', style: { opacity: 1, width: 2.2, 'line-color': accent, 'target-arrow-color': accent } },
+      'background-color': bg, 'border-width': 4, 'border-color': lineOf(-1), shape: 'ellipse', width: 20, height: 20,
+      label: 'data(label)', color: ink, 'font-size': 13, 'font-weight': 600, 'font-family': cssVar('--font'),
+      'text-valign': 'bottom', 'text-margin-y': 8, 'text-wrap': 'wrap', 'text-max-width': 130,
+      'text-background-color': bg, 'text-background-opacity': .9, 'text-background-padding': 2,
+      'z-index-compare': 'manual', 'z-index': 10, 'overlay-opacity': 0,
+      'transition-property': 'opacity', 'transition-duration': '150ms' } },
+    { selector: 'edge', style: {
+      width: 7, 'line-color': lineOf(-1), 'curve-style': 'taxi', 'taxi-direction': 'horizontal', 'taxi-radius': 26,
+      'line-cap': 'round', 'z-index-compare': 'manual', 'z-index': 1, 'overlay-opacity': 0 } },
+    { selector: 'edge[kind="related"]', style: { 'curve-style': 'bezier', 'line-style': 'dashed', width: 2, opacity: .45, 'line-color': muted } },
     { selector: 'node.grouplabel', style: {
-      width: 1, height: 1, 'background-opacity': 0, 'border-width': 0, label: 'data(label)', 'font-size': 15, 'font-weight': 700,
-      color: ink, 'text-halign': 'right', 'text-valign': 'center', 'text-margin-x': 4, 'text-wrap': 'none', events: 'no' } },
-    { selector: '.dim', style: { opacity: .12 } },
+      width: 1, height: 1, 'background-opacity': 0, 'border-width': 0, label: 'data(label)', 'font-size': 16, 'font-weight': 700,
+      color: ink, 'text-halign': 'right', 'text-valign': 'center', 'text-margin-x': 6, 'text-wrap': 'none', 'text-background-opacity': 0, events: 'no' } },
   ];
-  for (const k of Object.keys(st)) s.push({ selector: `node[status="${k}"]`, style: { 'background-color': st[k] } });
+  for (let i = -1; i < LINES; i++) {
+    const c = lineOf(i);
+    s.push(
+      { selector: `node[line = ${i}]`, style: { 'border-color': c } },
+      { selector: `node[line = ${i}][status = "prepared"]`, style: { 'pie-size': '100%', 'pie-1-background-color': c, 'pie-1-background-size': 50, 'pie-1-background-opacity': 1 } },
+      { selector: `node[line = ${i}][status = "tested"]`, style: { 'background-color': c } },
+      { selector: `node[line = ${i}][status = "explained"]`, style: { 'background-color': c, 'outline-width': 3, 'outline-color': c, 'outline-offset': 3, 'outline-opacity': 1 } },
+      { selector: `edge[kind = "requires"][line = ${i}]`, style: { 'line-color': c } },
+      { selector: `node.grouplabel[line = ${i}]`, style: { color: c } },
+    );
+  }
+  s.push(
+    { selector: 'node:selected', style: { 'outline-width': 3, 'outline-color': ink, 'outline-offset': 4, 'outline-opacity': 1 } },
+    { selector: 'edge.hl', style: { width: 9 } },
+    { selector: '.dim', style: { opacity: .12 } },
+  );
   return s;
 }
 
@@ -340,11 +500,10 @@ function layeredLayout(g) {
     if (!prereqs.has(e.to)) prereqs.set(e.to, []);
     prereqs.get(e.to).push(e.from);
   }
-  const rmTitle = (k) => (S.roadmaps.find((r) => r.slug === k) || {}).title || k;
   let y0 = 0;
   for (const key of keys) {
     const nodes = groups.get(key);
-    labels.push({ id: `g:${key}`, label: key ? rmTitle(key) : 'Sin roadmap', x: 0, y: y0 - 46 });
+    labels.push({ id: `g:${key}`, label: key ? roadmapTitle(key) : 'Temas sueltos', roadmap: key, x: 0, y: y0 - 46 });
     if (!key) {
       nodes.forEach((n, i) => { pos[n.id] = { x: (i % 5) * GX, y: y0 + Math.floor(i / 5) * GY }; });
       y0 += Math.ceil(nodes.length / 5) * GY + 120;
@@ -392,26 +551,30 @@ async function loadGraph() {
   const same = S.graph && graphSignature(S.graph) === graphSignature(g);
   S.graph = g;
   $('#map-empty').hidden = g.nodes.length > 0;
+  const lineOfRm = (slug) => (S.lines.has(slug) ? S.lines.get(slug) : -1);
+  const lineOfNode = new Map(g.nodes.map((n) => [n.id, lineOfRm(n.roadmap || '')]));
   if (!S.cy) {
     S.cy = cytoscape({ container: $('#cy'), elements: [], style: cyStyle(), minZoom: .15, maxZoom: 3 });
     S.cy.on('tap', 'node', (ev) => selectNode(ev.target.id()));
     S.cy.on('tap', (ev) => { if (ev.target === S.cy) closePanel(); });
-    matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => S.cy.style(cyStyle()));
   }
   if (same) {
     for (const n of g.nodes) {
       const el = S.cy.getElementById(n.id);
-      el.data({ status: n.status, mastery: n.mastery, label: n.label });
+      el.data({ status: n.status, mastery: n.mastery, label: n.label, line: lineOfNode.get(n.id) });
     }
+    S.cy.edges().forEach((e) => e.data('line', lineOfNode.get(e.target().id())));
+    S.cy.nodes('.grouplabel').forEach((l) => l.data('line', lineOfRm(l.data('roadmap'))));
   } else {
     S.cy.elements().remove();
     const { pos, labels } = layeredLayout(g);
     S.cy.add([
-      ...g.nodes.map((n) => ({ group: 'nodes', data: { id: n.id, label: n.label, status: n.status, mastery: n.mastery, roadmap: n.roadmap || '' }, position: pos[n.id] })),
-      ...labels.map((l) => ({ group: 'nodes', data: { id: l.id, label: l.label }, position: { x: l.x, y: l.y }, classes: 'grouplabel', selectable: false, grabbable: false })),
-      ...g.edges.map((e, i) => ({ group: 'edges', data: { id: `e${i}`, source: e.from, target: e.to, kind: e.kind } })),
+      ...g.nodes.map((n) => ({ group: 'nodes', data: { id: n.id, label: n.label, status: n.status, mastery: n.mastery, roadmap: n.roadmap || '', line: lineOfNode.get(n.id) }, position: pos[n.id] })),
+      ...labels.map((l) => ({ group: 'nodes', data: { id: l.id, label: l.label, roadmap: l.roadmap, line: lineOfRm(l.roadmap) }, position: { x: l.x, y: l.y }, classes: 'grouplabel', selectable: false, grabbable: false })),
+      ...g.edges.map((e, i) => ({ group: 'edges', data: { id: `e${i}`, source: e.from, target: e.to, kind: e.kind, line: lineOfNode.get(e.to) } })),
     ]);
-    if (g.nodes.length) S.cy.fit(undefined, 50);
+    S.needsFit = g.nodes.length > 0;
+    fitMap();
   }
   applyFilters();
 }
@@ -419,7 +582,7 @@ async function loadGraph() {
 function applyFilters() {
   if (!S.cy) return;
   const q = slugify($('#search').value);
-  const rm = $('#filter-rm').value;
+  const rm = S.filterRm;
   S.cy.batch(() => {
     S.cy.nodes().not('.grouplabel').forEach((n) => {
       const okQ = !q || slugify(n.data('label')).includes(q) || n.id().includes(q);
@@ -435,17 +598,17 @@ $('#search').addEventListener('keydown', (e) => {
   const hit = S.cy.nodes().not('.grouplabel').filter((n) => !n.hasClass('dim'))[0];
   if (hit) { selectNode(hit.id(), true); }
 });
-$('#filter-rm').addEventListener('change', applyFilters);
 
-/* ---------- note panel ---------- */
+/* ---------- station card (map) ---------- */
 function closePanel() {
   $('#note-panel').hidden = true;
   S.selected = null;
   if (S.cy) { S.cy.elements().unselect(); S.cy.edges().removeClass('hl'); }
 }
 
-async function selectNode(slug, center = false) {
-  showView('map');
+// Selects a station on the map and shows its card.
+async function selectNode(slug, center = false, quiet = false) {
+  if (!quiet) showView('map');
   try {
     const n = await api(`/api/notes/${encodeURIComponent(slug)}`);
     S.selected = slug;
@@ -457,6 +620,20 @@ async function selectNode(slug, center = false) {
       const el = S.cy.getElementById(slug);
       if (el.nonempty()) { el.select(); el.connectedEdges().addClass('hl'); if (center) S.cy.animate({ center: { eles: el }, zoom: Math.max(S.cy.zoom(), 1) }, { duration: 250 }); }
     }
+  } catch (err) { toast(err.message); }
+}
+
+// Opens a note as a reading page.
+// With quiet, the page is redrawn in place (after a session changed the note) instead of scrolled to the top.
+async function openNote(slug, quiet = false) {
+  try {
+    const n = await api(`/api/notes/${encodeURIComponent(slug)}`);
+    const top = $('#view-note').scrollTop;
+    S.note = n;
+    S.readerSlug = slug;
+    renderReader(n);
+    showView('note');
+    $('#view-note').scrollTop = quiet ? top : 0;
   } catch (err) { toast(err.message); }
 }
 
@@ -473,6 +650,63 @@ function openSim(slug, title) {
 $('#sim-close').addEventListener('click', () => $('#sim-dialog').close());
 $('#sim-dialog').addEventListener('close', () => { $('#sim-frame').src = 'about:blank'; });
 
+// How a note is studied, in order: study it, answer questions, explain it. Shared by the station card
+// and the reading page. The step to do next is highlighted; finished steps can be done again.
+// Extending into base concepts is not a step: it is an optional extra for anyone who needs more background.
+const STEP_RANK = { new: 0, prepared: 1, tested: 2, explained: 3 };
+function noteControls(n, title, status, compact = false) {
+  const rank = STEP_RANK[status] ?? 0;
+  const nInput = h('input', { type: 'number', min: 1, max: 30, value: 5, 'aria-label': 'Número de preguntas' });
+  const diff = h('select', { 'aria-label': 'Dificultad' },
+    ['básica', 'media', 'avanzada'].map((d) => h('option', { value: d, selected: d === 'media' }, d)));
+  const steps = [
+    { label: 'Estudiar', done: rank >= 1, enabled: true, run: () => {
+      if (rank >= 1 && !confirm('¿Volver a escribir la guía? Reemplaza la que tienes.')) return;
+      startRun(rank >= 1 ? { cmd: 'prepare', topic: title, title } : { cmd: 'study', topic: title, title }, title);
+    } },
+    { label: 'Responder preguntas', done: rank >= 2, enabled: rank >= 1,
+      run: () => startRun({ cmd: 'quiz', slug: n.slug, n: Number(nInput.value) || 5, difficulty: diff.value, title }, `Preguntas: ${title}`) },
+    { label: 'Explicar', done: rank >= 3, enabled: rank >= 1, run: () => startRun({ cmd: 'feynman', slug: n.slug, title }, `Explicar: ${title}`) },
+  ];
+  const current = steps.findIndex((s) => !s.done);
+  const list = h('ol', { class: `sequence${compact ? ' compact' : ''}`, 'aria-label': 'Orden para estudiar este tema' }, steps.map((s, i) => {
+    const state = s.done ? 'done' : i === current ? 'current' : 'todo';
+    return h('li', {}, h('button', {
+      class: `step${state === 'current' ? ' go' : ''}`, type: 'button', 'data-state': state, disabled: !s.enabled,
+      'aria-current': state === 'current' ? 'step' : null,
+      title: s.done ? 'Ya lo hiciste. Pulsa para repetirlo.' : null, onclick: s.run,
+    }, h('span', { class: 'step-n', 'aria-hidden': 'true' }, s.done ? '✓' : String(i + 1)), s.label));
+  }));
+
+  // Extending and doubts work on the article itself, so only the reading page has them
+  const extras = [];
+  if (rank >= 1 && !compact) {
+    const has = /^## Conceptos base\s*$/m.test(n.body || '');
+    extras.push(
+      h('button', {
+        class: 'btn small yellow', type: 'button',
+        title: 'Explica desde cero lo que la guía da por sabido, y lo añade al artículo. Es opcional.',
+        onclick: (e) => extendInline(n, e.currentTarget),
+      }, has ? 'Rehacer los conceptos base' : 'Extender: conceptos base'),
+      h('button', {
+        class: 'btn small blue', type: 'button',
+        title: 'Cuéntame qué no entendiste y lo hablamos. La respuesta queda en el artículo.',
+        onclick: focusDoubts,
+      }, 'Tengo una duda'));
+  }
+  const sim = n.hasSimulation
+    ? h('button', { class: 'btn small', type: 'button', onclick: () => openSim(n.slug, title) }, 'Abrir simulación')
+    : rank >= 1 && h('button', { class: 'btn small', type: 'button', onclick: () => startRun({ cmd: 'interactive', slug: n.slug, title }, `Simulación: ${title}`) }, 'Generar simulación');
+  if (sim) extras.push(sim);
+
+  return h('div', { class: 'controls' },
+    list,
+    rank >= 1 ? h('div', { class: 'quiz-opts' }, 'Preguntas:', nInput, 'en total, dificultad', diff) : null,
+    extras.length ? h('div', { class: 'extras' }, extras) : null);
+}
+
+const statusChip = (status) => h('span', { class: 'chip status', style: `--c: var(--s-${status})` }, STATUS[status] || status);
+
 function renderPanel(n) {
   const p = $('#note-panel');
   const m = n.meta;
@@ -480,49 +714,255 @@ function renderPanel(n) {
   const title = m.title || n.slug;
   p.replaceChildren();
   p.hidden = false;
-
-  const nInput = h('input', { type: 'number', min: 1, max: 30, value: 5, 'aria-label': 'Número de preguntas' });
-  const diff = h('select', { 'aria-label': 'Dificultad' },
-    ['básica', 'media', 'avanzada'].map((d) => h('option', { value: d, selected: d === 'media' }, d)));
-  const quiz = () => startRun({ cmd: 'quiz', slug: n.slug, n: Number(nInput.value) || 5, difficulty: diff.value }, `Prueba: ${title}`);
-  const feyn = () => startRun({ cmd: 'feynman', slug: n.slug }, `Feynman: ${title}`);
-  const btn = (label, fn, primary) => h('button', { class: `btn small${primary ? ' primary' : ''}`, type: 'button', onclick: fn }, label);
-
-  const actions = [];
-  if (status === 'new') actions.push(btn('Preparar y estudiar', () => startRun({ cmd: 'study', topic: title }, `Estudiando: ${title}`), true));
-  if (status === 'prepared') actions.push(btn('Hacer la prueba', quiz, true), btn('Explicar (Feynman)', feyn));
-  if (status === 'tested') actions.push(btn('Explicar (Feynman)', feyn, true), btn('Repetir prueba', quiz));
-  if (status === 'explained') actions.push(btn('Repetir Feynman', feyn), btn('Repetir prueba', quiz));
-  if (status !== 'new') actions.push(btn('Rehacer guía', () => startRun({ cmd: 'prepare', topic: title }, `Guía: ${title}`)));
-  if (n.hasSimulation) actions.push(btn('Abrir simulación', () => openSim(n.slug, title)));
-  else if (status !== 'new') actions.push(btn('Generar simulación', () => startRun({ cmd: 'interactive', slug: n.slug }, `Simulación: ${title}`)));
-
+  p.style.setProperty('--lc', lineColor(m.roadmap || ''));
   p.append(...[
-    h('div', { class: 'panel-head' }, h('h3', {}, title),
-      h('button', { class: 'btn small', type: 'button', 'aria-label': 'Cerrar panel', onclick: closePanel }, '✕')),
+    h('div', { class: 'station-line' }),
+    h('div', { class: 'station-head' }, h('h3', {}, title),
+      h('button', { class: 'btn small', type: 'button', 'aria-label': 'Cerrar', onclick: closePanel }, '✕')),
     h('div', { class: 'chips' },
-      h('span', { class: 'chip status', style: `--c: var(--s-${status})` }, STATUS[status] || status),
-      m.roadmap && h('span', { class: 'chip' }, `Roadmap: ${(S.roadmaps.find((r) => r.slug === m.roadmap) || {}).title || m.roadmap}`),
-      m.field && h('span', { class: 'chip' }, m.field),
-      m.source && h('span', { class: 'chip' }, m.source)),
+      statusChip(status),
+      m.roadmap && h('span', { class: 'chip' }, roadmapTitle(m.roadmap)),
+      m.field && h('span', { class: 'chip' }, m.field)),
     m.mastery ? h('div', { class: 'mastery' },
-      h('div', { class: 'row' }, h('span', {}, 'Dominio'), h('span', {}, `${m.mastery}/100`)),
-      h('div', { class: 'bar' }, h('i', { style: `width:${m.mastery}%` }))) : null,
-    h('div', { class: 'actions' }, actions),
-    status !== 'new' ? h('div', { class: 'quiz-opts' }, 'Prueba:', nInput, 'preguntas', diff) : null,
-  ].filter(Boolean)); // native append() would print a literal "null"
-
-  const res = m.resources || [];
-  if (res.length) {
-    p.append(h('h4', {}, 'Material recomendado'), h('ul', { class: 'res-list' }, res.map((r) => resourceCard(r, { slug: n.slug, title }))));
-  }
-  p.append(h('h4', {}, 'Nota'), mdBlock(stripSection(n.body, 'Recursos')));
-  if (n.requires && n.requires.length) p.append(h('h4', {}, 'Requiere'), linkChips(n.requires));
-  if (n.backlinks && n.backlinks.length) p.append(h('h4', {}, 'Enlazan aquí'), linkChips(n.backlinks));
+      h('div', { class: 'row' }, h('span', {}, 'Lo que llevas'), h('span', {}, `${m.mastery}/100`)),
+      h('div', { class: 'bar', style: `--lc: ${lineColor(m.roadmap || '')}` }, h('i', { style: `width:${m.mastery}%` }))) : null,
+    status !== 'new' && h('div', { class: 'actions' }, h('button', { class: 'btn small blue', type: 'button', onclick: () => openNote(n.slug) }, 'Leer la guía')),
+    noteControls(n, title, status, true),
+  ].filter(Boolean)); // native append() would print a literal "false"
   p.scrollTop = 0;
 }
 
-const TYPE_ICON = { video: '▶', web: '🌐', book: '📖', paper: '📄', interactive: '🧪' };
+// Drops emojis from a guide. Fenced code is kept as it is.
+function stripEmoji(md) {
+  return md.split(/(```[\s\S]*?```)/g).map((part, i) => (i % 2 ? part : part
+    .replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}\u{20E3}]/gu, '')
+    .replace(/^([ \t]*(?:#+|>|[-*]|\d+\.)) {2,}(?=\S)/gm, '$1 ') // a heading or list item that began with an emoji keeps a single space
+    .replace(/[ \t]+$/gm, ''))).join('');
+}
+
+/* ---------- base concepts and doubts, inside the article ---------- */
+// Where a section of the article ends: the heading that follows it, null when it runs to the end,
+// undefined when the article has no such section.
+function sectionEnd(md, heading) {
+  const h2 = $$('h2', md).find((x) => x.textContent.trim() === heading);
+  if (!h2) return undefined;
+  let el = h2.nextElementSibling;
+  while (el && el.tagName !== 'H2') el = el.nextElementSibling;
+  return el;
+}
+const insertBefore = (md, node, before) => (before ? md.insertBefore(node, before) : md.append(node));
+// A block that says the AI is working, with a button to stop it. Stopping aborts the request, and the server then stops the model.
+const thinkingBlock = (text, onCancel) => h('div', { class: 'thinking', role: 'status' },
+  h('span', { class: 'pulse', 'aria-hidden': 'true' }), text,
+  h('button', { class: 'btn small red', type: 'button', onclick: onCancel }, 'Cancelar'));
+const wasCancelled = (err) => err && err.name === 'AbortError';
+const smoothness = () => (matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth');
+
+// The "Dudas" section always shows in an article that has a guide: its saved questions and, at the end, the box to ask another.
+function placeDoubts(md, n) {
+  let before = sectionEnd(md, 'Dudas');
+  if (before === undefined) {
+    // no doubts yet: the section goes after the base concepts, or else after the guide
+    before = sectionEnd(md, 'Conceptos base');
+    if (before === undefined) before = sectionEnd(md, 'La guía');
+    if (before === undefined) before = null;
+    insertBefore(md, h('h2', {}, 'Dudas'), before);
+  }
+  insertBefore(md, doubtsBox(n), before);
+}
+
+function doubtsBox(n) {
+  const ta = h('textarea', {
+    rows: 3, maxlength: 1500, 'aria-label': 'Tu duda',
+    placeholder: 'Cuéntame qué entiendes y qué no. Por ejemplo: entiendo qué es una probabilidad, pero no por qué se multiplican.',
+  });
+  const send = h('button', { class: 'btn blue', type: 'submit' }, 'Preguntar');
+  const form = h('form', { class: 'doubt-form' }, ta,
+    h('div', { class: 'doubt-row' }, h('span', { class: 'hint' }, 'Pregunta como en un chat. Tu duda y la respuesta se guardan aquí. Ctrl + Enter para enviar.'), send));
+  const box = h('div', { class: 'doubts' }, form);
+  form.addEventListener('submit', (e) => { e.preventDefault(); askDoubt(n, box, ta, send); });
+  ta.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.isComposing) { e.preventDefault(); form.requestSubmit(); }
+  });
+  return box;
+}
+
+function focusDoubts() {
+  const ta = $('#reader .doubts textarea');
+  if (!ta) return;
+  ta.scrollIntoView({ behavior: smoothness(), block: 'center' });
+  ta.focus({ preventScroll: true });
+}
+
+// Sends a doubt and puts the question and its answer into the article, right above the box.
+async function askDoubt(n, box, ta, send) {
+  const question = ta.value.trim();
+  if (!question) { toast('Escribe tu duda.'); ta.focus(); return; }
+  ta.disabled = send.disabled = true;
+  const bubble = h('div', { class: 'chat-q' }, h('small', {}, 'Tú'), question);
+  const stop = new AbortController();
+  const thinking = thinkingBlock('Pensando…', () => stop.abort());
+  box.before(bubble, thinking);
+  thinking.scrollIntoView({ behavior: smoothness(), block: 'nearest' });
+  try {
+    const ans = await api(`/api/notes/${encodeURIComponent(n.slug)}/doubt`, { method: 'POST', body: { question }, signal: stop.signal });
+    const entry = mdBlock(stripEmoji(ans.entry));
+    bubble.replaceWith(entry);
+    thinking.remove();
+    ta.value = '';
+    offerConcepts(n, entry, ans.concepts || []);
+  } catch (err) {
+    bubble.remove();
+    thinking.remove();
+    toast(wasCancelled(err) ? 'Cancelado.' : err.message); // what they wrote stays in the box
+  } finally {
+    ta.disabled = send.disabled = false;
+    ta.focus({ preventScroll: true });
+  }
+}
+
+// When an answer explained something that could stand on its own, offer to add it to the vault as an article.
+function offerConcepts(n, after, concepts) {
+  let anchor = after;
+  for (const c of concepts) {
+    const row = h('div', { class: 'offer' });
+    const draw = (inVault) => row.replaceChildren(
+      h('span', {}, inVault ? `«${c.title}» ya está en tu vault.` : `Aquí se explicó «${c.title}». ¿Lo añado a tu vault como artículo?`),
+      inVault
+        ? h('button', { class: 'btn small', type: 'button', onclick: () => openNote(c.slug) }, 'Abrir artículo')
+        : h('button', { class: 'btn small green', type: 'button', onclick: add }, 'Añadir al vault'));
+    async function add(e) {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      try {
+        await api(`/api/notes/${encodeURIComponent(n.slug)}/concept`, { method: 'POST', body: { title: c.title, summary: c.summary } });
+        draw(true);
+        toast(`«${c.title}» está en tu vault. Estúdialo cuando quieras desde el mapa o el cajón de notas.`);
+        loadGraph().then(renderRecent).catch(() => {}); // the map and the drawer learn about the new topic
+      } catch (err) { btn.disabled = false; toast(err.message); }
+    }
+    draw(c.exists);
+    anchor.after(row);
+    anchor = row;
+  }
+}
+
+// Writes the base concepts and puts them in the article. Where they will appear shows a "thinking" block meanwhile.
+async function extendInline(n, btn) {
+  btn.disabled = true;
+  const md = $('#reader .r-article > .md');
+  const stop = new AbortController();
+  const thinking = thinkingBlock('Escribiendo los conceptos base…', () => stop.abort());
+  if (md) {
+    let before = sectionEnd(md, 'Conceptos base'); // when redoing them, at the end of the old ones
+    if (before === undefined) before = sectionEnd(md, 'La guía');
+    insertBefore(md, thinking, before === undefined ? null : before);
+    thinking.scrollIntoView({ behavior: smoothness(), block: 'center' });
+  }
+  try {
+    await api(`/api/notes/${encodeURIComponent(n.slug)}/extend`, { method: 'POST', body: {}, signal: stop.signal });
+    await openNote(n.slug, true); // draws the article again, with its index
+    const heading = $$('#reader .r-article h2').find((x) => x.textContent === 'Conceptos base');
+    if (heading) heading.scrollIntoView({ behavior: smoothness(), block: 'start' });
+  } catch (err) {
+    thinking.remove();
+    btn.disabled = false;
+    toast(wasCancelled(err) ? 'Cancelado.' : err.message);
+  }
+}
+
+// The reading page: the guide as an article. The note is a line and each section a station along it.
+function renderReader(n) {
+  const root = $('#reader');
+  const m = n.meta;
+  const status = m.status || 'new';
+  const title = m.title || n.slug;
+  root.replaceChildren();
+
+  const wrap = h('div', { class: 'reader-wrap', style: `--line-c: ${lineColor(m.roadmap || '')}` });
+  wrap.append(h('button', { class: 'crumb', type: 'button', onclick: () => { showView('map'); selectNode(n.slug, true); } }, '← Ver en el mapa'));
+  wrap.append(h('header', { class: 'r-head' },
+    h('p', { class: 'r-line' }, m.roadmap ? roadmapTitle(m.roadmap) : 'Tema suelto'),
+    h('h1', {}, title),
+    h('div', { class: 'chips' }, statusChip(status), m.field && h('span', { class: 'chip' }, m.field), m.source && m.source !== 'adhoc' && h('span', { class: 'chip' }, m.source)),
+    m.mastery ? h('div', { class: 'mastery' },
+      h('div', { class: 'row' }, h('span', {}, 'Lo que llevas'), h('span', {}, `${m.mastery}/100`)),
+      h('div', { class: 'bar', style: 'background: var(--surface-2)' }, h('i', { style: `width:${m.mastery}%; background: var(--line-c)` }))) : null,
+    noteControls(n, title, status)));
+
+  const article = h('article', { class: 'r-article' });
+  const toc = [];
+  const addToc = (el, text, sub) => {
+    el.id = `sec-${toc.length}`;
+    toc.push({ id: el.id, text, sub });
+  };
+
+  const bodySrc = stripEmoji(stripSection(n.body, 'Recursos')).trim();
+  if (bodySrc) {
+    const md = mdBlock(bodySrc);
+    for (const hd of $$('h2', md)) hd.textContent = SECTION[hd.textContent.trim()] || hd.textContent;
+    if (status !== 'new') placeDoubts(md, n);
+    let inDoubts = false; // each doubt is a heading of its own; the index lists the section, not every question
+    for (const hd of $$('h2, h3', md)) {
+      if (hd.tagName === 'H2') inDoubts = hd.textContent === 'Dudas';
+      else if (inDoubts) continue;
+      addToc(hd, hd.textContent, hd.tagName === 'H3');
+    }
+    article.append(md);
+  } else {
+    article.append(h('p', { class: 'r-empty' }, 'Esta nota aún no tiene guía. Empieza por «Explorarlo» y la prepararé para ti.'));
+  }
+
+  const res = m.resources || [];
+  if (res.length) {
+    const sec = h('section', { class: 'r-resources' }, h('h2', {}, 'Para seguir explorando'),
+      h('ul', { class: 'res-list' }, res.map((r) => resourceCard(r, { slug: n.slug, title }))));
+    addToc(sec.firstChild, 'Para seguir explorando', false);
+    article.append(sec);
+  }
+
+  // neighbouring stations: what comes before and after on the line, and who links here
+  const nodes = (S.graph && S.graph.nodes) || [];
+  const titleOf = (id) => (nodes.find((x) => x.id === id) || {}).label || id;
+  const after = ((S.graph && S.graph.edges) || []).filter((e) => e.kind === 'requires' && e.from === n.slug).map((e) => ({ slug: e.to, title: titleOf(e.to) }));
+  const before = n.requires || [];
+  const back = n.backlinks || [];
+  if (before.length || after.length || back.length) {
+    const nb = (label, l) => h('button', { class: 'neighbor', type: 'button', onclick: () => openNote(l.slug) }, h('small', {}, label), h('strong', {}, l.title));
+    const sec = h('section', { class: 'r-next' }, h('h2', {}, 'En la línea'),
+      before.map((l) => nb('Antes', l)),
+      after.map((l) => nb('Después', l)),
+      back.length ? h('div', { class: 'r-backlinks' }, h('h4', {}, 'Enlazan aquí'), h('div', { class: 'links' }, back.map((l) => h('button', { type: 'button', onclick: () => openNote(l.slug) }, l.title)))) : null);
+    sec.querySelectorAll('h4').forEach((x) => { x.style.margin = '8px 0 6px'; });
+    addToc(sec.firstChild, 'En la línea', false);
+    article.append(sec);
+  }
+
+  const nav = h('nav', { class: 'toc', 'aria-label': 'En esta página' }, h('h3', {}, 'En esta página'),
+    h('ol', {}, toc.map((t) => h('li', { class: t.sub ? 'sub' : null }, h('a', { href: `#${t.id}`, onclick: (e) => {
+      e.preventDefault();
+      document.getElementById(t.id).scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+    } }, t.text)))));
+  wrap.append(h('div', { class: 'r-body' }, toc.length > 1 ? nav : h('div'), article));
+  root.append(wrap);
+  watchToc(wrap);
+}
+
+// highlights the table-of-contents entry of the section being read
+let tocObserver;
+function watchToc(wrap) {
+  tocObserver?.disconnect();
+  const links = new Map($$('.toc a', wrap).map((a) => [a.getAttribute('href').slice(1), a]));
+  if (!links.size || !('IntersectionObserver' in window)) return;
+  tocObserver = new IntersectionObserver((entries) => {
+    for (const e of entries) if (e.isIntersecting) {
+      links.forEach((a) => a.classList.remove('on'));
+      links.get(e.target.id)?.classList.add('on');
+    }
+  }, { root: $('#view-note'), rootMargin: '0px 0px -70% 0px' });
+  for (const id of links.keys()) tocObserver.observe(document.getElementById(id));
+}
+
 const YOUTUBE = /^https?:\/\/(?:www\.|m\.)?(?:youtube\.com\/watch\?(?:[^#]*&)?v=|youtu\.be\/)([\w-]{11})(?![\w-])/i;
 const youtubeId = (url) => { const m = YOUTUBE.exec(url || ''); return m && m[1]; };
 const hostOf = (url) => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; } };
@@ -546,7 +986,6 @@ function resourceCard(r, ctx = {}) {
   const external = r.url && /^https?:\/\//i.test(r.url);
   const host = external ? hostOf(r.url) : '';
   const head = (titleEl) => h('div', { class: 'res-head' },
-    h('span', { class: `res-icon t-${r.type}`, 'aria-hidden': 'true' }, TYPE_ICON[r.type] || '🔗'),
     h('div', { class: 'res-main' }, titleEl, h('span', { class: 'res-meta' }, [TYPE[r.type] || r.type, host].filter(Boolean).join(' · '))));
   const why = r.why && h('span', { class: 'why' }, r.why);
   const link = () => h('a', { href: r.url, target: '_blank', rel: 'noopener noreferrer' }, r.title);
@@ -567,10 +1006,6 @@ function resourceCard(r, ctx = {}) {
   return h('li', { class: 'res' }, head(h('strong', {}, r.title)), why);
 }
 
-function linkChips(list) {
-  return h('div', { class: 'links' }, list.map((l) => h('button', { type: 'button', onclick: () => selectNode(l.slug, true) }, l.title)));
-}
-
 // wikilinks and simulation links rendered anywhere in the app
 document.addEventListener('click', (e) => {
   const a = e.target.closest('a[href^="#note/"], a[href^="#sim/"]');
@@ -582,10 +1017,10 @@ document.addEventListener('click', (e) => {
     if (S.graph && !S.graph.nodes.some((n) => n.id === slug)) {
       // a link to a topic that does not exist yet is a gap in the map: offer to fill it
       const title = a.textContent.trim() || slug;
-      if (confirm(`«${title}» aún no está en tu mapa. ¿Quieres estudiarlo ahora?`)) startRun({ cmd: 'study', topic: title }, `Estudiando: ${title}`);
+      if (confirm(`«${title}» aún no está en tu mapa. ¿Quieres estudiarlo ahora?`)) startRun({ cmd: 'study', topic: title, title }, title);
       return;
     }
-    selectNode(slug, true);
+    openNote(slug);
   } else openSim(decodeURIComponent(href.slice(5)), S.note && S.note.meta.title);
 });
 
@@ -646,8 +1081,8 @@ function quickOptions(e) {
   if (e.kind !== 'line') return null;
   if (/\(s\/n\)\s*$/i.test(label)) {
     const [yes, no] = /aceptas/i.test(label) ? ['Aceptar', 'Otro tema']
-      : /prueba/i.test(label) ? ['Hacer la prueba', 'Ahora no']
-        : /feynman/i.test(label) ? ['Explicarlo (Feynman)', 'Terminar aquí']
+      : /respondemos|comprobamos|prueba/i.test(label) ? ['Responder preguntas', 'Ahora no']
+        : /explicas|feynman/i.test(label) ? ['Explicar', 'Terminar aquí']
           : /genero/i.test(label) ? ['Generar', 'Omitir']
             : /empezamos/i.test(label) ? ['Empezar', 'Ahora no'] : ['Sí', 'No'];
     return [{ label: yes, reply: 's', primary: true }, { label: no, reply: 'n' }];
@@ -707,6 +1142,7 @@ function setPhase(phase) {
   });
 }
 
+// a low score is a starting point, not a failure: it gets a neutral tone, never a red one
 function scoreTone(score) { return score >= 70 ? 'good' : score >= 40 ? 'mid' : 'low'; }
 
 function renderCard(c) {
@@ -714,14 +1150,14 @@ function renderCard(c) {
     case 'phase': setPhase(c.phase); break;
     case 'daily':
       addMsg('card', h('div', { class: 'rich rich-daily' },
-        h('div', { class: 'rich-eyebrow' }, 'Reto de hoy', c.field && h('span', { class: 'chip' }, c.field)),
+        h('div', { class: 'rich-eyebrow' }, 'Para descubrir hoy', c.field && h('span', { class: 'chip' }, c.field)),
         h('h3', {}, c.topic),
         c.hook && h('p', {}, c.hook)));
       break;
     case 'question': addMsg('card', questionCard(c)); break;
     case 'score': {
       const tone = scoreTone(c.score);
-      const verdict = tone === 'good' ? 'Muy bien' : tone === 'mid' ? 'Vas por buen camino' : 'Hay huecos por repasar';
+      const verdict = tone === 'good' ? 'Lo entendiste bien' : tone === 'mid' ? 'Vas por buen camino' : 'Buen punto de partida: quedan cosas por aclarar';
       addMsg('card', h('div', { class: `rich rich-score tone-${tone}` },
         h('div', { class: 'score-ring', style: `--p:${Math.max(0, Math.min(100, c.score))}`, role: 'img', 'aria-label': `${c.score} de 100` }, h('span', {}, c.score)),
         h('div', {}, h('strong', {}, `${c.label}: ${verdict}`), c.detail && h('div', { class: 'hint' }, c.detail))));
@@ -729,7 +1165,7 @@ function renderCard(c) {
     }
     case 'resources':
       addMsg('card', h('div', { class: 'rich rich-resources' },
-        h('div', { class: 'rich-eyebrow' }, 'Material recomendado'),
+        h('div', { class: 'rich-eyebrow' }, 'Para seguir explorando'),
         h('ul', { class: 'res-list' }, (c.resources || []).map((r) => resourceCard(r)))));
       break;
   }
@@ -796,7 +1232,17 @@ $('#btn-cancel').addEventListener('click', async () => {
   if (!S.run || S.run.done) return;
   try { await api(`/api/runs/${S.run.id}/cancel`, { method: 'POST', body: {} }); } catch (err) { toast(err.message); }
 });
-$('#btn-back').addEventListener('click', () => showView('map'));
+$('#btn-working-cancel').addEventListener('click', () => $('#btn-cancel').click());
+$('#btn-back').addEventListener('click', leaveSession);
+$('#btn-open-note').addEventListener('click', () => { if (S.run && S.run.slug) openNote(S.run.slug); });
+$('#btn-resume').addEventListener('click', () => { if (S.run) resumeFrom(S.run.slug); });
+
+// closes a finished session and goes back to the list
+function leaveSession() {
+  if (S.run && S.run.es) S.run.es.close();
+  S.run = null;
+  showHistory();
+}
 
 async function startRun(body, title) {
   try {
@@ -805,21 +1251,85 @@ async function startRun(body, title) {
   } catch (err) { toast(err.message); }
 }
 
-function attachRun(id, title) {
+// Sessions run one phase at a time, so a stored one is picked up by phase: the next step depends on how far the note got.
+const RESUME = {
+  new: { label: 'Continuar: estudiarlo', run: (n) => ({ cmd: 'study', topic: n.label, title: n.label }) },
+  prepared: { label: 'Continuar: responder preguntas', run: (n) => ({ cmd: 'quiz', slug: n.id, n: 5, difficulty: 'media', title: n.label }) },
+  tested: { label: 'Continuar: explicarlo', run: (n) => ({ cmd: 'feynman', slug: n.id, title: n.label }) },
+};
+const RESUMABLE = new Set(['study', 'prepare', 'quiz', 'feynman', 'interactive']);
+const sessionNode = (run) => run && run.slug && S.graph && S.graph.nodes.find((n) => n.id === run.slug);
+
+function resumeFrom(slug) {
+  const n = S.graph && S.graph.nodes.find((x) => x.id === slug);
+  const step = n && RESUME[n.status];
+  if (step) startRun(step.run(n), n.label);
+}
+
+// the buttons in the session header depend on whether it is running, over, and what its note looks like now
+function updateSessionActions() {
+  const run = S.run;
+  if (!run) return;
+  const node = sessionNode(run);
+  const step = run.done && node && RESUMABLE.has(run.cmd) && RESUME[node.status];
+  $('#btn-cancel').hidden = run.done;
+  $('#btn-back').hidden = !run.done;
+  $('#btn-open-note').hidden = !(run.done && node);
+  $('#btn-resume').hidden = !step;
+  if (step) $('#btn-resume').textContent = step.label;
+}
+
+/* ---------- session history ---------- */
+const RUN_STATUS = { running: 'En curso', done: 'Terminada', error: 'Con error', cancelled: 'Cancelada', interrupted: 'Interrumpida' };
+const RUN_COLOR = { running: 'var(--l0)', done: 'var(--s-explained)', error: 'var(--danger)', cancelled: 'var(--l-none)', interrupted: 'var(--l-none)' };
+const when = (iso) => new Date(iso).toLocaleString('es', { dateStyle: 'medium', timeStyle: 'short' });
+
+async function showHistory() {
+  $('#history').hidden = false;
+  $('#live').hidden = true;
+  try { renderHistory(await api('/api/sessions')); } catch (err) { toast(err.message); }
+}
+
+function renderHistory(list) {
+  const ul = $('#history-list');
+  ul.replaceChildren();
+  for (const r of list) {
+    const open = () => attachRun(r.id, r.title, { replay: r.status !== 'running' });
+    ul.append(h('li', { class: 'history-item', style: `--c: ${RUN_COLOR[r.status] || 'var(--l-none)'}` },
+      h('span', { class: 'hi-bar', 'aria-hidden': 'true' }),
+      h('button', { class: 'hi-title', type: 'button', onclick: open }, r.title || 'Sesión'),
+      h('div', { class: 'hi-meta' }, `${when(r.started)} · ${RUN_STATUS[r.status] || r.status}`),
+      h('div', { class: 'hi-actions' },
+        h('button', { class: 'btn small', type: 'button', onclick: open }, r.status === 'running' ? 'Volver' : 'Ver'),
+        r.status !== 'running' && h('button', { class: 'btn small', type: 'button', 'aria-label': `Eliminar la sesión «${r.title}»`, onclick: async () => {
+          if (!confirm(`¿Eliminar la sesión «${r.title}»? Tus notas se conservan.`)) return;
+          try { await api(`/api/sessions/${r.id}`, { method: 'DELETE' }); showHistory(); } catch (err) { toast(err.message); }
+        } }, 'Eliminar'))));
+  }
+}
+
+// Shows a session: a live one streams in, a stored one replays from its first event.
+function attachRun(id, title, { replay = false } = {}) {
   if (S.run && S.run.es) S.run.es.close();
   resetTranscript();
   $('#session-title').textContent = title || 'Sesión';
-  $('#btn-cancel').hidden = false;
-  $('#btn-back').hidden = true;
+  $('#history').hidden = true;
+  $('#live').hidden = false;
   $('#composer').hidden = true;
-  $('#session-dot').hidden = false;
-  setWorking(true, 'Pensando…');
-  showView('session');
+  if (!replay) $('#session-dot').hidden = false;
+  setWorking(!replay, 'Pensando…');
 
-  const run = { id, done: false, es: new EventSource(`/api/runs/${id}/events?from=0`) };
+  const run = { id, done: false, replay, cmd: '', slug: '', es: new EventSource(`/api/runs/${id}/events?from=0`) };
   S.run = run;
+  updateSessionActions();
+  showView('session');
   run.es.onmessage = (ev) => handleEvent(run, JSON.parse(ev.data));
   run.es.onerror = () => { if (run.done) run.es.close(); }; // otherwise the browser reconnects with Last-Event-ID
+  // which topic the session worked on, so it can offer to open or continue it
+  api('/api/sessions').then((list) => {
+    const me = list.find((r) => r.id === id);
+    if (me && S.run === run) { run.cmd = me.cmd; run.slug = me.slug || ''; updateSessionActions(); }
+  }).catch(() => {});
 }
 
 function handleEvent(run, e) {
@@ -829,13 +1339,16 @@ function handleEvent(run, e) {
     case 'in': {
       closeChoices();
       // a button answers with a short code ("s", "media"); show what the learner actually clicked
-      const shown = T.echo && T.echo.reply === e.text ? T.echo.label : e.text;
+      const known = (T.echo && T.echo.reply === e.text && T.echo) || ((run.lastAsk && quickOptions(run.lastAsk)) || []).find((o) => o.reply === e.text);
       T.echo = null;
-      addMsg('user', mdBlock(shown, { breaks: true }));
+      addMsg('user', mdBlock(known ? known.label : e.text, { breaks: true }));
       break;
     }
     case 'card': closeBubble(); renderCard(e.card); break;
-    case 'ask': setAsk(e); break;
+    case 'ask':
+      run.lastAsk = e;
+      if (!run.replay) setAsk(e);
+      break;
     case 'done': finishRun(run, e); break;
   }
 }
@@ -849,19 +1362,22 @@ async function finishRun(run, e) {
   if (current && !e.error) current.dataset.state = 'done';
   setWorking(false);
   $('#composer').hidden = true;
-  $('#btn-cancel').hidden = true;
-  $('#btn-back').hidden = false;
-  $('#session-dot').hidden = true;
+  if (!run.replay) $('#session-dot').hidden = true;
   if (e.error) addMsg('bot error', e.error);
-  else addMsg('note', 'Sesión terminada. Tus notas están guardadas en el vault.');
-  await refreshAll();
+  else if (!run.replay) addMsg('note', 'Sesión terminada. Tus notas están guardadas.');
+  updateSessionActions();
+  if (!run.replay) { await refreshAll(); updateSessionActions(); }
 }
 
 /* ---------- boot ---------- */
 async function refreshAll() {
-  await Promise.allSettled([loadRoadmaps(), loadDaily()]); // roadmap titles label the groups in the graph
+  await Promise.allSettled([loadRoadmaps(), loadDaily()]); // roadmap titles and colours label the lines in the graph
   await loadGraph().catch((err) => toast(err.message));
-  if (S.selected && !$('#note-panel').hidden) selectNode(S.selected);
+  renderRecent();
+  if (drawer.classList.contains('open')) renderDrawer();
+  // refresh what is on screen without pulling the learner away from where they are
+  if (S.view === 'map' && S.selected && !$('#note-panel').hidden) selectNode(S.selected, false, true);
+  if (S.view === 'note' && S.readerSlug) openNote(S.readerSlug, true);
 }
 
 async function boot() {
@@ -870,7 +1386,11 @@ async function boot() {
     $('#provider-badge').textContent = S.info.provider;
     if (S.info.warning) { $('#banner').textContent = S.info.warning; $('#banner').hidden = false; }
     await refreshAll();
-    if (S.info.activeRun) attachRun(S.info.activeRun, 'Sesión en curso');
+    if (S.info.activeRun) {
+      const list = await api('/api/sessions').catch(() => []);
+      const me = list.find((r) => r.id === S.info.activeRun);
+      attachRun(S.info.activeRun, me ? me.title : 'Sesión en curso');
+    }
   } catch (err) { toast(err.message); }
 }
 boot();

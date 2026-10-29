@@ -8,11 +8,16 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
 // Vault is a folder of Markdown notes.
-type Vault struct{ Root string }
+type Vault struct {
+	Root string
+
+	mu sync.Mutex // serializes Update
+}
 
 var subdirs = []string{"topics", "roadmaps", "daily", "interactive"}
 
@@ -40,6 +45,22 @@ func (v *Vault) Load(slug string) (Note, error) {
 }
 
 // Exists reports whether a topic note is present.
+// Update loads a note, lets fn change it and saves it, all under one lock so that two
+// updates arriving together (a doubt answered while base concepts are being written)
+// do not overwrite each other.
+func (v *Vault) Update(slug string, fn func(*Note) error) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	n, err := v.Load(slug)
+	if err != nil {
+		return err
+	}
+	if err := fn(&n); err != nil {
+		return err
+	}
+	return v.Save(n)
+}
+
 func (v *Vault) Exists(slug string) bool {
 	_, err := os.Stat(v.topicPath(slug))
 	return err == nil
@@ -142,13 +163,10 @@ func demoteHeadings(content string) string {
 	return strings.Join(lines, "\n")
 }
 
-// ReplaceSection swaps the "## heading" section of body for content, or appends it.
-// Headings inside content are demoted so the section stays self-contained.
-func ReplaceSection(body, heading, content string) string {
+// findSection returns the line range [start, end) of the "## heading" section, or start = -1.
+func findSection(lines []string, heading string) (start, end int) {
 	marker := "## " + heading
-	section := marker + "\n\n" + strings.TrimSpace(demoteHeadings(content)) + "\n"
-	lines := strings.Split(body, "\n")
-	start := -1
+	start = -1
 	for i, l := range lines {
 		if strings.TrimSpace(l) == marker {
 			start = i
@@ -156,14 +174,58 @@ func ReplaceSection(body, heading, content string) string {
 		}
 	}
 	if start < 0 {
-		return strings.TrimRight(body, "\n") + "\n\n" + section
+		return -1, -1
 	}
-	end := len(lines)
+	end = len(lines)
 	for i := start + 1; i < len(lines); i++ {
 		if strings.HasPrefix(lines[i], "## ") {
 			end = i
 			break
 		}
+	}
+	return start, end
+}
+
+// Section returns what is under the "## heading" section of body, without the heading line.
+// It is empty when the note has no such section.
+func Section(body, heading string) string {
+	lines := strings.Split(body, "\n")
+	start, end := findSection(lines, heading)
+	if start < 0 {
+		return ""
+	}
+	return strings.TrimSpace(strings.Join(lines[start+1:end], "\n"))
+}
+
+// PlaceSection is ReplaceSection, except a section that does not exist yet goes right after
+// the section named after, so the note reads in order. Without that section it is appended.
+func PlaceSection(body, heading, content, after string) string {
+	lines := strings.Split(body, "\n")
+	if start, _ := findSection(lines, heading); start >= 0 {
+		return ReplaceSection(body, heading, content)
+	}
+	_, end := findSection(lines, after)
+	if end < 0 {
+		return ReplaceSection(body, heading, content)
+	}
+	section := "## " + heading + "\n\n" + strings.TrimSpace(demoteHeadings(content)) + "\n"
+	head := strings.TrimRight(strings.Join(lines[:end], "\n"), "\n")
+	tail := strings.Join(lines[end:], "\n")
+	res := head + "\n\n" + section
+	if strings.TrimSpace(tail) != "" {
+		res += "\n" + tail
+	}
+	return res
+}
+
+// ReplaceSection swaps the "## heading" section of body for content, or appends it.
+// Headings inside content are demoted so the section stays self-contained.
+func ReplaceSection(body, heading, content string) string {
+	section := "## " + heading + "\n\n" + strings.TrimSpace(demoteHeadings(content)) + "\n"
+	lines := strings.Split(body, "\n")
+	start, end := findSection(lines, heading)
+	if start < 0 {
+		return strings.TrimRight(body, "\n") + "\n\n" + section
 	}
 	out := strings.Join(lines[:start], "\n")
 	tail := strings.Join(lines[end:], "\n")

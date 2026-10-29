@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/krilinxito/studyhomie/internal/session"
 	"github.com/krilinxito/studyhomie/internal/vault"
@@ -76,17 +77,25 @@ func (b *inputBuf) Close() {
 
 // Run is one flow (study, roadmap...) executing in the background.
 type Run struct {
-	ID  int
-	Cmd string
+	ID      int
+	Cmd     string
+	Title   string
+	Slug    string // the topic or roadmap it works on, when known
+	Started time.Time
+	Ended   time.Time
 
 	cancel context.CancelFunc
 	in     *inputBuf
+	store  *store // nil when sessions are not persisted
 
-	mu      sync.Mutex
-	events  []Event
-	subs    map[chan struct{}]struct{}
-	askKind string // what the flow is waiting for; "" when it is not waiting
-	done    bool
+	mu        sync.Mutex
+	events    []Event
+	subs      map[chan struct{}]struct{}
+	askKind   string // what the flow is waiting for; "" when it is not waiting
+	done      bool
+	status    string
+	errMsg    string
+	saveTimer *time.Timer
 }
 
 func (r *Run) emit(e Event) {
@@ -97,6 +106,16 @@ func (r *Run) emit(e Event) {
 	}
 	if e.Type == "done" {
 		r.done = true
+		r.Ended = time.Now()
+		r.errMsg = e.Error
+		switch e.Error {
+		case "":
+			r.status = statusDone
+		case "cancelado":
+			r.status = statusCancelled
+		default:
+			r.status = statusError
+		}
 	}
 	for ch := range r.subs {
 		select {
@@ -105,6 +124,7 @@ func (r *Run) emit(e Event) {
 		}
 	}
 	r.mu.Unlock()
+	r.scheduleSave(e.Type == "done")
 }
 
 // since returns the events from index n on, and whether the run has finished.
@@ -181,6 +201,7 @@ func (w outWriter) Write(p []byte) (int, error) {
 // StartReq is the body of POST /api/runs.
 type StartReq struct {
 	Cmd        string   `json:"cmd"`
+	Title      string   `json:"title"` // optional label for the session history
 	Topic      string   `json:"topic"`
 	Slug       string   `json:"slug"`
 	Subject    string   `json:"subject"`
@@ -264,10 +285,14 @@ func (s *Server) StartRun(req StartReq) (*Run, error) {
 	}
 	s.seq++
 	ctx, cancel := context.WithCancel(context.Background())
-	run := &Run{ID: s.seq, Cmd: req.Cmd, cancel: cancel, in: newInputBuf()}
+	run := &Run{
+		ID: s.seq, Cmd: req.Cmd, Title: s.runTitle(req), Slug: runSlug(req), Started: s.Now(),
+		cancel: cancel, in: newInputBuf(), store: s.store, status: statusRunning,
+	}
 	s.runs[run.ID] = run
 	s.active = run
 	s.mu.Unlock()
+	run.scheduleSave(false)
 
 	sess := &session.Session{
 		P: s.P, V: s.V, Cfg: s.Cfg, CheckLinks: s.CheckLinks,
@@ -290,6 +315,49 @@ func (s *Server) StartRun(req StartReq) (*Run, error) {
 		run.emit(done)
 	}()
 	return run, nil
+}
+
+// runSlug is the note or roadmap a request works on, or "" when it creates one.
+func runSlug(req StartReq) string {
+	switch req.Cmd {
+	case "study", "prepare":
+		return vault.Slugify(req.Topic)
+	case "quiz", "feynman", "interactive":
+		return req.Slug
+	case "next":
+		return req.Roadmap
+	}
+	return ""
+}
+
+// runTitle labels a session in the history: the caller's title, else a name built from the request.
+func (s *Server) runTitle(req StartReq) string {
+	if t := strings.TrimSpace(req.Title); t != "" {
+		return truncate(t, 160)
+	}
+	switch req.Cmd {
+	case "roadmap":
+		return truncate(req.Subject, 160)
+	case "daily":
+		return "Reto de hoy"
+	case "material":
+		return "Material"
+	case "next":
+		return req.Roadmap
+	case "quiz", "feynman", "interactive":
+		if n, err := s.V.Load(req.Slug); err == nil && n.Meta.Title != "" {
+			return n.Meta.Title
+		}
+		return req.Slug
+	}
+	return truncate(req.Topic, 160)
+}
+
+func truncate(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return string(r[:n])
+	}
+	return s
 }
 
 var errBusy = errors.New("ya hay una sesión en curso; termínala o cancélala primero")
