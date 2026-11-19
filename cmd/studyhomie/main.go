@@ -33,6 +33,8 @@ Uso (sin argumentos abre la interfaz web):
   studyhomie daily [campo|todos]        reto del día de tus campos de interés ("todos": cualquier campo)
   studyhomie study <tema>               preparación → prueba → Feynman
   studyhomie prepare <tema>             solo la guía de estudio
+  studyhomie guide <tema> [--depth N] [--foco "..."]
+                                        guía + notas de concepto hasta N niveles de prerrequisitos
   studyhomie quiz <tema> [n] [dificultad]
   studyhomie feynman <tema>
   studyhomie extend <tema>              añade los conceptos base que la guía da por sabidos
@@ -125,6 +127,13 @@ func run(ctx context.Context, cmd string, args []string) error {
 	case "prepare":
 		_, err := s.Prepare(ctx, strings.Join(args, " "), "adhoc")
 		return err
+	case "guide":
+		req, err := guideArgs(args, cfg.Depth)
+		if err != nil {
+			return err
+		}
+		_, err = s.Guide(ctx, req)
+		return err
 	case "extend":
 		text, err := s.Extend(ctx, vault.Slugify(strings.Join(args, " ")))
 		if err != nil {
@@ -162,6 +171,36 @@ func run(ctx context.Context, cmd string, args []string) error {
 		return s.Feynman(ctx, vault.Slugify(topic))
 	}
 	return fmt.Errorf("comando desconocido %q\n\n%s", cmd, usage)
+}
+
+// guideArgs reads "tema... [--depth N] [--foco texto...]".
+func guideArgs(args []string, depth int) (session.GuideReq, error) {
+	req := session.GuideReq{Depth: depth, Source: "adhoc"}
+	var topic, focus []string
+	into := &topic
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--depth", "--profundidad":
+			if i+1 >= len(args) {
+				return req, errors.New("--depth necesita un número")
+			}
+			n, err := strconv.Atoi(args[i+1])
+			if err != nil || n < 0 || n > session.MaxDepth {
+				return req, fmt.Errorf("profundidad no válida: %q (0 a %d)", args[i+1], session.MaxDepth)
+			}
+			req.Depth = n
+			i++
+		case "--foco", "--focus":
+			into = &focus
+		default:
+			*into = append(*into, args[i])
+		}
+	}
+	req.Topic, req.Focus = strings.Join(topic, " "), strings.Join(focus, " ")
+	if strings.TrimSpace(req.Topic) == "" {
+		return req, errors.New("falta el tema")
+	}
+	return req, nil
 }
 
 // serve runs the local web UI until interrupted.

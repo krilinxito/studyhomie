@@ -75,6 +75,7 @@ func TestShortAnswersUseTheQuickModel(t *testing.T) {
 	f := &fake{replies: []provider.Response{reply(prepReply, 10), reply("### A\n\nb", 10)}}
 	s, _ := newSession(t, f, "")
 	s.Cfg = config.Default()
+	s.Cfg.Depth = 0
 	s.Cfg.Model, s.Cfg.QuickModel = "grande", "rapido"
 	slug, _ := s.Prepare(context.Background(), "Bayes", "adhoc")
 	if _, err := s.Extend(context.Background(), slug); err != nil {

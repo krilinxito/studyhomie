@@ -6,7 +6,7 @@ import (
 )
 
 func TestLearnerFacingPromptsShareTheVoiceRules(t *testing.T) {
-	for _, name := range []string{"prepare", "feynman", "quiz", "daily", "scope", "roadmap", "extend", "ask"} {
+	for _, name := range []string{"guide", "concept", "plan", "feynman", "quiz", "daily", "scope", "roadmap", "extend", "ask"} {
 		got := Get(name, "español")
 		if !strings.Contains(got, "Never use emojis") {
 			t.Errorf("%s must carry the writing rules", name)

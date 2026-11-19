@@ -51,7 +51,9 @@ func newTestServer(t *testing.T, p provider.Provider) (*Server, *httptest.Server
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(config.Default(), v, p)
+	cfg := config.Default()
+	cfg.Depth = 0 // guides without concept notes, so the scripted replies stay in order
+	s := New(cfg, v, p)
 	s.Now = func() time.Time { return time.Date(2026, 10, 27, 9, 0, 0, 0, time.UTC) }
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
@@ -387,14 +389,18 @@ func TestStudyRunOverSSE(t *testing.T) {
 	if ask == nil || ask.Kind != "line" || !strings.Contains(ask.Label, "Respondemos") {
 		t.Fatalf("expected the quiz question, got %+v", evs)
 	}
-	var out strings.Builder
+	// the browser shows the guide in its reading panel: the run announces it with a card
+	ready := false
 	for _, e := range evs {
-		if e.Type == "out" {
-			out.WriteString(e.Text)
+		if e.Type == "card" && e.Card.Kind == "guide" && e.Card.Slug == "bayes" {
+			ready = true
 		}
 	}
-	if !strings.Contains(out.String(), "La intuición es X.") {
-		t.Errorf("guide not streamed: %s", out.String())
+	if !ready {
+		t.Errorf("no guide card in %+v", evs)
+	}
+	if n, err := s.V.Load("bayes"); err != nil || !strings.Contains(n.Body, "La intuición es X.") {
+		t.Errorf("guide not saved: %v", err)
 	}
 
 	// a second run is refused while this one waits

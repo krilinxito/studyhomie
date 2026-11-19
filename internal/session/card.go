@@ -27,6 +27,9 @@ type Card struct {
 	Score     int              `json:"score,omitempty"`
 	Detail    string           `json:"detail,omitempty"`
 	Resources []vault.Resource `json:"resources,omitempty"`
+	Slug      string           `json:"slug,omitempty"`
+	Plan      *ConceptPlan     `json:"plan,omitempty"`
+	Items     []ProgressItem   `json:"items,omitempty"`
 }
 
 // card sends c to the UI and reports whether one is attached. Callers that also

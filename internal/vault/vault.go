@@ -19,10 +19,13 @@ type Vault struct {
 	mu sync.Mutex // serializes Update
 }
 
-var subdirs = []string{"topics", "roadmaps", "daily", "interactive"}
+var subdirs = []string{GuidesDir, ConceptsDir, "roadmaps", "daily", "interactive"}
 
-// Open creates the vault layout if needed.
+// Open creates the vault layout if needed, moving notes from the old layout.
 func Open(root string) (*Vault, error) {
+	if err := migrate(root); err != nil {
+		return nil, fmt.Errorf("moving topics/ to %s/: %w", GuidesDir, err)
+	}
 	for _, d := range subdirs {
 		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
 			return nil, err
@@ -32,7 +35,7 @@ func Open(root string) (*Vault, error) {
 }
 
 func (v *Vault) topicPath(slug string) string {
-	return filepath.Join(v.Root, "topics", slug+".md")
+	return filepath.Join(v.Root, GuidesDir, slug+".md")
 }
 
 // Load reads a topic note by slug.
@@ -67,9 +70,9 @@ func (v *Vault) Exists(slug string) bool {
 }
 
 // Save writes a topic note, stamping created/updated dates.
-func (v *Vault) Save(n Note) error { return v.SaveIn("topics", n) }
+func (v *Vault) Save(n Note) error { return v.SaveIn(GuidesDir, n) }
 
-// SaveIn writes a note into one of the vault folders (topics, roadmaps, daily).
+// SaveIn writes a note into one of the vault folders (guias, roadmaps, daily).
 func (v *Vault) SaveIn(dir string, n Note) error {
 	if n.Slug == "" {
 		n.Slug = Slugify(n.Meta.Title)
@@ -264,7 +267,7 @@ func (v *Vault) LoadHandoff(slug string) string {
 }
 
 // List returns every topic note, sorted by slug.
-func (v *Vault) List() ([]Note, error) { return v.ListIn("topics") }
+func (v *Vault) List() ([]Note, error) { return v.ListIn(GuidesDir) }
 
 // ListIn returns every note of a vault folder, sorted by slug.
 func (v *Vault) ListIn(sub string) ([]Note, error) {
@@ -308,7 +311,7 @@ func (v *Vault) Graph() (nodes []Note, edges []Edge, err error) {
 	return nodes, edges, nil
 }
 
-// Backlinks returns slugs of notes that link to the given slug.
+// Backlinks returns slugs of guides and concepts that link to the given slug.
 func (v *Vault) Backlinks(slug string) ([]string, error) {
 	_, edges, err := v.Graph()
 	if err != nil {
@@ -318,6 +321,21 @@ func (v *Vault) Backlinks(slug string) ([]string, error) {
 	for _, e := range edges {
 		if e.To == slug {
 			out = append(out, e.From)
+		}
+	}
+	concepts, err := v.ListConcepts()
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range concepts {
+		if c.Slug == slug {
+			continue
+		}
+		for _, to := range c.Links() {
+			if to == slug {
+				out = append(out, c.Slug)
+				break
+			}
 		}
 	}
 	return out, nil

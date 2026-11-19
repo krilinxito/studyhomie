@@ -125,6 +125,7 @@ function mdBlock(src, opts) {
   d.innerHTML = renderMd(src, opts);
   enhanceCallouts(d);
   enhanceDiagrams(d);
+  if (!(opts && opts.streaming)) Viz.enhance(d, opts && opts.viz);
   return d;
 }
 

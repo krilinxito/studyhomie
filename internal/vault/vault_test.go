@@ -1,6 +1,8 @@
 package vault
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -137,5 +139,48 @@ func TestSectionAndPlaceSection(t *testing.T) {
 	// the model cannot open sections of its own
 	if got := PlaceSection(body, "X", "## Colado\ntexto", "Guía"); strings.Contains(got, "\n## Colado") {
 		t.Errorf("heading leaked:\n%s", got)
+	}
+}
+
+func TestOpenMovesTopicsToGuides(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "topics"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "topics", "bayes.md"), []byte("---\ntitle: Bayes\n---\n\nhola\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	v, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := v.Load("bayes")
+	if err != nil || n.Meta.Title != "Bayes" {
+		t.Fatalf("guide not moved: %v %+v", err, n)
+	}
+	if _, err := os.Stat(filepath.Join(root, "topics")); !os.IsNotExist(err) {
+		t.Error("the old folder should be gone once empty")
+	}
+}
+
+func TestConceptRoundTrip(t *testing.T) {
+	v, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := Concept{Slug: "media", Meta: ConceptMeta{Title: "Media", Category: "estadistica", Requires: []string{"suma"}}, Body: "# Media\n\nVer [[suma|la suma]].\n"}
+	if err := v.SaveConcept(c); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(v.Root, ConceptsDir, "media.md"))
+	if !strings.Contains(string(data), "titulo: Media") || !strings.Contains(string(data), "requiere:") {
+		t.Errorf("frontmatter must use the vault's Spanish keys:\n%s", data)
+	}
+	got, err := v.LoadConcept("media")
+	if err != nil || got.Meta.Category != "estadistica" || got.Links()[0] != "suma" {
+		t.Errorf("round trip: %v %+v", err, got)
+	}
+	if back, _ := v.Backlinks("suma"); len(back) != 1 || back[0] != "media" {
+		t.Errorf("backlinks from concepts: %v", back)
 	}
 }

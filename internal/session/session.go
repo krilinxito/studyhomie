@@ -103,84 +103,9 @@ func (s *Session) readBlock() (text string, finished bool, err error) {
 	}
 }
 
-// Prepare writes the study guide, verifies its external links and saves everything.
+// Prepare writes the study guide of a topic, with concept notes down to the configured depth.
 func (s *Session) Prepare(ctx context.Context, topic, source string) (string, error) {
-	slug := vault.Slugify(topic)
-	if slug == "" {
-		return "", fmt.Errorf("invalid topic %q", topic)
-	}
-	var note vault.Note
-	if s.V.Exists(slug) {
-		var err error
-		if note, err = s.V.Load(slug); err != nil {
-			return "", err
-		}
-	} else {
-		note = vault.Note{Slug: slug, Meta: vault.Meta{Title: topic, Source: source}}
-	}
-
-	prompt := "Topic: " + topic
-	if note.Meta.Summary != "" {
-		prompt += "\nBy the end the learner should be able to: " + note.Meta.Summary
-	}
-	if g := s.grounding(note); g != "" {
-		prompt += "\n\nSOURCE MATERIAL (excerpts from the learner's document):\n" + g
-	}
-
-	s.card(Card{Kind: CardPhase, Phase: "prepare"})
-	s.printf("Preparando la guía de «%s» (busca material en línea, puede tardar)...\n", topic)
-	c := s.convo(prompts.Get("prepare", s.Cfg.Language), "WebSearch", "WebFetch")
-	resp, err := c.Say(ctx, prompt, nil)
-	if err != nil {
-		return "", err
-	}
-	guide, payload := splitJSON(resp.Text)
-
-	var out struct {
-		Resources []vault.Resource `json:"resources"`
-		Handoff   string           `json:"handoff"`
-	}
-	if payload != "" {
-		if err := decodeJSON(payload, &out); err != nil {
-			s.printf("Aviso: no pude leer la lista de recursos (%v); guardo la guía sin ella.\n", err)
-		}
-	} else {
-		s.printf("Aviso: la respuesta no incluyó recursos estructurados; guardo solo la guía.\n")
-	}
-
-	resources := s.verified(ctx, out.Resources)
-	// keep simulations generated earlier, and do not propose building another one
-	if have := localInteractive(note.Meta.Resources); len(have) > 0 {
-		var rest []vault.Resource
-		for _, r := range resources {
-			if r.Type != "interactive" || r.URL != "" {
-				rest = append(rest, r)
-			}
-		}
-		resources = append(rest, have...)
-	}
-
-	if note.Meta.Status == "" || note.Meta.Status == "new" {
-		note.Meta.Status = "prepared" // re-preparing a guide must not undo later progress
-	}
-	note.Meta.Resources = resources
-	note.Body = guideBody(note.Body, guide, resources)
-	if err := s.V.Save(note); err != nil {
-		return "", err
-	}
-	handoff := out.Handoff
-	if handoff == "" {
-		handoff = guide
-	}
-	if err := s.V.SaveHandoff(slug, handoff); err != nil {
-		return "", err
-	}
-	s.printf("\n%s\n\n", guide)
-	if len(resources) > 0 {
-		s.card(Card{Kind: CardResources, Resources: resources})
-	}
-	s.printf("Guardado en %s/topics/%s.md\n", s.V.Root, slug)
-	return slug, nil
+	return s.Guide(ctx, GuideReq{Topic: topic, Source: source, Depth: s.Cfg.Depth})
 }
 
 // verified drops resources whose URL is dead and keeps URL-less ones (books).

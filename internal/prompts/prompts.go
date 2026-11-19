@@ -11,7 +11,7 @@ var files embed.FS
 
 // voiced are the prompts whose output the learner reads, so they share the writing rules in style.md.
 // The others produce HTML, transcriptions or summaries for the program.
-var voiced = map[string]bool{"prepare": true, "feynman": true, "quiz": true, "daily": true, "scope": true, "roadmap": true, "extend": true, "ask": true}
+var voiced = map[string]bool{"guide": true, "concept": true, "plan": true, "feynman": true, "quiz": true, "daily": true, "scope": true, "roadmap": true, "extend": true, "ask": true}
 
 // Get returns the named prompt (without extension) with {{language}} filled in.
 func Get(name, language string) string {

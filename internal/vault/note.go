@@ -34,6 +34,12 @@ type Meta struct {
 	Created   string     `yaml:"created,omitempty" json:"created,omitempty"`
 	Updated   string     `yaml:"updated,omitempty" json:"updated,omitempty"`
 	Resources []Resource `yaml:"resources,omitempty" json:"resources,omitempty"`
+
+	// A guide generated with concept notes: which ones it stands on, how deep the plan went and its focus.
+	Concepts []string `yaml:"concepts,omitempty" json:"concepts,omitempty"` // every concept note of the guide
+	Base     []string `yaml:"base,omitempty" json:"base,omitempty"`         // the ones the topic needs directly
+	Depth    int      `yaml:"depth,omitempty" json:"depth,omitempty"`
+	Focus    string   `yaml:"focus,omitempty" json:"focus,omitempty"`
 }
 
 type Note struct {
@@ -79,8 +85,18 @@ func Slugify(s string) string {
 }
 
 // Marshal renders the note as frontmatter + body.
-func (n Note) Marshal() ([]byte, error) {
-	fm, err := yaml.Marshal(n.Meta)
+func (n Note) Marshal() ([]byte, error) { return marshalFront(n.Meta, n.Body) }
+
+// ParseNote reads frontmatter + body. A file without frontmatter is all body.
+func ParseNote(slug string, data []byte) (Note, error) {
+	n := Note{Slug: slug}
+	body, err := parseFront(slug, data, &n.Meta)
+	n.Body = body
+	return n, err
+}
+
+func marshalFront(meta any, body string) ([]byte, error) {
+	fm, err := yaml.Marshal(meta)
 	if err != nil {
 		return nil, err
 	}
@@ -88,27 +104,24 @@ func (n Note) Marshal() ([]byte, error) {
 	b.WriteString("---\n")
 	b.Write(fm)
 	b.WriteString("---\n\n")
-	b.WriteString(strings.TrimLeft(n.Body, "\n"))
-	if !strings.HasSuffix(n.Body, "\n") {
+	b.WriteString(strings.TrimLeft(body, "\n"))
+	if !strings.HasSuffix(body, "\n") {
 		b.WriteByte('\n')
 	}
 	return b.Bytes(), nil
 }
 
-// ParseNote reads frontmatter + body. A file without frontmatter is all body.
-func ParseNote(slug string, data []byte) (Note, error) {
-	n := Note{Slug: slug}
+// parseFront fills meta from the frontmatter and returns the body. A file without frontmatter is all body.
+func parseFront(slug string, data []byte, meta any) (string, error) {
 	text := strings.ReplaceAll(string(data), "\r\n", "\n")
 	if strings.HasPrefix(text, "---\n") {
 		rest := text[4:]
 		if end := strings.Index(rest, "\n---\n"); end >= 0 {
-			if err := yaml.Unmarshal([]byte(rest[:end]), &n.Meta); err != nil {
-				return n, fmt.Errorf("frontmatter of %s: %w", slug, err)
+			if err := yaml.Unmarshal([]byte(rest[:end]), meta); err != nil {
+				return text, fmt.Errorf("frontmatter of %s: %w", slug, err)
 			}
-			n.Body = strings.TrimLeft(rest[end+5:], "\n")
-			return n, nil
+			return strings.TrimLeft(rest[end+5:], "\n"), nil
 		}
 	}
-	n.Body = text
-	return n, nil
+	return text, nil
 }

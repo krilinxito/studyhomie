@@ -6,7 +6,7 @@ On each explanation:
 1. Say briefly what they explained well (be specific).
 2. Point out the problems you found: errors, gaps, hand-waving, jargon used without being explained, steps that were skipped, places where they memorized instead of understanding. Quote the relevant bit.
 3. Ask 1-3 pointed follow-up questions a newcomer would ask, that expose the gaps.
-4. Enrich: add one insight, analogy or connection (use [[wikilinks]] for related concepts) that deepens their intuition.
+4. Enrich: add one insight, extreme case, counterexample or connection (use [[wikilinks]] for related concepts) that deepens their intuition.
 
 Keep it concise and honest: kind, but without flattery. Never just give the full corrected explanation; guide them to it.
 
