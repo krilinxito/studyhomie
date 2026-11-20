@@ -378,101 +378,98 @@ function onShown(id) {
 $('#btn-settings').addEventListener('click', () => show('settings'));
 
 /* ---------- Ajustes: which AI answers ---------- */
-const KIND = { cli: 'Con tu suscripción (programa de terminal)', api: 'APIs en la nube (clave propia, pago por uso)', local: 'En tu PC (modelos locales)' };
+// A plain settings page: one dropdown for the AI, a few fields, two buttons.
+const KIND = { cli: 'Con tu suscripción', api: 'Por API (clave propia)', local: 'En tu PC' };
 const SET = { data: null, pick: '', models: [] };
 
 async function renderSettings() {
   const root = PANE_EL.settings;
   if (!root) return;
   try { SET.data = await api('/api/settings'); } catch (err) { root.replaceChildren(h('p', { class: 'hint', style: 'padding:24px' }, err.message)); return; }
-  const cur = SET.data.current;
-  if (!SET.pick) SET.pick = cur.provider || 'claude-cli';
+  if (!SET.pick) SET.pick = SET.data.current.provider || 'claude-cli';
   drawSettings();
 }
 
 function drawSettings() {
   const root = PANE_EL.settings;
   const { current: cur, providers: list, warning } = SET.data;
+  const inUse = cur.provider || 'claude-cli';
   const sel = list.find((p) => p.id === SET.pick) || list[0];
-  const same = sel.id === (cur.provider || 'claude-cli');
-  const model = h('input', { type: 'text', list: 'model-list', value: same ? cur.model : (sel.defaultModel || ''), placeholder: sel.defaultModel || (sel.kind === 'cli' ? 'El que use el programa por defecto' : 'Elige o escribe un modelo'), 'aria-label': 'Modelo principal' });
-  const quick = h('input', { type: 'text', list: 'model-list', value: same ? cur.quickModel : '', placeholder: 'Opcional: uno más rápido y barato', 'aria-label': 'Modelo rápido' });
-  const url = sel.editURL ? h('input', { type: 'url', value: same && cur.baseURL ? cur.baseURL : (sel.baseURL || ''), placeholder: 'https://…/v1', 'aria-label': 'URL del servicio' }) : null;
-  const datalist = h('datalist', { id: 'model-list' }, SET.models.map((m) => h('option', { value: m })));
-  const result = h('div', { class: 'set-result', role: 'status' });
-  const body = () => ({ provider: sel.id, model: model.value, quickModel: quick.value, baseURL: url ? url.value : '' });
-  const busy = (btn, on, label) => { btn.disabled = on; if (label) btn.lastChild.textContent = label; };
+  const same = sel.id === inUse;
 
-  const loadModels = h('button', { class: 'btn small', type: 'button', onclick: async (e) => {
+  const picker = h('select', { 'aria-label': 'Proveedor de IA', onchange: (e) => { SET.pick = e.target.value; SET.models = []; drawSettings(); } },
+    Object.entries(KIND).map(([kind, title]) => h('optgroup', { label: title },
+      list.filter((p) => p.kind === kind).map((p) => h('option', { value: p.id, selected: p.id === sel.id || null },
+        p.name + (p.id === inUse ? ' (en uso)' : ''))))));
+  const model = h('input', { type: 'text', list: 'model-list', value: same ? cur.model : (sel.defaultModel || ''), placeholder: sel.defaultModel || (sel.kind === 'cli' ? 'El del programa' : 'Nombre del modelo'), 'aria-label': 'Modelo' });
+  const quick = h('input', { type: 'text', list: 'model-list', value: same ? cur.quickModel : '', placeholder: 'Igual que el modelo', 'aria-label': 'Modelo rápido' });
+  const url = sel.editURL ? h('input', { type: 'url', value: same && cur.baseURL ? cur.baseURL : (sel.baseURL || ''), placeholder: 'https://…/v1', 'aria-label': 'URL' }) : null;
+  const datalist = h('datalist', { id: 'model-list' }, SET.models.map((m) => h('option', { value: m })));
+  const result = h('p', { class: 'set-result', role: 'status' });
+  const body = () => ({ provider: sel.id, model: model.value, quickModel: quick.value, baseURL: url ? url.value : '' });
+  const say = (cls, text) => { result.className = `set-result ${cls}`; result.textContent = text; };
+
+  // one line of plain status: ready or what is missing, and whether it searches the web
+  const facts = [
+    sel.ready ? 'Disponible' : sel.reason[0].toUpperCase() + sel.reason.slice(1),
+    sel.search ? 'busca en la web' : 'sin búsqueda web (las guías salen sin recursos externos)',
+    sel.experimental ? 'experimental' : '',
+  ].filter(Boolean).join(' · ');
+
+  const loadModels = sel.kind !== 'cli' || sel.id === 'agy' ? h('button', { class: 'link', type: 'button', onclick: async (e) => {
     const b = e.currentTarget;
-    busy(b, true, 'Cargando…');
+    b.disabled = true; b.textContent = 'cargando…';
     try {
       SET.models = (await api('/api/settings/models', { method: 'POST', body: body() })).models;
-      result.replaceChildren(h('span', { class: 'ok' }, SET.models.length ? `${SET.models.length} modelos disponibles: elige en la lista del campo.` : 'Este proveedor no da una lista; escribe el nombre del modelo.'));
       datalist.replaceChildren(...SET.models.map((m) => h('option', { value: m })));
+      say('ok', SET.models.length ? `${SET.models.length} modelos: escribe en el campo para elegir.` : 'Este proveedor no da una lista; escribe el nombre.');
       model.focus();
-    } catch (err) { result.replaceChildren(h('span', { class: 'bad' }, err.message)); }
-    busy(b, false, 'Cargar modelos');
-  } }, icon('search'), 'Cargar modelos');
-  const test = h('button', { class: 'btn small', type: 'button', onclick: async (e) => {
+    } catch (err) { say('bad', err.message); }
+    b.disabled = false; b.textContent = 'ver modelos';
+  } }, 'ver modelos') : null;
+
+  const test = h('button', { class: 'btn small ghost', type: 'button', onclick: async (e) => {
     const b = e.currentTarget;
-    busy(b, true, 'Probando…');
-    result.replaceChildren(h('span', { class: 'hint' }, 'Enviando un mensaje de prueba…'));
+    b.disabled = true;
+    say('', 'Probando…');
     try {
       const r = await api('/api/settings/test', { method: 'POST', body: body() });
-      result.replaceChildren(h('span', { class: 'ok' }, icon('check'), `Responde: «${r.reply.slice(0, 80)}» en ${(r.ms / 1000).toFixed(1)} s`));
-    } catch (err) { result.replaceChildren(h('span', { class: 'bad' }, err.message)); }
-    busy(b, false, 'Probar conexión');
-  } }, icon('plug'), 'Probar conexión');
-  const save = h('button', { class: 'btn primary', type: 'button', onclick: async (e) => {
+      say('ok', `Funciona: respondió «${r.reply.slice(0, 60)}» en ${(r.ms / 1000).toFixed(1)} s.`);
+    } catch (err) { say('bad', err.message); }
+    b.disabled = false;
+  } }, 'Probar');
+  const save = h('button', { class: 'btn small primary', type: 'button', onclick: async (e) => {
     const b = e.currentTarget;
-    busy(b, true);
+    b.disabled = true;
     try {
       const r = await api('/api/settings', { method: 'POST', body: body() });
       $('#provider-badge').textContent = r.provider;
       $('#banner').textContent = r.warning || '';
       $('#banner').hidden = !r.warning;
-      toast(`Listo: ahora responde ${sel.name}.`);
+      toast(`Ahora responde ${sel.name}.`);
       await renderSettings();
-    } catch (err) { result.replaceChildren(h('span', { class: 'bad' }, err.message)); busy(b, false); }
-  } }, 'Guardar y usar');
+    } catch (err) { say('bad', err.message); b.disabled = false; }
+  } }, 'Guardar');
 
-  const card = (p) => h('button', {
-    class: `prov${p.id === sel.id ? ' on' : ''}${p.ready ? '' : ' off'}`, type: 'button', role: 'radio', 'aria-checked': String(p.id === sel.id),
-    onclick: () => {
-      SET.pick = p.id; SET.models = [];
-      drawSettings();
-      $('.set-form', PANE_EL.settings)?.scrollIntoView({ behavior: smoothness(), block: 'nearest' });
-    },
-  },
-  h('span', { class: 'prov-name' }, p.name, p.id === (cur.provider || 'claude-cli') ? h('em', {}, 'en uso') : null),
-  h('span', { class: 'prov-tags' },
-    h('span', { class: `tag${p.ready ? ' good' : ''}` }, p.ready ? 'disponible' : p.reason),
-    p.search ? h('span', { class: 'tag' }, 'búsqueda web') : null,
-    p.experimental ? h('span', { class: 'tag warn' }, 'experimental') : null));
-
-  const keyHelp = sel.kind === 'api' && (sel.keyEnvs || []).length ? h('div', { class: 'set-key' },
-    h('p', {}, 'La clave nunca pasa por la app: va en una variable de entorno. ', sel.ready ? h('strong', {}, `${sel.keyEnvs[0]} está definida.`) : h('strong', {}, `Falta ${sel.keyEnvs[0]}.`)),
-    !sel.ready ? h('pre', {}, `setx ${sel.keyEnvs[0]} "tu-clave"`) : null,
-    !sel.ready ? h('p', { class: 'hint' }, 'En PowerShell; después cierra y vuelve a abrir la terminal y StudyHomie. En macOS o Linux: export en tu shell.') : null) : null;
+  const row = (label, control, extra) => h('div', { class: 'set-row' }, h('span', { class: 'set-label' }, label), h('div', { class: 'set-control' }, control, extra || null));
+  const keyLine = sel.kind === 'api' && (sel.keyEnvs || []).length && !sel.ready
+    ? h('p', { class: 'set-note' }, 'La clave va en una variable de entorno, no en la app: ', h('code', {}, `setx ${sel.keyEnvs[0]} "tu-clave"`), ' en PowerShell, y vuelve a abrir StudyHomie.')
+    : null;
 
   root.replaceChildren(h('div', { class: 'settings' },
-    h('header', { class: 'c-head' }, h('p', { class: 'eyebrow' }, 'Ajustes'), h('h2', {}, '¿Qué IA responde?'),
-      h('p', { class: 'hint' }, `Se guarda en ${SET.data.configPath || 'studyhomie.toml'}. Lo que ya esté en curso termina con la IA anterior.`)),
+    h('h2', {}, 'Ajustes'),
     warning ? h('p', { class: 'set-warning' }, warning) : null,
-    Object.entries(KIND).map(([kind, title]) => h('section', { class: 'set-group' }, h('h3', {}, title),
-      h('div', { class: 'prov-grid', role: 'radiogroup' }, list.filter((p) => p.kind === kind).map(card)))),
-    h('section', { class: 'set-form' },
-      h('h3', {}, sel.name),
-      sel.note ? h('p', { class: 'hint' }, mdInline(sel.note)) : null,
-      !sel.search ? h('p', { class: 'hint' }, 'Sin búsqueda web: las guías saldrán sin videos ni webs recomendados; todo lo demás funciona igual.') : null,
-      keyHelp,
-      url ? h('label', {}, 'URL del servicio', url) : null,
-      h('label', {}, 'Modelo principal', model),
-      h('label', {}, 'Modelo rápido (chat, notas de concepto, plan)', quick),
+    h('section', { class: 'set-section' },
+      h('h3', {}, 'Inteligencia artificial'),
+      row('Proveedor', picker, h('p', { class: 'set-facts' }, facts)),
+      sel.note ? row('', h('p', { class: 'set-note' }, mdInline(sel.note))) : null,
+      keyLine ? row('', keyLine) : null,
+      url ? row('URL', url) : null,
+      row('Modelo', model, loadModels),
+      row('Modelo rápido', quick, h('p', { class: 'set-facts' }, 'Para el chat, las notas de concepto y el plan.')),
       datalist,
-      h('div', { class: 'actions' }, sel.kind !== 'cli' || sel.id === 'agy' ? loadModels : null, test, save),
-      result)));
+      row('', h('div', { class: 'set-actions' }, save, test), result)),
+    h('p', { class: 'set-foot' }, `Se guarda en ${SET.data.configPath || 'studyhomie.toml'}. Lo que esté en curso termina con la IA anterior.`)));
 }
 
 // a little Markdown for the notes of the catalogue (code spans)
