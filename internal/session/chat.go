@@ -331,7 +331,7 @@ func (s *Session) ConceptNote(ctx context.Context, title, summary, guide string)
 		}
 		return id, nil
 	}
-	s.printf("Escribiendo la nota «%s»...\n", title)
+	s.status("Escribiendo la nota «%s»", title)
 	plan := ConceptPlan{Topic: gTitle}
 	c := PlannedConcept{ID: id, Title: title, Summary: strings.TrimSpace(summary), Level: 1}
 	plan.Concepts = []PlannedConcept{c}

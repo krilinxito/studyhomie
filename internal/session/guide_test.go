@@ -192,8 +192,9 @@ func TestGuideWritesGuideAndConceptNotes(t *testing.T) {
 	if g.Meta.Depth != 2 || strings.Join(g.Meta.Concepts, ",") != "probabilidad-condicional,probabilidad" || strings.Join(g.Meta.Base, ",") != "probabilidad-condicional" {
 		t.Errorf("guide meta = %+v", g.Meta)
 	}
-	if strings.Count(g.Body, "```viz") != 1 || !strings.Contains(out.String(), "variable desconocida") {
-		t.Errorf("the broken widget must be dropped and reported:\n%s\n%s", g.Body, out)
+	// the web chat stays clean: the broken widget is dropped without a technical notice
+	if strings.Count(g.Body, "```viz") != 1 || strings.Contains(out.String(), "variable desconocida") {
+		t.Errorf("the broken widget must be dropped quietly in the web app:\n%s\n%s", g.Body, out)
 	}
 
 	c, err := s.V.LoadConcept("probabilidad-condicional")

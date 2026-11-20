@@ -1,9 +1,18 @@
 name: Release
 
-# Pushing a tag such as v0.1.0 builds binaries for every platform and publishes them.
+# Builds the binaries for every platform, attaches them (with checksums.txt) to the release and
+# publishes it. Release Please calls this after merging its release PR: the release it creates is
+# a draft, so users (and the in-app updater) only see it once the binaries are there. Pushing a
+# tag such as v0.3.0 by hand still works and creates the release from scratch.
 on:
   push:
     tags: ["v*"]
+  workflow_call:
+    inputs:
+      tag:
+        description: The tag to build, e.g. v0.3.0
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -11,8 +20,12 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -22,11 +35,11 @@ jobs:
           mkdir dist
           for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
             os=${target%/*}; arch=${target#*/}
-            name="studyhomie_${GITHUB_REF_NAME}_${os}_${arch}"
+            name="studyhomie_${TAG}_${os}_${arch}"
             bin=studyhomie; [ "$os" = windows ] && bin=studyhomie.exe
             mkdir "dist/$name"
             CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath \
-              -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" \
+              -ldflags "-s -w -X main.version=${TAG}" \
               -o "dist/$name/$bin" ./cmd/studyhomie
             cp README.md LICENSE "dist/$name/"
             if [ "$os" = windows ]; then
@@ -40,4 +53,11 @@ jobs:
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+            gh release edit "$TAG" --draft=false --latest
+          else
+            gh release create "$TAG" dist/* --title "$TAG" --generate-notes
+          fi

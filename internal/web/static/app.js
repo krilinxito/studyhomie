@@ -53,7 +53,12 @@ async function api(path, opts = {}) {
   const res = await fetch(path, init);
   let data = null;
   try { data = await res.json(); } catch { /* empty body */ }
-  if (!res.ok) throw new Error((data && data.error) || `Error ${res.status}`);
+  if (!res.ok) {
+    const err = new Error((data && data.error) || `Error ${res.status}`);
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
   return data;
 }
 
@@ -307,7 +312,7 @@ $('#btn-theme').addEventListener('click', () => {
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (!document.documentElement.dataset.theme) applyTheme(); });
 
 /* ---------- the dock: panels you can drag, split, stack and float ---------- */
-const PANES = { chat: 'Chat', chats: 'Chats', guide: 'Guía', concepts: 'Conceptos', map: 'Mapa', practice: 'Practicar', notes: 'Apuntes', vault: 'Vault', settings: 'Ajustes' };
+const PANES = { chat: 'Chat', chats: 'Conversaciones', guide: 'Guía', concepts: 'Conceptos', map: 'Mapa', practice: 'Practicar', notes: 'Apuntes', vault: 'Vault', settings: 'Ajustes' };
 const STUDY = ['guide', 'concepts', 'map', 'practice', 'notes']; // the study panel: closed until there is something to show
 const NEAR_STUDY = [...STUDY, 'vault', 'settings']; // panels that open next to the study group
 
@@ -320,12 +325,19 @@ function createDock() {
     createRightHeaderActionComponent: (group) => groupActions(group),
   });
   S.dock = dock;
+  // Outside edit mode a tab can still be reordered or moved into another box, but the boxes stay
+  // put: no splits, no new boxes, no moving a whole box, so a stray drag cannot rearrange the layout.
+  const allowed = (e) => S.editingLayout || tabMove(e);
+  dock.onWillShowOverlay((e) => { if (!allowed(e)) e.preventDefault(); });
+  dock.onWillDrop((e) => { if (!allowed(e)) e.preventDefault(); });
   const saved = !isPhone() && store.get('dock', null);
   let restored = false;
   if (saved) {
     try { dock.fromJSON(saved); restored = !!dock.getPanel('chat'); } catch { restored = false; }
   }
   if (!restored) defaultLayout();
+  // a saved layout carries the titles it was saved with: names come from the code, so a rename shows up
+  for (const p of dock.panels) if (PANES[p.id] && p.title !== PANES[p.id]) p.api.setTitle(PANES[p.id]);
   // the study panel starts closed: it slides in when the app has something to show
   for (const id of NEAR_STUDY) dock.getPanel(id)?.api.close();
   let saveTimer;
@@ -339,6 +351,27 @@ function createDock() {
   dock.onDidAddPanel?.(() => syncPanelButton());
   dock.onDidActivePanelChange((p) => { if (p) onShown(p.id); });
 }
+
+// a tab dropped on a box's tab bar or the middle of its content: it joins that box. Taking the last
+// tab out of a box would make the box disappear, which changes the layout, so that needs edit mode.
+function tabMove(e) {
+  const d = e.getData && e.getData();
+  if (!d || !d.panelId || !e.group) return false; // a whole box being dragged, or an edge of the dock
+  const onTabs = e.kind === 'tab' || e.kind === 'header_space';
+  if (!onTabs && !(e.kind === 'content' && e.position === 'center')) return false;
+  if (d.groupId === e.group.id) return true;
+  const from = S.dock.groups.find((g) => g.id === d.groupId);
+  return !!from && from.panels.length > 1;
+}
+
+// edit mode: the only time panels can move between groups, split or float; the layout is locked otherwise
+function setLayoutEditing(on) {
+  S.editingLayout = on;
+  document.body.classList.toggle('layout-editing', on);
+  $('#edit-bar').hidden = !on;
+}
+$('#edit-done').addEventListener('click', () => setLayoutEditing(false));
+$('#edit-reset').addEventListener('click', () => { store.set('dock', null); defaultLayout(); toast('Diseño restablecido.'); });
 
 function defaultLayout() {
   const dock = S.dock;
@@ -492,7 +525,9 @@ const SET = { data: null, pick: '', form: {}, models: {} }; // form and models a
 async function renderSettings() {
   const root = PANE_EL.settings;
   if (!root) return;
-  try { SET.data = await api('/api/settings'); } catch (err) { root.replaceChildren(h('p', { class: 'hint', style: 'padding:24px' }, err.message)); return; }
+  try {
+    [SET.data] = await Promise.all([api('/api/settings'), checkUpdate()]);
+  } catch (err) { root.replaceChildren(h('p', { class: 'hint', style: 'padding:24px' }, err.message)); return; }
   if (!SET.pick) SET.pick = SET.data.current.provider || 'claude-cli';
   SET.form = {};
   drawSettings();
@@ -623,7 +658,178 @@ function drawSettings() {
       row('Modelo', model),
       row('Modelo rápido', quick, h('p', { class: 'set-facts' }, 'Para el chat, las notas de concepto y el plan.')),
       row('', h('div', { class: 'set-actions' }, save, test), result)),
+    updateSection(row),
     h('p', { class: 'set-foot' }, `Se guarda en ${SET.data.configPath || 'studyhomie.toml'}. Lo que esté en curso termina con la IA anterior.`)));
+}
+
+/* ---------- Actualizaciones ---------- */
+// The server looks for new versions on GitHub (at most every few hours). In "ask" mode a bar under
+// the header offers it; installing downloads, verifies, swaps the binary and restarts the app, and
+// this tab waits for the new version to answer and reloads.
+const UPD = { st: null, busy: false };
+const UPDATE_MODES = { ask: 'Preguntarme antes de actualizar', auto: 'Instalar sola (se usa al reiniciar)', never: 'No buscar versiones nuevas' };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function laterFor(tag) { try { return sessionStorage.getItem('update-later') === tag; } catch { return false; } }
+function setLater(tag) { try { sessionStorage.setItem('update-later', tag); } catch { /* private mode */ } }
+
+async function checkUpdate(force = false) {
+  try { UPD.st = await api(`/api/update${force ? '?force=1' : ''}`); } catch { /* offline: keep what we knew */ }
+  drawUpdateBar();
+  return UPD.st;
+}
+
+function drawUpdateBar() {
+  const st = UPD.st;
+  const show = !!st && st.enabled && st.available && !st.skipped && st.mode !== 'never' && !laterFor(st.latest);
+  $('#update-bar').hidden = !show || UPD.busy;
+  if (!show) return;
+  $('#update-text').replaceChildren(st.staged
+    ? h('span', {}, h('strong', {}, `StudyHomie ${st.latest} ya está instalado.`), ' Se usa al reiniciar.')
+    : h('span', {}, h('strong', {}, 'Hay una versión nueva'), ` (${st.latest}). Tienes la ${st.current}.`));
+  $('#update-go span').textContent = st.staged ? 'Reiniciar ahora' : 'Actualizar';
+  $('#update-go use').setAttribute('href', `icons.svg#i-${st.staged ? 'refresh-cw' : 'download'}`);
+}
+
+function fmtDay(iso) {
+  const d = new Date(iso);
+  return isNaN(d) || d.getFullYear() < 2000 ? '' : d.toLocaleDateString('es', { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+function openUpdateDialog() {
+  const st = UPD.st;
+  if (!st || !st.latest) return;
+  $('#update-title').textContent = `StudyHomie ${st.latest}`;
+  const day = st.published && fmtDay(st.published);
+  $('#update-body').replaceChildren(...[
+    h('p', { class: 'update-meta' }, [day ? `Publicada el ${day}` : '', `tienes la ${st.current}`].filter(Boolean).join(' · ')),
+    mdBlock(st.notes || 'Esta versión no trae notas.'),
+    st.page ? h('p', { class: 'update-meta' }, h('a', { href: st.page, target: '_blank', rel: 'noopener noreferrer' }, 'Ver la versión en GitHub')) : null,
+  ].filter(Boolean));
+  updateFoot();
+  if (!$('#update-dialog').open) $('#update-dialog').showModal();
+}
+
+// the dialog's buttons, or a line of progress, or an error with what to do by hand
+function updateFoot(state = {}) {
+  const st = UPD.st;
+  const foot = $('#update-foot');
+  const btn = (cls, label, onclick, ic) => h('button', { class: `btn small ${cls}`, type: 'button', onclick }, ic ? icon(ic) : null, label);
+  if (state.progress) {
+    foot.replaceChildren(h('p', { class: 'update-progress', role: 'status' }, h('span', { class: 'pulse' }), state.progress));
+    return;
+  }
+  const msg = state.error ? h('p', { class: 'update-msg bad', role: 'alert' }, state.error)
+    : state.note ? h('p', { class: 'update-msg', role: 'status' }, state.note) : null;
+  if (state.busy) {
+    foot.replaceChildren(...[msg].filter(Boolean), h('div', { class: 'update-actions' },
+      h('span', { class: 'spacer' }),
+      btn('', 'Esperar a que termine', () => $('#update-dialog').close()),
+      btn('primary', 'Actualizar igual', () => installUpdate(true), 'download')));
+    return;
+  }
+  if (state.done) { foot.replaceChildren(...[msg].filter(Boolean)); return; }
+  foot.replaceChildren(...[msg].filter(Boolean), h('div', { class: 'update-actions' },
+    st.staged ? null : btn('ghost', 'Omitir esta versión', skipUpdate),
+    h('span', { class: 'spacer' }),
+    btn('', 'Más tarde', () => { setLater(st.latest); drawUpdateBar(); $('#update-dialog').close(); }),
+    btn('primary', st.staged ? 'Reiniciar ahora' : 'Actualizar', () => installUpdate(), st.staged ? 'refresh-cw' : 'download')));
+}
+
+async function skipUpdate() {
+  try {
+    UPD.st = await api('/api/update/skip', { method: 'POST', body: { version: UPD.st.latest } });
+    $('#update-dialog').close();
+    drawUpdateBar();
+    toast(`No te avisaré de la ${UPD.st.latest}; sí de la siguiente.`);
+  } catch (err) { updateFoot({ error: err.message }); }
+}
+
+async function installUpdate(force = false) {
+  const st = UPD.st;
+  if (!st || UPD.busy) return;
+  openUpdateDialog();
+  UPD.busy = true;
+  drawUpdateBar();
+  updateFoot({ progress: st.staged ? 'Reiniciando…' : `Descargando y verificando ${st.latest}…` });
+  try {
+    const r = st.staged
+      ? await api('/api/update/restart', { method: 'POST', body: {} })
+      : await api('/api/update', { method: 'POST', body: { force } });
+    if (!r.restarting) {
+      UPD.busy = false;
+      await checkUpdate();
+      updateFoot({ done: true, note: `Listo: la ${r.version || st.latest} quedó instalada. Cierra StudyHomie y vuelve a abrirlo para usarla.` });
+      return;
+    }
+    updateFoot({ progress: 'Reiniciando StudyHomie…' });
+    await waitForVersion(r.version || st.latest);
+  } catch (err) {
+    UPD.busy = false;
+    drawUpdateBar();
+    if (err.data && err.data.busy) updateFoot({ busy: true, note: err.message });
+    else updateFoot({ error: err.message });
+  }
+}
+
+// waits until the restarted server answers with the new version, then reloads the page
+async function waitForVersion(tag) {
+  const until = Date.now() + 90_000;
+  await sleep(1200);
+  while (Date.now() < until) {
+    try {
+      const res = await fetch('/api/state', { cache: 'no-store' });
+      if (res.ok && (await res.json()).version === tag) { location.reload(); return; }
+    } catch { /* still restarting */ }
+    await sleep(1000);
+  }
+  throw new Error('StudyHomie no volvió a arrancar solo. Ábrelo de nuevo: la versión nueva ya está instalada.');
+}
+
+$('#update-notes').addEventListener('click', openUpdateDialog);
+$('#update-go').addEventListener('click', () => installUpdate());
+$('#update-later').addEventListener('click', () => { setLater(UPD.st.latest); drawUpdateBar(); });
+$('#update-close').addEventListener('click', () => $('#update-dialog').close());
+
+// the "Actualizaciones" block of the settings page
+function updateSection(row) {
+  const st = UPD.st;
+  if (!st) return null;
+  const head = h('h3', {}, 'Actualizaciones');
+  if (!st.enabled) {
+    return h('section', { class: 'set-section' }, head,
+      row('Versión', h('p', { class: 'set-facts' }, `${st.current} · compilación de desarrollo: no se actualiza sola.`)));
+  }
+  const result = h('p', { class: 'set-result', role: 'status' });
+  const say = (cls, text) => { result.className = `set-result ${cls}`; result.textContent = text; };
+  const mode = h('select', { 'aria-label': 'Al salir una versión nueva', onchange: async (e) => {
+    try {
+      UPD.st = await api('/api/update/mode', { method: 'POST', body: { mode: e.target.value } });
+      drawUpdateBar();
+      say('ok', 'Guardado.');
+    } catch (err) { say('bad', err.message); }
+  } }, Object.entries(UPDATE_MODES).map(([v, label]) => h('option', { value: v, selected: v === st.mode || null }, label)));
+
+  let line;
+  if (st.staged) line = `La ${st.latest} ya está instalada: se usa al reiniciar.`;
+  else if (st.available) line = `Hay una versión nueva: ${st.latest}.`;
+  else if (st.latest) line = 'Tienes la última versión.';
+  else line = fmtDay(st.checked) ? 'Todavía no hay versiones publicadas.' : 'Todavía no se buscó.';
+  const checked = fmtDay(st.checked) ? ` Última búsqueda: ${new Date(st.checked).toLocaleString('es', { dateStyle: 'medium', timeStyle: 'short' })}.` : '';
+  if (st.error) say('bad', st.error);
+
+  const find = h('button', { class: 'btn small ghost', type: 'button', onclick: async (e) => {
+    e.currentTarget.disabled = true;
+    say('', 'Buscando…');
+    await checkUpdate(true);
+    drawSettings();
+  } }, icon('refresh-cw'), 'Buscar ahora');
+  const see = st.available ? h('button', { class: 'btn small primary', type: 'button', onclick: openUpdateDialog }, st.staged ? 'Reiniciar' : 'Ver y actualizar') : null;
+
+  return h('section', { class: 'set-section' }, head,
+    row('Versión', h('p', { class: 'set-facts' }, h('strong', {}, st.current), ` · ${line}${checked}`)),
+    row('Al salir una nueva', mode),
+    row('', h('div', { class: 'set-actions' }, see, find), result));
 }
 
 // a little Markdown for the notes of the catalogue (code spans)
@@ -638,19 +844,21 @@ $('#btn-layout').addEventListener('click', (e) => {
     ...Object.entries(PANES).map(([id, title]) => h('button', { type: 'button', onclick: () => { menu.hidden = true; show(id); } },
       S.dock.getPanel(id) ? '● ' : '○ ', title)),
     h('hr'),
-    h('button', { type: 'button', onclick: () => { menu.hidden = true; store.set('dock', null); defaultLayout(); toast('Layout restablecido.'); } },
-      icon('rotate-ccw'), 'Restablecer layout'),
-    h('p', { class: 'hint', style: 'padding: 6px 10px 2px' }, 'Arrastra una pestaña para dividir la pantalla o apilarla en otro grupo.'));
+    h('button', { type: 'button', onclick: () => { menu.hidden = true; setLayoutEditing(!S.editingLayout); } },
+      icon(S.editingLayout ? 'lock' : 'lock-open'), S.editingLayout ? 'Terminar de editar' : 'Editar diseño'),
+    h('button', { type: 'button', onclick: () => { menu.hidden = true; store.set('dock', null); defaultLayout(); toast('Diseño restablecido.'); } },
+      icon('rotate-ccw'), 'Restablecer diseño'));
   menu.hidden = false;
   $('#btn-layout').setAttribute('aria-expanded', 'true');
 });
 document.addEventListener('click', (e) => {
   const menu = $('#layout-menu');
   if (!menu.hidden && !e.target.closest('.menu')) { menu.hidden = true; $('#btn-layout').setAttribute('aria-expanded', 'false'); }
+  if (!$('#plus-menu').hidden && !e.target.closest('.menu.plus')) closePlus();
   const pop = $('#explain-pop');
   if (!pop.hidden && !e.target.closest('#explain-pop') && !e.target.closest('a.pending')) pop.hidden = true;
 });
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { $('#layout-menu').hidden = true; $('#explain-pop').hidden = true; } });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { $('#layout-menu').hidden = true; $('#explain-pop').hidden = true; closePlus(); } });
 
 /* ---------- opening notes ---------- */
 // Opens a guide (Guía) or a concept (Conceptos).
@@ -1192,7 +1400,7 @@ function drawVault() {
         pathIn.focus();
       } }, icon('folder-open'), 'Elegir carpeta…') : null,
       h('button', { class: 'btn small primary', type: 'submit' }, 'Abrir')),
-    h('p', { class: 'hint' }, 'Una carpeta vacía (o nueva) se vuelve un vault con sus carpetas; una que ya tiene notas se abre tal cual. Cada vault tiene sus propios chats.')) : null;
+    h('p', { class: 'hint' }, 'Una carpeta vacía (o nueva) se vuelve un vault con sus carpetas; una que ya tiene notas se abre tal cual. Cada vault tiene sus propias conversaciones.')) : null;
 
   // the notes: filter by folder, search by title and text
   const search = h('input', { type: 'search', value: VLT.q, placeholder: 'Buscar en títulos y texto…', 'aria-label': 'Buscar notas' });
@@ -1510,9 +1718,9 @@ async function drawMap() {
   for (const b of $$('#map-scope button')) b.setAttribute('aria-pressed', String(b.dataset.scope === S.mapScope));
   const emptyChat = S.mapScope === 'chat' && !g.nodes.length;
   $('#map-empty').hidden = g.nodes.length > 0;
-  $('#map-empty-title').textContent = emptyChat ? 'Este chat aún no tiene guías' : 'Tu mapa está vacío';
+  $('#map-empty-title').textContent = emptyChat ? 'Esta conversación aún no tiene guías' : 'Tu mapa está vacío';
   $('#map-empty-text').textContent = emptyChat
-    ? 'Cuando este chat escriba una guía o explique un concepto, aparecerán aquí con lo que hay debajo.'
+    ? 'Cuando esta conversación tenga una guía o explique un concepto, aparecerán aquí con lo que hay debajo.'
     : 'Pide una guía en el chat. Cada guía y sus conceptos aparecerán aquí, conectados.';
   $('#map-see-all').hidden = !(emptyChat && S.graph.nodes.length);
   const sig = `${S.mapScope}:${chatID}:${graphSignature(g)}`;
@@ -1620,33 +1828,42 @@ function resetTranscript() {
 }
 
 function emptyState() {
-  const ex = [
-    'Explícame la transformada de Fourier, enfocada en audio',
-    '¿Por qué la desviación estándar divide entre n − 1?',
-    'Quiero entender los autovalores desde lo más básico',
-  ];
+  return h('div', { class: 'chat-empty' },
+    h('p', { class: 'eyebrow' }, 'StudyHomie'),
+    h('h1', {}, Phrases.welcome()),
+    h('p', { class: 'lead' }, 'Pregunta lo que sea o pide una guía: te explico el tema y lo que da por sabido, hasta lo básico.'),
+  );
+}
+
+// the + of the composer: the actions that start something bigger than a question
+function closePlus() { $('#plus-menu').hidden = true; $('#btn-plus').setAttribute('aria-expanded', 'false'); }
+function dailyForm() {
   // today's challenge: an optional theme; empty draws from your interests
   const field = h('input', { type: 'text', name: 'field', list: 'daily-fields', autocomplete: 'off', placeholder: 'Cualquier tema, o vacío para sorprenderte', 'aria-label': 'Temática del reto' });
-  const daily = h('form', { class: 'daily-pick', hidden: true, onsubmit: (e) => {
+  const form = h('form', { class: 'daily-pick', onsubmit: (e) => {
     e.preventDefault();
     const f = field.value.trim();
+    closePlus();
     chatAction({ action: 'daily', field: f }, f ? `El reto de hoy, sobre ${f}` : 'El reto de hoy');
   } },
     h('label', {}, 'Reto de hoy sobre'),
     field,
     h('datalist', { id: 'daily-fields' }, (S.info?.interests || []).map((i) => h('option', { value: i }))),
     h('button', { class: 'btn small primary', type: 'submit' }, 'Sortear'));
-  return h('div', { class: 'chat-empty' },
-    h('p', { class: 'eyebrow' }, 'StudyHomie'),
-    h('h1', {}, '¿Qué quieres entender hoy?'),
-    h('p', { class: 'lead' }, 'Pregunta lo que sea o pide una guía. Mapeo todo lo que el tema da por sabido, hasta lo básico; escribo de entrada solo lo que marques en «Escribir ahora», y lo demás queda a un clic.'),
-    h('div', { class: 'suggest' },
-      h('button', { class: 'btn small ghost', type: 'button', onclick: () => { daily.hidden = !daily.hidden; if (!daily.hidden) field.focus(); } }, icon('sparkles'), 'El reto de hoy'),
-      h('button', { class: 'btn small ghost', type: 'button', onclick: () => $('#material-input').click() }, icon('paperclip'), 'Subir apuntes'),
-      h('button', { class: 'btn small ghost', type: 'button', onclick: () => askAbout('Quiero aprender toda una materia: ') }, icon('map'), 'Planear una materia')),
-    daily,
-    h('ul', { class: 'examples' }, ex.map((t) => h('li', {}, h('button', { type: 'button', onclick: () => { $('#reply').value = t; $('#reply').focus(); } }, t)))));
+  $('#plus-menu').replaceChildren(form);
+  field.focus();
 }
+$('#btn-plus').addEventListener('click', (e) => {
+  e.stopPropagation();
+  const menu = $('#plus-menu');
+  if (!menu.hidden) { closePlus(); return; }
+  menu.replaceChildren(
+    h('button', { type: 'button', onclick: (ev) => { ev.stopPropagation(); dailyForm(); } }, icon('sparkles'), 'El reto de hoy'),
+    h('button', { type: 'button', onclick: () => { closePlus(); askAbout('Quiero aprender toda una materia: '); } }, icon('map'), 'Planear una materia'),
+    h('button', { type: 'button', onclick: () => { closePlus(); $('#material-input').click(); } }, icon('file'), 'Subir apuntes'));
+  menu.hidden = false;
+  $('#btn-plus').setAttribute('aria-expanded', 'true');
+});
 
 function botText(text) {
   T.raw += text;
@@ -1681,9 +1898,15 @@ function addMsg(cls, content) {
   return m;
 }
 
+let workingTimer;
 function setWorking(on, text) {
   $('#working').hidden = !on;
   if (text) $('#working-text').textContent = text;
+  // a long wait reads better when the phrase changes now and then
+  clearInterval(workingTimer);
+  if (on && Phrases.has('thinking', $('#working-text').textContent)) {
+    workingTimer = setInterval(() => { $('#working-text').textContent = Phrases.pick('thinking'); }, 6000);
+  }
   $('#btn-cancel').hidden = !on;
   $('#session-dot').hidden = !on;
 }
@@ -1720,6 +1943,8 @@ function setComposer(mode, e = {}) {
   $('#freeform').hidden = !!opts;
   $('#depth').hidden = mode !== 'chat';
   $('#btn-attach').hidden = mode !== 'chat';
+  $('#btn-plus').hidden = mode !== 'chat';
+  if (mode !== 'chat') closePlus();
   $('#btn-finish').hidden = mode !== 'block';
   ta.disabled = $('#btn-send').disabled = mode === 'busy';
   ta.rows = mode === 'block' ? 6 : 2;
@@ -1740,7 +1965,7 @@ async function chatSend(body) {
   if (run && !run.done && run.waiting === 'chat') {
     run.waiting = '';
     setComposer('busy');
-    setWorking(true, 'Pensando…');
+    setWorking(true, Phrases.pick('thinking'));
     try { await api(`/api/runs/${run.id}/input`, { method: 'POST', body }); return true; } catch (err) {
       toast(err.message); run.waiting = 'chat'; setComposer('chat'); setWorking(false); return false;
     }
@@ -1750,7 +1975,7 @@ async function chatSend(body) {
     const req = { cmd: 'chat', chat: body, guide: S.guide || '' };
     if (run && run.done) req.resume = run.id;
     setComposer('busy');
-    setWorking(true, 'Pensando…');
+    setWorking(true, Phrases.pick('thinking'));
     const { id } = await api('/api/runs', { method: 'POST', body: req });
     attachRun(id, run && run.done ? run.title : null);
     loadChats();
@@ -1769,7 +1994,7 @@ async function sendReply(text, finish = false) {
   if (!run || run.done) return;
   run.waiting = '';
   setComposer('busy');
-  setWorking(true, 'Pensando…');
+  setWorking(true, Phrases.pick('thinking'));
   try { await api(`/api/runs/${run.id}/input`, { method: 'POST', body: { text, finish } }); } catch (err) { toast(err.message); setWorking(false); }
 }
 
@@ -1860,7 +2085,7 @@ $('#material-input').addEventListener('change', async (e) => {
   const fd = new FormData();
   for (const f of files) fd.append('files', f);
   try {
-    setWorking(true, 'Subiendo…');
+    setWorking(true, Phrases.pick('uploading'));
     const up = await api('/api/upload', { method: 'POST', body: fd });
     await chatSend({ text: '', files: up.files, material: true, label: `Mis apuntes: ${[...files].map((f) => f.name).join(', ')}` });
   } catch (err) { toast(err.message); setWorking(false); } finally { e.target.value = ''; }
@@ -1882,6 +2107,7 @@ function scoreTone(score) { return score >= 70 ? 'good' : score >= 40 ? 'mid' : 
 function renderCard(c, run) {
   switch (c.kind) {
     case 'phase': break;
+    case 'status': if (!run.replay && !run.done) setWorking(true, c.detail); break;
     case 'plan': T.plan = planCard(c.plan, run); addMsg('card', T.plan.el); break;
     case 'progress': progressCard(c.items); break;
     case 'guide':
@@ -1974,10 +2200,17 @@ function planCard(p, run) {
       h('button', { class: 'btn ghost small', type: 'button', onclick: () => answer('n', 'Cancelar') }, 'Cancelar')),
     count);
   const state = { el, live: false, answered: false };
+  // once answered the plan folds to its title: what matters next is the guide being written
+  const fold = () => {
+    el.classList.add('answered');
+    el.querySelector('.rich-eyebrow').after(h('button', { class: 'btn small ghost plan-toggle', type: 'button',
+      onclick: (e) => { const open = el.classList.toggle('expanded'); e.currentTarget.textContent = open ? 'Ocultar el plan' : 'Ver el plan'; } }, 'Ver el plan'));
+  };
   function answer(reply, label) {
     if (state.answered || S.run !== run || run.done || !state.live) return;
     state.answered = true;
     $$('button, input', el).forEach((x) => { x.disabled = true; });
+    fold();
     T.echo = { reply, label };
     sendReply(reply);
   }
@@ -1988,21 +2221,36 @@ function planCard(p, run) {
     answer(JSON.stringify({ skip, add: added, write, go: true }), go.textContent);
   });
   update();
-  if (run.replay) $$('button, input', el).forEach((x) => { x.disabled = true; });
+  if (run.replay) { $$('button, input', el).forEach((x) => { x.disabled = true; }); fold(); }
   return state;
+}
+
+// "Listo · guía y 2 notas": what a finished progress card folds to
+function writtenSummary(items) {
+  const guide = items.some((i) => i.kind === 'guide');
+  const notes = items.filter((i) => i.kind !== 'guide').length;
+  const parts = [guide ? 'guía' : '', notes ? `${notes} ${notes === 1 ? 'nota' : 'notas'}` : ''].filter(Boolean);
+  return `Listo · ${parts.join(' y ')}`;
 }
 
 // One card per guide being written, redrawn in place as each note finishes.
 function progressCard(items) {
   const state = { pending: 'en cola', working: 'escribiendo…', done: 'lista', linked: 'ya estaba', error: 'falló' };
   const done = items.filter((i) => i.state !== 'pending' && i.state !== 'working').length;
-  const body = [
-    h('div', { class: 'rich-eyebrow' }, `Escribiendo · ${done} de ${items.length}`),
-    h('div', { class: 'bar' }, h('i', { style: `width:${Math.round((100 * done) / items.length)}%` })),
-    h('ul', { class: 'progress-list' }, items.map((it) => h('li', { 'data-state': it.state, class: it.kind },
-      h('span', { class: 'p-dot', 'aria-hidden': 'true' }),
-      h('span', { class: 'p-title' }, it.title, it.kind === 'guide' ? h('small', {}, ' · guía') : null),
-      h('small', { class: 'p-state' }, state[it.state] || it.state))))];
+  const failed = items.filter((i) => i.state === 'error').length;
+  const list = h('ul', { class: 'progress-list' }, items.map((it) => h('li', { 'data-state': it.state, class: it.kind },
+    h('span', { class: 'p-dot', 'aria-hidden': 'true' }),
+    h('span', { class: 'p-title' }, it.title, it.kind === 'guide' ? h('small', {}, ' · guía') : null),
+    h('small', { class: 'p-state' }, state[it.state] || it.state))));
+  // once everything is written the card folds to one line; it stays open if something failed
+  const body = done === items.length
+    ? [h('details', { open: failed ? true : null },
+      h('summary', { class: 'rich-eyebrow' }, icon(failed ? 'x' : 'check'),
+        failed ? `Escrito · ${failed} ${failed === 1 ? 'falló' : 'fallaron'}` : writtenSummary(items)),
+      list)]
+    : [h('div', { class: 'rich-eyebrow' }, `Escribiendo · ${done} de ${items.length}`),
+      h('div', { class: 'bar' }, h('i', { style: `width:${Math.round((100 * done) / items.length)}%` })),
+      list];
   if (T.progress && T.progress.isConnected) { T.progress.replaceChildren(...body); return; }
   T.progress = h('div', { class: 'rich rich-progress' }, ...body);
   addMsg('card', T.progress);
@@ -2047,7 +2295,7 @@ function attachRun(id, title, { replay = false } = {}) {
   $('#chat-title').textContent = run.title;
   if (S.mapScope === 'chat') drawMap();
   setComposer('busy');
-  setWorking(!replay, 'Pensando…');
+  setWorking(!replay, Phrases.pick('thinking'));
   run.es.onmessage = (ev) => handleEvent(run, JSON.parse(ev.data));
   run.es.onerror = () => { if (run.done) run.es.close(); }; // otherwise the browser reconnects with Last-Event-ID
   markActiveChat();
@@ -2064,7 +2312,7 @@ function handleEvent(run, e) {
       T.echo = null;
       const shown = known ? known.label : /^\{.*"go":true/.test(e.text) ? 'Escribir con estos cambios' : e.text;
       addMsg('user', mdBlock(shown, { breaks: true }));
-      if (!run.replay) setWorking(true, 'Pensando…');
+      if (!run.replay) setWorking(true, Phrases.pick('thinking'));
       break;
     }
     case 'card': closeBubble(); renderCard(e.card, run); break;
@@ -2119,7 +2367,7 @@ function renderChats() {
   const q = slugify($('#chat-search').value);
   ul.replaceChildren();
   const list = S.chats.filter((r) => !q || slugify(r.title || '').includes(q));
-  if (!list.length) { ul.append(h('li', { class: 'hint' }, S.chats.length ? 'Ningún chat coincide.' : 'Tus chats aparecerán aquí.')); return; }
+  if (!list.length) { ul.append(h('li', { class: 'hint' }, S.chats.length ? 'Ninguna conversación coincide.' : 'Tus conversaciones aparecerán aquí.')); return; }
   for (const r of list) {
     const node = r.slug && nodeOf(r.slug);
     ul.append(h('li', { class: `chat-item${S.run && S.run.id === r.id ? ' on' : ''}`, 'data-id': r.id, style: node ? `--lc: ${lineColor(node.group)}` : null },
@@ -2127,7 +2375,7 @@ function renderChats() {
         h('span', { class: 'ci-title' }, r.title || 'Chat'),
         h('span', { class: 'ci-meta' }, r.status === 'running' ? 'En curso' : when(r.started), node ? ` · ${node.label}` : '')),
       r.status !== 'running' && h('button', { class: 'ci-del', type: 'button', 'aria-label': `Eliminar «${r.title}»`, title: 'Eliminar', onclick: async () => {
-        if (!confirm(`¿Eliminar el chat «${r.title}»? Tus notas se conservan.`)) return;
+        if (!confirm(`¿Eliminar la conversación «${r.title}»? Tus notas se conservan.`)) return;
         try {
           await api(`/api/sessions/${r.id}`, { method: 'DELETE' });
           if (S.run && S.run.id === r.id) newChat();
@@ -2151,7 +2399,7 @@ function newChat() {
   if (S.mapScope === 'chat') drawMap();
   resetTranscript();
   $('#transcript').append(emptyState());
-  $('#chat-title').textContent = 'Nuevo chat';
+  $('#chat-title').textContent = 'Nueva conversación';
   setWorking(false);
   setComposer('chat');
   markActiveChat();
@@ -2176,6 +2424,8 @@ async function boot() {
     $('#btn-vault').title = `Vault: ${String(S.info.vault || '').split(/[\\/]/).filter(Boolean).pop() || 'vault'} (tus notas y tus vaults)`;
     $('#provider-badge').textContent = S.info.provider;
     if (S.info.warning) { $('#banner').textContent = S.info.warning; $('#banner').hidden = false; }
+    checkUpdate();
+    setInterval(checkUpdate, 60 * 60 * 1000);
     await refresh();
     await loadChats();
     if (S.info.activeRun) {

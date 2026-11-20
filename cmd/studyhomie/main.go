@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -17,6 +18,7 @@ import (
 	"github.com/krilinxito/studyhomie/internal/config"
 	"github.com/krilinxito/studyhomie/internal/providers"
 	"github.com/krilinxito/studyhomie/internal/session"
+	"github.com/krilinxito/studyhomie/internal/update"
 	"github.com/krilinxito/studyhomie/internal/vault"
 	"github.com/krilinxito/studyhomie/internal/web"
 )
@@ -32,6 +34,8 @@ Uso (sin argumentos abre la interfaz web):
   studyhomie check [--live]             la configuración, el vault y qué IAs están listas;
                                         --live le manda un mensaje de prueba (sale con 1 si falla)
   studyhomie version
+  studyhomie update [--check] [-y]      busca una versión nueva y, si la hay, pregunta si instalarla;
+                                        --check solo avisa, -y instala sin preguntar
   studyhomie roadmap <materia>          te pregunta el alcance y traza el grafo de temas
   studyhomie material <archivo>...      roadmap a partir de txt, md, pdf, pptx, docx o imágenes
   studyhomie next <roadmap>             siguiente tema cuyos prerrequisitos ya dominas
@@ -51,7 +55,14 @@ Uso (sin argumentos abre la interfaz web):
 // version is set at release time: go build -ldflags "-X main.version=v1.2.3".
 var version = "dev"
 
+// exe is the running program, which an update replaces.
+var exe = update.Executable()
+
+// errRestart asks main to start the program again on the version just installed.
+var errRestart = errors.New("restart")
+
 func main() {
+	update.Cleanup(exe)                 // the .exe an earlier update moved aside
 	cmd, args := "serve", []string(nil) // running the program with no arguments opens the web UI
 	if len(os.Args) > 1 {
 		cmd, args = os.Args[1], os.Args[2:]
@@ -65,8 +76,16 @@ func main() {
 		return
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-	if err := run(ctx, cmd, args); err != nil {
+	err := run(ctx, cmd, args)
+	stop()
+	if errors.Is(err, errRestart) {
+		fmt.Println("Reiniciando en la versión nueva…")
+		err = update.Restart(exe)
+		if err != nil {
+			err = fmt.Errorf("la versión nueva quedó instalada, pero no pude reiniciar (%w): vuelve a abrir StudyHomie", err)
+		}
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
@@ -78,6 +97,8 @@ func run(ctx context.Context, cmd string, args []string) error {
 		return initProject(args, os.Stdout)
 	case "check":
 		return check(ctx, args, os.Stdout)
+	case "update":
+		return selfUpdate(ctx, args, bufio.NewReader(os.Stdin), os.Stdout)
 	}
 	cfg, err := config.Load(config.FileName)
 	if err != nil {
@@ -98,6 +119,7 @@ func run(ctx context.Context, cmd string, args []string) error {
 		srv := web.New(cfg, v, p)
 		srv.Warning = providers.Check(cfg)
 		srv.ConfigPath = config.FileName
+		srv.Updater = update.New(version, exe)
 		if srv.Warning != "" {
 			fmt.Fprintln(os.Stderr, "Aviso:", srv.Warning)
 		}
@@ -214,7 +236,8 @@ func guideArgs(args []string, depth int) (session.GuideReq, error) {
 
 // serve runs the local web UI until interrupted.
 func serve(ctx context.Context, cfg config.Config, v *vault.Vault, srv *web.Server, args []string) error {
-	port, open := cfg.Port, true
+	// after an update the browser tab is already open and reloads by itself
+	port, open := cfg.Port, os.Getenv(update.RestartedEnv) == ""
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--no-open":
@@ -234,6 +257,10 @@ func serve(ctx context.Context, cfg config.Config, v *vault.Vault, srv *web.Serv
 		}
 	}
 	ln, err := srv.Listen(port)
+	for tries := 0; err != nil && !open && tries < 50; tries++ {
+		time.Sleep(200 * time.Millisecond) // a restart: the old process may still hold the port
+		ln, err = srv.Listen(port)
+	}
 	if err != nil {
 		return fmt.Errorf("no pude abrir el puerto %d (¿ya hay otro StudyHomie corriendo? prueba --port): %w", port, err)
 	}
@@ -243,18 +270,99 @@ func serve(ctx context.Context, cfg config.Config, v *vault.Vault, srv *web.Serv
 		openBrowser(url)
 	}
 
+	restart := make(chan struct{}, 1)
+	srv.Restart = func() {
+		select {
+		case restart <- struct{}{}:
+		default:
+		}
+	}
+	watch, stopWatch := context.WithCancel(ctx)
+	defer stopWatch()
+	go srv.WatchUpdates(watch)
+
 	hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	errc := make(chan error, 1)
 	go func() { errc <- hs.Serve(ln) }()
-	select {
-	case <-ctx.Done():
+	stopServer := func() {
 		shutdown, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		hs.Shutdown(shutdown)
+	}
+	select {
+	case <-ctx.Done():
+		stopServer()
 		return nil
+	case <-restart:
+		stopServer()
+		return errRestart
 	case err := <-errc:
 		return err
 	}
+}
+
+// selfUpdate is "studyhomie update": it looks for a newer release and installs it if you agree.
+func selfUpdate(ctx context.Context, args []string, in *bufio.Reader, out io.Writer) error {
+	checkOnly, yes := false, false
+	for _, a := range args {
+		switch a {
+		case "--check":
+			checkOnly = true
+		case "-y", "--yes":
+			yes = true
+		default:
+			return fmt.Errorf("opción desconocida %q", a)
+		}
+	}
+	u := update.New(version, exe)
+	if !u.Enabled() {
+		fmt.Fprintf(out, "Esta es una compilación de desarrollo (%s): no se actualiza sola.\n", version)
+		return nil
+	}
+	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	st := u.Check(cctx, true)
+	cancel()
+	if st.Error != "" && !st.Available {
+		return errors.New(st.Error)
+	}
+	if !st.Available {
+		fmt.Fprintf(out, "Tienes la última versión (%s).\n", version)
+		return nil
+	}
+	if st.Staged {
+		fmt.Fprintf(out, "La versión %s ya está instalada: se usa la próxima vez que abras StudyHomie.\n", st.Latest)
+		return nil
+	}
+	fmt.Fprintf(out, "Hay una versión nueva: %s (tienes %s).\n", st.Latest, version)
+	if notes := strings.TrimSpace(st.Notes); notes != "" {
+		lines := strings.Split(notes, "\n")
+		if len(lines) > 20 {
+			lines = append(lines[:20], "…")
+		}
+		fmt.Fprintf(out, "\n%s\n\n", strings.Join(lines, "\n"))
+	}
+	if st.Page != "" {
+		fmt.Fprintf(out, "Cambios: %s\n", st.Page)
+	}
+	if checkOnly {
+		fmt.Fprintln(out, "Instálala con: studyhomie update")
+		return nil
+	}
+	if !yes {
+		fmt.Fprintf(out, "¿Actualizar a %s? [s/N] ", st.Latest)
+		line, _ := in.ReadString('\n')
+		if a := strings.ToLower(strings.TrimSpace(line)); a != "s" && a != "si" && a != "sí" && a != "y" && a != "yes" {
+			fmt.Fprintln(out, "No se actualizó.")
+			return nil
+		}
+	}
+	fmt.Fprintln(out, "Descargando y verificando…")
+	tag, err := u.Install(ctx)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "Listo: StudyHomie %s quedó instalado. Ábrelo de nuevo para usarlo.\n", tag)
+	return nil
 }
 
 func openBrowser(url string) {
