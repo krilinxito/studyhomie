@@ -246,10 +246,20 @@ func TestDataEndpoints(t *testing.T) {
 		Slug        string
 		Total, Done int
 		Next        *linkRef
+		Pass        int
+		Steps       []session.RoadmapStep
 	}
 	json.Unmarshal(body, &rms)
-	if len(rms) != 1 || rms[0].Total != 3 || rms[0].Done != 1 || rms[0].Next == nil || rms[0].Next.Slug != "bayes" {
+	if len(rms) != 1 || rms[0].Total != 3 || rms[0].Done != 1 || rms[0].Next == nil || rms[0].Next.Slug != "bayes" || rms[0].Pass != 70 {
 		t.Errorf("roadmaps = %+v", rms)
+	}
+	var states []string
+	for _, st := range rms[0].Steps {
+		states = append(states, fmt.Sprintf("%d.%s:%s:%v", st.N, st.Slug, st.State, st.Ready))
+	}
+	// Bayes has a guide (seeded as text) only if its body has a "Guía" section: it does not
+	if want := "1.probabilidad:passed:false,2.bayes:current:false,3.inferencia:locked:false"; strings.Join(states, ",") != want {
+		t.Errorf("steps = %v, want %s", states, want)
 	}
 
 	_, body = do(t, ts, "GET", "/api/daily", nil, nil)
@@ -481,7 +491,7 @@ func TestStartValidation(t *testing.T) {
 
 func TestUploadThenMaterialRun(t *testing.T) {
 	plan := "```json\n" + `{"subject":"Apuntes","nodes":[{"title":"Tema uno","summary":"Entender uno"}]}` + "\n```"
-	_, ts := newTestServer(t, &scripted{replies: []string{plan}})
+	_, ts := newTestServer(t, &scripted{replies: []string{plan, prep}})
 
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
@@ -512,12 +522,20 @@ func TestUploadThenMaterialRun(t *testing.T) {
 	}
 	do(t, ts, "POST", "/api/runs/"+itoa(id)+"/input", map[string]any{"text": ""}, nil)
 	evs = readEvents(t, ts, id, 0, func(e []Event) bool { return has(e, "done") != nil && len(e) > 3 })
-	var out strings.Builder
+	var roadmapCard, guideCard *session.Card
 	for _, e := range evs {
-		out.WriteString(e.Text)
+		if e.Card != nil && e.Card.Kind == session.CardRoadmap {
+			roadmapCard = e.Card
+		}
+		if e.Card != nil && e.Card.Kind == session.CardGuide {
+			guideCard = e.Card
+		}
 	}
-	if !strings.Contains(out.String(), "Roadmap «Apuntes»") {
-		t.Errorf("roadmap not built from the upload: %s", out.String())
+	if roadmapCard == nil || roadmapCard.Topic != "Apuntes" || len(roadmapCard.Steps) != 1 {
+		t.Errorf("roadmap not built from the upload: %+v", evs)
+	}
+	if guideCard == nil || guideCard.Slug != "tema-uno" {
+		t.Errorf("the first topic's guide must be written: %+v", guideCard)
 	}
 }
 
@@ -1011,5 +1029,21 @@ func TestVaultsSwitchAndManage(t *testing.T) {
 	}
 	if len(opened) != 2 || !strings.HasPrefix(opened[0], "url obsidian://open?path=") || !strings.Contains(opened[0], "fourier.md") || !strings.HasPrefix(opened[1], "folder ") {
 		t.Errorf("opened: %q", opened)
+	}
+}
+
+func TestStudySettings(t *testing.T) {
+	s, ts := newTestServer(t, &scripted{})
+	if res, _ := do(t, ts, "POST", "/api/settings/study", map[string]any{"passScore": 101}, nil); res.StatusCode != 400 {
+		t.Errorf("101 must be rejected, got %d", res.StatusCode)
+	}
+	if res, _ := do(t, ts, "POST", "/api/settings/study", map[string]any{}, nil); res.StatusCode != 400 {
+		t.Errorf("a missing score must be rejected, got %d", res.StatusCode)
+	}
+	if res, body := do(t, ts, "POST", "/api/settings/study", map[string]any{"passScore": 0}, nil); res.StatusCode != 200 || !strings.Contains(string(body), `"passScore":0`) {
+		t.Fatalf("save = %d %s", res.StatusCode, body)
+	}
+	if _, cfg, _ := s.backend(); cfg.PassScore != 0 {
+		t.Errorf("pass score = %d", cfg.PassScore)
 	}
 }

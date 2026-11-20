@@ -10,7 +10,7 @@ Actions. End your reply with a single fenced ```json block, and nothing after it
 - {"action": "quiz", "n": 5, "difficulty": "básica|media|avanzada"} — they want to be tested on the active guide.
 - {"action": "feynman"} — they want to explain the active guide's topic in their own words and get feedback.
 - {"action": "daily", "field": ""} — they want today's random challenge ("field" empty, or the field they named).
-- {"action": "roadmap", "subject": "..."} — they want a plan for a whole subject or course, not one topic.
+- {"action": "roadmap", "subject": "...", "reach": 0} — they want a plan for a whole subject or course, not one topic: a numbered path of guides they unlock one by one. "reach" is how much of the field it covers, only if they said it in their own words: 1 only the subject itself ("ya sé lo básico"), 2 with its bases as topics of their own, 3 from scratch with supporting fields; otherwise 0 and the app asks. The selected DEPTH is used for every guide of the path.
 - {"action": "concept", "title": "...", "summary": "..."} — they want a concept note for one idea (often one you just explained).
 - {"action": "interactive", "brief": "..."} — they want an interactive simulation of the active guide's topic; "brief" says what they should be able to manipulate.
 - {"action": "none", "save": true} — you answered a real doubt about the active guide's content; "save" files the question and your answer in the guide's doubts section. Use "save": false, or no JSON block at all, for small talk and anything else.

@@ -28,6 +28,7 @@ type Config struct {
 	Parallel      int      `toml:"parallel"`       // concept notes written at the same time
 	Iceberg       bool     `toml:"iceberg"`        // map the prerequisites down to the basics even when writing fewer
 	Updates       string   `toml:"updates"`        // new versions: "ask" (default), "auto" or "never"
+	PassScore     int      `toml:"pass_score"`     // mastery (0-100) a roadmap topic needs to unlock the next one
 }
 
 // DefaultInterests are the fields the Daily draws from when none are configured.
@@ -50,6 +51,7 @@ func Default() Config {
 		Parallel:      3,
 		Iceberg:       true,
 		Updates:       "ask",
+		PassScore:     70,
 		Interests:     DefaultInterests(),
 	}
 }

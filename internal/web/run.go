@@ -210,6 +210,8 @@ type StartReq struct {
 	N          int      `json:"n"`
 	Difficulty string   `json:"difficulty"`
 	Files      []string `json:"files"`
+	Reach      int      `json:"reach"` // roadmap: how much of the field it covers (1-3); 0 asks
+	Depth      *int     `json:"depth"` // roadmap, material: levels of concept notes each guide gets
 
 	// chat: the opening message, the guide open next to it, and the chat it continues
 	Chat   *chatBody `json:"chat"`
@@ -441,10 +443,10 @@ func (s *Server) dispatch(ctx context.Context, sess *session.Session, req StartR
 	case "interactive":
 		return sess.Interactive(ctx, req.Slug, req.Brief)
 	case "roadmap":
-		_, err := sess.Roadmap(ctx, req.Subject)
+		_, err := sess.Roadmap(ctx, req.Subject, session.RoadmapOpts{Reach: req.Reach, GuideDepth: req.Depth})
 		return err
 	case "material":
-		_, err := sess.Material(ctx, paths)
+		_, err := sess.Material(ctx, paths, session.RoadmapOpts{Reach: req.Reach, GuideDepth: req.Depth})
 		return err
 	case "next":
 		return sess.Next(ctx, req.Roadmap)

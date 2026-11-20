@@ -8,6 +8,7 @@ import (
 
 	"github.com/krilinxito/studyhomie/internal/material"
 	"github.com/krilinxito/studyhomie/internal/prompts"
+	"github.com/krilinxito/studyhomie/internal/roadmap"
 	"github.com/krilinxito/studyhomie/internal/vault"
 )
 
@@ -20,7 +21,8 @@ const (
 // Material ingests the learner's documents and builds a roadmap from them. Each
 // topic is later prepared from the chunks of the document that match it.
 // It returns the roadmap's slug.
-func (s *Session) Material(ctx context.Context, paths []string) (string, error) {
+// Unless o says otherwise, the roadmap stays within what the material covers.
+func (s *Session) Material(ctx context.Context, paths []string, o RoadmapOpts) (string, error) {
 	if len(paths) == 0 {
 		return "", fmt.Errorf("falta el archivo")
 	}
@@ -75,7 +77,11 @@ func (s *Session) Material(ctx context.Context, paths []string) (string, error) 
 	if focus != "" {
 		scope = "Focus: " + focus
 	}
-	return s.buildRoadmap(ctx, title, scope+"\n", material.Outline(chunks, outlineBudget), mslug, "material")
+	if o.Reach == 0 {
+		o.Reach = roadmap.ReachFocused
+	}
+	return s.buildRoadmap(ctx, roadmapReq{subject: title, scope: scope + "\n", outline: material.Outline(chunks, outlineBudget),
+		materialSlug: mslug, source: "material", opts: o})
 }
 
 // grounding returns the parts of the topic's source material that best match it,

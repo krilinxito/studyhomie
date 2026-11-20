@@ -223,9 +223,9 @@ Todo lo importante funciona sin abrir el navegador. Los comandos operan sobre el
 | `studyhomie study "tema"` | Interactivo | Ciclo completo en terminal: guía, preguntas y explicarlo con tus palabras |
 | `studyhomie quiz <tema> [n] [dificultad]` | Interactivo | Preguntas de razonamiento sobre una guía |
 | `studyhomie feynman <tema>` | Interactivo | Lo explicas tú y te señala los huecos |
-| `studyhomie roadmap "materia"` | Interactivo | Pregunta el alcance y traza el grafo de temas de una materia |
+| `studyhomie roadmap "materia"` | Interactivo | Pregunta el alcance y qué tanto abarcar, traza la ruta numerada de temas y escribe la guía del tema 1 |
 | `studyhomie material apuntes.pdf ...` | Interactivo | Roadmap a partir de tus apuntes (txt, md, pdf, pptx, docx, imágenes) |
-| `studyhomie next <roadmap>` | Interactivo | El siguiente tema cuyos prerrequisitos ya dominas |
+| `studyhomie next <roadmap>` | Interactivo | El tema en el que vas: su guía (si falta), la prueba y Feynman; al aprobarlo se escribe la guía del siguiente |
 | `studyhomie daily [campo\|todos]` | Interactivo | Propone el reto del día, de tus campos de interés o del que digas |
 | `studyhomie help` / `version` | Directo | Ayuda y versión |
 | `studyhomie update [--check] [-y]` | Interactivo | Busca una versión nueva y pregunta antes de instalarla (`--check` solo avisa; `-y` no pregunta) |
@@ -249,6 +249,7 @@ En el plan de `guide`, `s` (o Enter) lo aprueba, `g` escribe solo la guía, `n` 
 - **Plan editable.** Antes de escribir te muestra el árbol: desmarcas lo que ya sabes, agregas lo que falte, y decides si escribe guía y notas, solo la guía, o nada.
 - **Intuición sin plantillas.** Nada de «imagina que tienes…». Las guías arrancan con un problema concreto con números, reinventan la idea (el intento ingenuo, por qué falla y el arreglo), la llevan a los casos extremos y dejan la fórmula para el final.
 - **Visuales para mover, al estilo 3Blue1Brown.** Funciones con sliders, una matriz que deforma el plano, procesos paso a paso, experimentos aleatorios repetidos mil veces y preguntas de «predice antes de seguir leyendo».
+- **Roadmaps en orden.** Para una materia entera traza una ruta numerada de temas: enfocada en la materia, con sus bases (Ciberseguridad → Linux, Redes…) o desde cero. Solo escribe la guía del tema 1; cada tema siguiente se desbloquea, y se escribe su guía, cuando sacas la nota mínima (70 por defecto, editable en Ajustes) en el anterior.
 - **Practicar.** Preguntas de razonamiento, explicar con tus palabras (método Feynman) y tarjetas de repaso.
 - **Recursos verificados.** Videos, webs, libros y papers con su enlace; los enlaces se comprueban antes de guardarlos (con las IAs que buscan en la web).
 
@@ -334,6 +335,7 @@ Todo es opcional; sin el archivo se usan estos valores. `studyhomie init` lo cre
 | `iceberg` | `true` | Mapear siempre los conceptos hasta lo básico |
 | `parallel` | `3` | Notas de concepto que se escriben a la vez |
 | `context_window` / `compact_at` | `200000` / `0.6` | Cuándo se resume una conversación larga |
+| `pass_score` | `70` | Nota (0–100, prueba o Feynman) que necesita un tema de un roadmap para desbloquear el siguiente |
 | `updates` | `"ask"` | Versiones nuevas: `"ask"` avisa y pregunta, `"auto"` las instala solas (se usan al reiniciar), `"never"` no busca |
 
 ## Actualizaciones
@@ -377,7 +379,8 @@ go vet ./...
 Estructura:
 
 - `cmd/studyhomie`: la entrada de la consola.
-- `internal/session`: los flujos (guía, plan, chat, quiz, Feynman, reto del día).
+- `internal/session`: los flujos (guía, plan, roadmap, chat, quiz, Feynman, reto del día).
+- `internal/roadmap`: valida la ruta de una materia y decide qué tema está desbloqueado.
 - `internal/provider/*` e `internal/providers`: las IAs, intercambiables.
 - `internal/vault`: notas, conceptos, apuntes y búsqueda.
 - `internal/web`: el servidor y la interfaz, embebida en el binario.
