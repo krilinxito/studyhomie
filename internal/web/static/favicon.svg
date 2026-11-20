@@ -1,14 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <style>
-    .tip { fill: #4f46e5; }
-    .facet { fill: #818cf8; }
-    .wave { fill: none; stroke: #6366f1; stroke-width: 3.2; stroke-linecap: round; stroke-linejoin: round; }
-    .deep { fill: #6366f1; opacity: .28; }
+    .tip { fill: #7c5fd3; }
+    .facet { fill: #b9a2f2; }
+    .wave { fill: none; stroke: #9d84e3; stroke-width: 3.2; stroke-linecap: round; stroke-linejoin: round; }
+    .deep { fill: #9d84e3; opacity: .28; }
     @media (prefers-color-scheme: dark) {
-      .tip { fill: #a5b4fc; }
-      .facet { fill: #e0e7ff; }
-      .wave { stroke: #818cf8; }
-      .deep { fill: #818cf8; opacity: .32; }
+      .tip { fill: #cfbff7; }
+      .facet { fill: #efe8fd; }
+      .wave { stroke: #b9a2f2; }
+      .deep { fill: #b9a2f2; opacity: .32; }
     }
   </style>
   <!-- the tip: what you see -->
