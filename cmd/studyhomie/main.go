@@ -26,7 +26,12 @@ const usage = `StudyHomie — aprende con intuición y explicando.
 Uso (sin argumentos abre la interfaz web):
   studyhomie serve [--port N] [--no-open]
                                         interfaz web: grafo, notas y sesiones
-  studyhomie init                       crea studyhomie.toml para cambiar la configuración
+  studyhomie init [--provider P] [--model M] [--quick-model M] [--base-url URL] [--vault DIR] [--port N]
+                                        crea studyhomie.toml y el vault (con flags, sin preguntar nada;
+                                        sobre un archivo existente cambia solo esos valores)
+  studyhomie check [--live]             la configuración, el vault y qué IAs están listas;
+                                        --live le manda un mensaje de prueba (sale con 1 si falla)
+  studyhomie version
   studyhomie roadmap <materia>          te pregunta el alcance y traza el grafo de temas
   studyhomie material <archivo>...      roadmap a partir de txt, md, pdf, pptx, docx o imágenes
   studyhomie next <roadmap>             siguiente tema cuyos prerrequisitos ya dominas
@@ -68,8 +73,11 @@ func main() {
 }
 
 func run(ctx context.Context, cmd string, args []string) error {
-	if cmd == "init" {
-		return initProject()
+	switch cmd {
+	case "init":
+		return initProject(args, os.Stdout)
+	case "check":
+		return check(ctx, args, os.Stdout)
 	}
 	cfg, err := config.Load(config.FileName)
 	if err != nil {
@@ -266,21 +274,6 @@ func openBrowser(url string) {
 func startFirst(ctx context.Context, s *session.Session, rslug string) error {
 	fmt.Println()
 	return s.Next(ctx, rslug)
-}
-
-func initProject() error {
-	if _, err := os.Stat(config.FileName); err == nil {
-		return fmt.Errorf("%s ya existe", config.FileName)
-	}
-	cfg := config.Default()
-	if err := config.Write(config.FileName, cfg); err != nil {
-		return err
-	}
-	if _, err := vault.Open(cfg.Vault); err != nil {
-		return err
-	}
-	fmt.Printf("Listo: %s y vault en ./%s (puedes abrirlo con Obsidian)\n", config.FileName, cfg.Vault)
-	return nil
 }
 
 func printGraph(v *vault.Vault) error {

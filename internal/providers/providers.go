@@ -124,9 +124,12 @@ func Check(cfg config.Config) string {
 			return fmt.Sprintf("No encuentro el comando `%s` (%s). %s", in.Bin, in.Name, in.Note)
 		}
 	case "api":
-		if len(in.KeyEnvs) > 0 && httpx.Key(in.KeyEnvs...) == "" {
+		if len(in.KeyEnvs) > 0 && httpx.Key(in.KeyEnvs...) == "" && in.ID != "openai-compatible" {
 			return fmt.Sprintf("Falta la variable de entorno %s con tu clave de %s.", in.KeyEnvs[0], in.Name)
 		}
+	}
+	if in.EditURL && in.BaseURL == "" && strings.TrimSpace(cfg.BaseURL) == "" {
+		return fmt.Sprintf("Falta la URL de %s (base_url).", in.Name)
 	}
 	if needsModel(in) && strings.TrimSpace(cfg.Model) == "" {
 		return fmt.Sprintf("Elige un modelo de %s en Ajustes.", in.Name)
@@ -159,6 +162,9 @@ func Statuses(ctx context.Context, cfg config.Config) []Status {
 		case "api":
 			if len(in.KeyEnvs) > 0 && httpx.Key(in.KeyEnvs...) == "" && in.ID != "openai-compatible" {
 				st.Ready, st.Reason = false, "falta "+in.KeyEnvs[0]
+			}
+			if in.EditURL && in.BaseURL == "" && (cfg.Provider != in.ID || strings.TrimSpace(cfg.BaseURL) == "") {
+				st.Ready, st.Reason = false, "falta su URL (base_url)"
 			}
 		case "local":
 			url := in.BaseURL

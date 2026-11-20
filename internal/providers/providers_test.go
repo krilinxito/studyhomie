@@ -83,6 +83,13 @@ func TestCheckAsksForAModelWhereThereIsNoDefault(t *testing.T) {
 	if msg := Check(config.Config{Provider: "groq", Model: "m"}); !strings.Contains(msg, "GROQ_API_KEY") {
 		t.Errorf("groq without key: %q", msg)
 	}
+	t.Setenv("OPENAI_COMPAT_API_KEY", "")
+	if msg := Check(config.Config{Provider: "openai-compatible", Model: "m"}); !strings.Contains(msg, "base_url") {
+		t.Errorf("openai-compatible without base_url: %q", msg)
+	}
+	if msg := Check(config.Config{Provider: "openai-compatible", BaseURL: "http://localhost:8000/v1", Model: "m"}); msg != "" {
+		t.Errorf("openai-compatible key is optional: %q", msg)
+	}
 }
 
 func TestModelsForClaude(t *testing.T) {
