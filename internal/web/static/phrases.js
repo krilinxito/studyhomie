@@ -1,41 +1,41 @@
 /* StudyHomie: the phrases the app says, picked at random so it does not repeat itself.
-   One place for all of them, so they can be translated as a whole later. */
+   Written in Spanish and translated with t() from i18n.js, which loads first. */
 (() => {
   const P = {
     // the welcome title, by time of day
     morning: [
-      'Buenos días, ¿qué quieres entender hoy?',
-      '¿Con qué idea arrancamos la mañana?',
-      'Mente fresca: ¿qué tema le damos?',
+      t('Buenos días, ¿qué quieres entender hoy?'),
+      t('¿Con qué idea arrancamos la mañana?'),
+      t('Mente fresca: ¿qué tema le damos?'),
     ],
     afternoon: [
-      '¿Qué quieres entender hoy?',
-      '¿Qué te está dando vueltas en la cabeza?',
-      '¿Qué tema le damos esta tarde?',
-      'Elige algo difícil: lo bajamos hasta lo básico.',
+      t('¿Qué quieres entender hoy?'),
+      t('¿Qué te está dando vueltas en la cabeza?'),
+      t('¿Qué tema le damos esta tarde?'),
+      t('Elige algo difícil: lo bajamos hasta lo básico.'),
     ],
     evening: [
-      'Buenas noches, ¿repasamos algo?',
-      '¿Un último tema antes de dormir?',
-      '¿Qué quieres entender esta noche?',
+      t('Buenas noches, ¿repasamos algo?'),
+      t('¿Un último tema antes de dormir?'),
+      t('¿Qué quieres entender esta noche?'),
     ],
     late: [
-      '¿Estudiando de madrugada? Vamos con calma.',
-      'Insomnio productivo: ¿qué aprendemos?',
+      t('¿Estudiando de madrugada? Vamos con calma.'),
+      t('Insomnio productivo: ¿qué aprendemos?'),
     ],
     // while the model works
     thinking: [
-      'Pensando…',
-      'Dándole vueltas…',
-      'Buscando la mejor forma de explicarlo…',
-      'Conectando ideas…',
-      'Bajando al fondo del iceberg…',
-      'Ordenando las ideas…',
-      'Un momento, armando la respuesta…',
+      t('Pensando…'),
+      t('Dándole vueltas…'),
+      t('Buscando la mejor forma de explicarlo…'),
+      t('Conectando ideas…'),
+      t('Bajando al fondo del iceberg…'),
+      t('Ordenando las ideas…'),
+      t('Un momento, armando la respuesta…'),
     ],
     uploading: [
-      'Subiendo…',
-      'Guardando tu material…',
+      t('Subiendo…'),
+      t('Guardando tu material…'),
     ],
   };
 

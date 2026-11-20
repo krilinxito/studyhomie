@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/krilinxito/studyhomie/internal/i18n"
 )
 
 // Vault is a folder of Markdown notes.
@@ -167,11 +169,11 @@ func demoteHeadings(content string) string {
 }
 
 // findSection returns the line range [start, end) of the "## heading" section, or start = -1.
+// The heading may be written in any interface language: "## Guide" is the "## Guía" section.
 func findSection(lines []string, heading string) (start, end int) {
-	marker := "## " + heading
 	start = -1
 	for i, l := range lines {
-		if strings.TrimSpace(l) == marker {
+		if t := strings.TrimSpace(l); strings.HasPrefix(t, "## ") && i18n.SameHeading(t[3:], heading) {
 			start = i
 			break
 		}

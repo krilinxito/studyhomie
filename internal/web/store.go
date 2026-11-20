@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/krilinxito/studyhomie/internal/i18n"
 )
 
 // saveDelay batches the writes of a running session: it grows by one event per streamed chunk.
@@ -23,7 +25,7 @@ const (
 	statusInterrupted = "interrupted" // the app closed while it was running
 )
 
-const interruptedMsg = "La sesión se interrumpió al cerrar la aplicación."
+var interruptedMsg = i18n.N("La sesión se interrumpió al cerrar la aplicación.")
 
 // sessionFile is one session as stored in vault/.studyhomie/sessions/<id>.json.
 type sessionFile struct {
@@ -40,8 +42,16 @@ type sessionFile struct {
 
 // store keeps sessions on disk so they survive a restart.
 type store struct {
-	dir string
-	mu  sync.Mutex // one writer at a time, so the newest snapshot is always the last one written
+	dir    string
+	mu     sync.Mutex // one writer at a time, so the newest snapshot is always the last one written
+	closed bool       // nothing more is written: the folder may be going away
+}
+
+// close waits for a save in progress and drops the ones that come later.
+func (st *store) close() {
+	st.mu.Lock()
+	st.closed = true
+	st.mu.Unlock()
 }
 
 func newStore(dir string) (*store, error) {
@@ -57,6 +67,9 @@ func (st *store) path(id int) string { return filepath.Join(st.dir, strconv.Itoa
 func (st *store) save(r *Run) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
+	if st.closed {
+		return
+	}
 	sf := r.snapshot()
 	data, err := json.Marshal(sf)
 	if err != nil {

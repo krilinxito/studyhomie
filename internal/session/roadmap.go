@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/krilinxito/studyhomie/internal/i18n"
 	"github.com/krilinxito/studyhomie/internal/prompts"
 	"github.com/krilinxito/studyhomie/internal/roadmap"
 	"github.com/krilinxito/studyhomie/internal/vault"
@@ -19,13 +20,13 @@ type RoadmapOpts struct {
 
 // reachChoices are the answers to the reach question; each starts with its value.
 var reachChoices = []string{
-	"1 · Enfocado: solo los temas de la materia, doy por sabidas sus bases",
-	"2 · Con bases: las bases que necesita entran como temas propios",
-	"3 · Desde cero: cada base en varios temas, y los campos de apoyo también",
+	i18n.N("1 · Enfocado: solo los temas de la materia, doy por sabidas sus bases"),
+	i18n.N("2 · Con bases: las bases que necesita entran como temas propios"),
+	i18n.N("3 · Desde cero: cada base en varios temas, y los campos de apoyo también"),
 }
 
 // reachName is how a reach reads in a sentence.
-var reachName = map[int]string{1: "enfocado", 2: "con bases", 3: "desde cero"}
+var reachName = map[int]string{1: i18n.N("enfocado"), 2: i18n.N("con bases"), 3: i18n.N("desde cero")}
 
 // CardRoadmap shows a roadmap as a numbered sequence (Slug, Topic, Steps).
 const CardRoadmap = "roadmap"
@@ -47,7 +48,7 @@ type RoadmapStep struct {
 // the one before. It returns the roadmap's slug.
 func (s *Session) Roadmap(ctx context.Context, subject string, o RoadmapOpts) (string, error) {
 	s.printf("Voy a hacerte unas preguntas para ajustar el plan de «%s».\n", subject)
-	resp, err := s.convo(prompts.Get("scope", s.Cfg.Language)).Say(ctx, "Subject: "+subject, nil)
+	resp, err := s.convo(prompts.Get("scope", s.aiLang())).Say(ctx, "Subject: "+subject, nil)
 	if err != nil {
 		return "", err
 	}
@@ -81,10 +82,14 @@ func (s *Session) Roadmap(ctx context.Context, subject string, o RoadmapOpts) (s
 
 // askReach asks how much of the field the roadmap covers.
 func (s *Session) askReach() (int, error) {
-	q := "¿Qué tanto abarca la ruta?"
-	if !s.card(Card{Kind: CardQuestion, Question: q, Choices: reachChoices}) {
+	q := i18n.N("¿Qué tanto abarca la ruta?")
+	choices := make([]string, len(reachChoices))
+	for i, c := range reachChoices {
+		choices[i] = s.tr(c)
+	}
+	if !s.card(Card{Kind: CardQuestion, Question: s.tr(q), Choices: choices}) {
 		s.printf("\n%s\n", q)
-		for _, c := range reachChoices {
+		for _, c := range choices {
 			s.printf("   %s\n", c)
 		}
 	}
@@ -124,7 +129,7 @@ func (s *Session) buildRoadmap(ctx context.Context, r roadmapReq) (string, error
 		prompt += "\nSOURCE MATERIAL OUTLINE (build the roadmap from this):\n" + r.outline
 	}
 	s.status("Trazando el roadmap")
-	resp, err := s.convo(prompts.Get("roadmap", s.Cfg.Language)).Say(ctx, prompt, nil)
+	resp, err := s.convo(prompts.Get("roadmap", s.aiLang())).Say(ctx, prompt, nil)
 	if err != nil {
 		return "", err
 	}
@@ -134,7 +139,7 @@ func (s *Session) buildRoadmap(ctx context.Context, r roadmapReq) (string, error
 	}
 	plan, warnings, err := plan.Normalize()
 	if err != nil {
-		return "", fmt.Errorf("el roadmap generado no es válido: %w", err)
+		return "", failf("el roadmap generado no es válido: %w", err)
 	}
 	for _, w := range warnings {
 		s.termf("Aviso: %s\n", w)
@@ -164,18 +169,18 @@ func (s *Session) buildRoadmap(ctx context.Context, r roadmapReq) (string, error
 		var conn strings.Builder
 		if i > 0 {
 			prev := plan.Nodes[i-1].Slug()
-			fmt.Fprintf(&conn, "- Antes: %s\n", link(prev))
+			fmt.Fprintf(&conn, "- %s %s\n", s.tr("Antes:"), link(prev))
 		}
 		if i+1 < len(plan.Nodes) {
-			fmt.Fprintf(&conn, "- Después: %s\n", link(plan.Nodes[i+1].Slug()))
+			fmt.Fprintf(&conn, "- %s %s\n", s.tr("Después:"), link(plan.Nodes[i+1].Slug()))
 		}
 		if len(n.Requires) > 0 {
-			conn.WriteString("- Requiere: " + linkAll(n.Requires) + "\n")
+			fmt.Fprintf(&conn, "- %s %s\n", s.tr("Requiere:"), linkAll(n.Requires))
 		}
 		if len(n.Related) > 0 {
-			conn.WriteString("- Relacionado: " + linkAll(n.Related) + "\n")
+			fmt.Fprintf(&conn, "- %s %s\n", s.tr("Relacionado:"), linkAll(n.Related))
 		}
-		conn.WriteString("- Ruta: [[" + rslug + "]]\n")
+		fmt.Fprintf(&conn, "- %s [[%s]]\n", s.tr("Ruta:"), rslug)
 
 		note := vault.Note{Slug: slug, Meta: vault.Meta{Title: n.Title, Status: "new", Source: r.source}}
 		if s.V.Exists(slug) {
@@ -190,7 +195,7 @@ func (s *Session) buildRoadmap(ctx context.Context, r roadmapReq) (string, error
 		if r.materialSlug != "" {
 			note.Meta.Material = r.materialSlug
 		}
-		note.Body = vault.ReplaceSection(note.Body, "Conexiones", conn.String())
+		note.Body = vault.ReplaceSection(note.Body, s.h("Conexiones"), conn.String())
 		if err := s.V.Save(note); err != nil {
 			return "", err
 		}
@@ -203,9 +208,10 @@ func (s *Session) buildRoadmap(ctx context.Context, r roadmapReq) (string, error
 	}
 
 	pass := s.passScore()
-	how := fmt.Sprintf("Ruta %s, en orden: cada tema se desbloquea al sacar %d/100 o más en el anterior (prueba o Feynman). Cada guía llega con %d %s de conceptos.",
-		reachName[reach], pass, guideDepth, plural(guideDepth, "nivel", "niveles"))
-	body := "## Alcance\n\n" + strings.TrimSpace(r.scope) + "\n\n## Cómo avanzar\n\n" + how + "\n\n## Ruta\n\n" + strings.TrimLeft(route.String(), "\n")
+	how := s.trf("Ruta %s, en orden: cada tema se desbloquea al sacar %d/100 o más en el anterior (prueba o Feynman). Cada guía llega con %d %s de conceptos.",
+		s.tr(reachName[reach]), pass, guideDepth, s.tr(plural(guideDepth, i18n.N("nivel"), i18n.N("niveles"))))
+	body := "## " + s.h("Alcance") + "\n\n" + strings.TrimSpace(r.scope) + "\n\n## " + s.h("Cómo avanzar") + "\n\n" + how +
+		"\n\n## " + s.h("Ruta") + "\n\n" + strings.TrimLeft(route.String(), "\n")
 	rn := vault.Note{Slug: rslug, Meta: vault.Meta{Title: plan.Subject, Source: r.source, Material: r.materialSlug, Reach: reach, GuideDepth: &guideDepth}, Body: body}
 	if rn.Meta.Title == "" {
 		rn.Meta.Title = r.subject

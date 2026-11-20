@@ -67,13 +67,13 @@ func (s *Session) Daily(ctx context.Context, field string) error {
 		fields = []string{field}
 	}
 	if len(fields) == 0 {
-		return fmt.Errorf("no hay campos de interés: agrégalos en %s o pasa uno como argumento", "studyhomie.toml")
+		return failf("no hay campos de interés: agrégalos en %s o pasa uno como argumento", "studyhomie.toml")
 	}
 
 	for attempt := 0; attempt < maxRerolls; attempt++ {
 		f := fields[s.pick(len(fields))]
 		prompt := fmt.Sprintf("Field: %s\nDate: %s\nPrevious topics (do not repeat): %s", f, date, strings.Join(seen, "; "))
-		resp, err := s.convo(prompts.Get("daily", s.Cfg.Language)).Say(ctx, prompt, nil)
+		resp, err := s.convo(prompts.Get("daily", s.aiLang())).Say(ctx, prompt, nil)
 		if err != nil {
 			return err
 		}
@@ -82,7 +82,7 @@ func (s *Session) Daily(ctx context.Context, field string) error {
 			return err
 		}
 		if strings.TrimSpace(p.Topic) == "" {
-			return fmt.Errorf("el modelo no propuso un tema")
+			return failf("el modelo no propuso un tema")
 		}
 		if p.Field == "" {
 			p.Field = f
@@ -97,7 +97,7 @@ func (s *Session) Daily(ctx context.Context, field string) error {
 
 		slug := vault.Slugify(p.Topic)
 		if slug == "" {
-			return fmt.Errorf("tema inválido %q", p.Topic)
+			return failf("tema inválido %q", p.Topic)
 		}
 		if !s.V.Exists(slug) {
 			stub := vault.Note{Slug: slug, Meta: vault.Meta{Title: p.Topic, Status: "new", Source: "daily", Field: p.Field}}

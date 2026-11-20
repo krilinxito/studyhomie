@@ -24,7 +24,7 @@ const (
 // Unless o says otherwise, the roadmap stays within what the material covers.
 func (s *Session) Material(ctx context.Context, paths []string, o RoadmapOpts) (string, error) {
 	if len(paths) == 0 {
-		return "", fmt.Errorf("falta el archivo")
+		return "", inputErrorf("falta el archivo")
 	}
 	var text strings.Builder
 	for _, p := range paths {
@@ -39,7 +39,7 @@ func (s *Session) Material(ctx context.Context, paths []string, o RoadmapOpts) (
 		var part string
 		if kind == material.Image {
 			s.status("Leyendo la imagen %s", filepath.Base(abs))
-			c := s.convo(prompts.Get("extract", s.Cfg.Language))
+			c := s.convo(prompts.Get("extract", s.aiLang()))
 			c.Files = []string{abs}
 			resp, err := c.Say(ctx, "Transcribe the attached image.", nil)
 			if err != nil {
@@ -50,7 +50,7 @@ func (s *Session) Material(ctx context.Context, paths []string, o RoadmapOpts) (
 			return "", fmt.Errorf("%s: %w", filepath.Base(abs), err)
 		}
 		if strings.TrimSpace(part) == "" {
-			return "", fmt.Errorf("%s no tiene texto utilizable", filepath.Base(abs))
+			return "", inputErrorf("%s no tiene texto utilizable", filepath.Base(abs))
 		}
 		if len(paths) > 1 {
 			fmt.Fprintf(&text, "# %s\n\n", filepath.Base(abs))
@@ -61,7 +61,7 @@ func (s *Session) Material(ctx context.Context, paths []string, o RoadmapOpts) (
 	title := strings.TrimSuffix(filepath.Base(paths[0]), filepath.Ext(paths[0]))
 	mslug := vault.Slugify(title)
 	if mslug == "" {
-		return "", fmt.Errorf("no puedo derivar un nombre de %q", paths[0])
+		return "", inputErrorf("no puedo derivar un nombre de %q", paths[0])
 	}
 	if err := s.V.SaveMaterial(mslug, text.String()); err != nil {
 		return "", err

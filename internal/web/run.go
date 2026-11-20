@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/krilinxito/studyhomie/internal/i18n"
 	"github.com/krilinxito/studyhomie/internal/session"
 	"github.com/krilinxito/studyhomie/internal/vault"
 )
@@ -19,8 +20,9 @@ import (
 type Event struct {
 	Type  string `json:"type"` // out | in | ask | card | done
 	Text  string `json:"text,omitempty"`
-	Kind  string `json:"kind,omitempty"` // ask: line | block
-	Label string `json:"label,omitempty"`
+	Kind  string `json:"kind,omitempty"`  // ask: line | block
+	Label string `json:"label,omitempty"` // ask: the question, in the interface language
+	Key   string `json:"key,omitempty"`   // ask: the same question in Spanish, to tell which one it is
 	Def   string `json:"def,omitempty"`
 	Error string `json:"error,omitempty"` // done
 	// Card is a structured element the browser draws instead of plain text.
@@ -82,6 +84,7 @@ type Run struct {
 	Started time.Time
 	Ended   time.Time
 
+	lang   string // interface language when it started
 	cancel context.CancelFunc
 	in     *inputBuf
 	store  *store // nil when sessions are not persisted
@@ -183,7 +186,7 @@ func (r *Run) send(text string, finish bool) error {
 		return errors.New("the session is not waiting for input")
 	}
 	if finish && kind == "block" {
-		shown = strings.TrimSpace(shown) + "\n\n*(sesión terminada: pido la evaluación final)*"
+		shown = strings.TrimSpace(shown) + "\n\n*(" + i18n.T(r.lang, "sesión terminada: pido la evaluación final") + ")*"
 	}
 	r.emit(Event{Type: "in", Text: shown})
 	_, err := io.WriteString(r.in, text)
@@ -223,19 +226,20 @@ var uploadIDRe = regexp.MustCompile(`^[0-9a-f]{16}/[^/\\]+$`)
 
 // validate checks the request has what its command needs and resolves uploads to paths.
 func (s *Server) validate(req *StartReq) (paths []string, err error) {
-	need := func(name, v string) error {
+	// msg is the whole message, so the browser can translate it
+	need := func(msg, v string) error {
 		if strings.TrimSpace(v) == "" {
-			return fmt.Errorf("falta %s", name)
+			return errors.New(msg)
 		}
 		return nil
 	}
 	slug := func() error {
 		req.Slug = vault.Slugify(req.Slug)
-		return need("el tema", req.Slug)
+		return need("falta el tema", req.Slug)
 	}
 	switch req.Cmd {
 	case "study", "prepare":
-		return nil, need("el tema", req.Topic)
+		return nil, need("falta el tema", req.Topic)
 	case "quiz":
 		if err := slug(); err != nil {
 			return nil, err
@@ -251,17 +255,17 @@ func (s *Server) validate(req *StartReq) (paths []string, err error) {
 	case "interactive":
 		return nil, slug()
 	case "roadmap":
-		return nil, need("la materia", req.Subject)
+		return nil, need("falta la materia", req.Subject)
 	case "next":
 		req.Roadmap = vault.Slugify(req.Roadmap)
-		return nil, need("el roadmap", req.Roadmap)
+		return nil, need("falta el roadmap", req.Roadmap)
 	case "daily":
 		return nil, nil
 	case "chat":
 		return nil, nil
 	case "material":
 		if len(req.Files) == 0 {
-			return nil, errors.New("falta el archivo")
+			return nil, errors.New(i18n.N("falta el archivo"))
 		}
 		for _, id := range req.Files {
 			p, err := s.uploadPath(id)
@@ -305,7 +309,7 @@ func (s *Server) StartRun(req StartReq) (*Run, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	run := &Run{
 		ID: s.seq, Cmd: req.Cmd, Title: s.runTitle(req), Slug: runSlug(req), Started: s.Now(),
-		cancel: cancel, in: newInputBuf(), store: s.store, status: statusRunning,
+		cancel: cancel, in: newInputBuf(), store: s.store, status: statusRunning, lang: s.lang(),
 	}
 	s.runs[run.ID] = run
 	s.active = run
@@ -330,7 +334,9 @@ func (s *Server) StartRun(req StartReq) (*Run, error) {
 		P: prov, V: s.vault(), Cfg: cfg, CheckLinks: s.CheckLinks,
 		In:  bufio.NewReader(run.in),
 		Out: outWriter{run},
-		Ask: func(kind, label, def string) { run.emit(Event{Type: "ask", Kind: kind, Label: label, Def: def}) },
+		Ask: func(kind, label, def string) {
+			run.emit(Event{Type: "ask", Kind: kind, Label: session.Label(i18n.UI(cfg.Language), label), Key: label, Def: def})
+		},
 		Card: func(c session.Card) {
 			if c.Kind == session.CardGuide {
 				run.mu.Lock()
@@ -351,7 +357,7 @@ func (s *Server) StartRun(req StartReq) (*Run, error) {
 		run.in.Close()
 		done := Event{Type: "done"}
 		if err != nil && !errors.Is(err, context.Canceled) {
-			done.Error = err.Error()
+			done.Error = session.ErrorText(err, i18n.UI(cfg.Language))
 		}
 		if ctx.Err() != nil {
 			done.Error = "cancelado"
@@ -383,6 +389,8 @@ func runSlug(req StartReq) string {
 
 // runTitle labels a session in the history: the caller's title, else a name built from the request.
 func (s *Server) runTitle(req StartReq) string {
+	_, cfg, _ := s.backend()
+	lang := i18n.UI(cfg.Language)
 	if t := strings.TrimSpace(req.Title); t != "" {
 		return truncate(t, 160)
 	}
@@ -398,9 +406,9 @@ func (s *Server) runTitle(req StartReq) string {
 		return truncate(req.Subject, 160)
 	case "daily":
 		if f := strings.TrimSpace(req.Field); f != "" && f != "*" {
-			return "Reto de hoy: " + truncate(f, 60)
+			return i18n.Sprintf(lang, "Reto de hoy: %s", truncate(f, 60))
 		}
-		return "Reto de hoy"
+		return i18n.T(lang, "Reto de hoy")
 	case "material":
 		return "Material"
 	case "next":
@@ -421,7 +429,7 @@ func truncate(s string, n int) string {
 	return s
 }
 
-var errBusy = errors.New("ya hay una sesión en curso; termínala o cancélala primero")
+var errBusy = errors.New(i18n.N("ya hay una sesión en curso; termínala o cancélala primero"))
 
 func (r *Run) isDone() bool {
 	r.mu.Lock()

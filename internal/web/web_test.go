@@ -57,6 +57,13 @@ func newTestServer(t *testing.T, p provider.Provider) (*Server, *httptest.Server
 	cfg := config.Default()
 	cfg.Depth, cfg.Iceberg = 0, false // guides without concept notes, so the scripted replies stay in order
 	s := New(cfg, v, p)
+	// runs save themselves in the background: stop that before the temporary vault is removed
+	// (cleanups run last-registered first, so this one runs before TempDir's)
+	t.Cleanup(func() {
+		if s.store != nil {
+			s.store.close()
+		}
+	})
 	s.Now = func() time.Time { return time.Date(2026, 10, 27, 9, 0, 0, 0, time.UTC) }
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
@@ -1045,5 +1052,30 @@ func TestStudySettings(t *testing.T) {
 	}
 	if _, cfg, _ := s.backend(); cfg.PassScore != 0 {
 		t.Errorf("pass score = %d", cfg.PassScore)
+	}
+}
+
+func TestLanguageScriptAndSetting(t *testing.T) {
+	s, ts := newTestServer(t, &scripted{})
+	s.Cfg.Language = ""
+	_, body := do(t, ts, "GET", "/i18n.js", nil, nil)
+	js := string(body)
+	if !strings.HasPrefix(js, "window.I18N = ") || !strings.Contains(js, `"chosen":false`) || !strings.Contains(js, `"lang":"es"`) || !strings.Contains(js, "function t(") {
+		t.Fatalf("i18n.js = %.300s", js)
+	}
+	if res, _ := do(t, ts, "POST", "/api/settings/language", map[string]any{"language": "klingon"}, nil); res.StatusCode != 400 {
+		t.Errorf("an unknown language must be rejected: %d", res.StatusCode)
+	}
+	if res, _ := do(t, ts, "POST", "/api/settings/language", map[string]any{"language": "fr"}, nil); res.StatusCode != 200 {
+		t.Fatalf("set language = %d", res.StatusCode)
+	}
+	_, body = do(t, ts, "GET", "/i18n.js", nil, nil)
+	js = string(body)
+	if !strings.Contains(js, `"lang":"fr"`) || !strings.Contains(js, `"chosen":true`) || !strings.Contains(js, `"Nueva conversación":"Nouvelle conversation"`) {
+		t.Errorf("after choosing French: %.300s", js)
+	}
+	// a run's questions come translated, with the Spanish one alongside to tell which it is
+	if _, cfg, _ := s.backend(); cfg.Language != "fr" {
+		t.Errorf("config language = %q", cfg.Language)
 	}
 }

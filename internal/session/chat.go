@@ -69,7 +69,7 @@ func (s *Session) readChat() (ChatMsg, error) {
 	var m ChatMsg
 	if strings.HasPrefix(line, "{") {
 		if err := json.Unmarshal([]byte(line), &m); err != nil {
-			return ChatMsg{}, fmt.Errorf("mensaje inválido: %w", err)
+			return ChatMsg{}, failf("mensaje inválido: %w", err)
 		}
 		return m, nil
 	}
@@ -81,7 +81,7 @@ func (s *Session) readChat() (ChatMsg, error) {
 // flows (guide, quiz, Feynman, daily, roadmap, material…) when the learner asks for them, then
 // goes back to listening. It ends when its input closes.
 func (s *Session) Chat(ctx context.Context, o ChatOpts) error {
-	c := s.quickConvo(prompts.Get("chat", s.Cfg.Language))
+	c := s.quickConvo(prompts.Get("chat", s.aiLang()))
 	guide := vault.Slugify(o.Guide)
 	announced := ""
 	history := strings.TrimSpace(o.History)
@@ -148,7 +148,7 @@ func (s *Session) Chat(ctx context.Context, o ChatOpts) error {
 				return ctx.Err()
 			}
 			// a failed step must not end the conversation
-			s.printf("\nNo pude completarlo: %v\n", err)
+			s.printf("\nNo pude completarlo: %s\n", s.errText(err))
 		}
 	}
 }
@@ -290,7 +290,7 @@ func (s *Session) runAction(ctx context.Context, a ChatAction, guide string, dep
 		}
 		return slug, nil
 	}
-	return guide, fmt.Errorf("acción desconocida %q", a.Action)
+	return guide, failf("acción desconocida %q", a.Action)
 }
 
 // CardConcept says a concept note is ready (Slug, Topic).
@@ -323,7 +323,7 @@ func (s *Session) saveDoubt(guide, question, answer string) {
 	if answer == "" {
 		return
 	}
-	entry := doubtEntry(strings.Join(strings.Fields(question), " "), answer)
+	entry := s.doubtEntry(strings.Join(strings.Fields(question), " "), answer)
 	err := s.V.Update(guide, func(n *vault.Note) error {
 		after := "Guía"
 		if vault.Section(n.Body, baseHeading) != "" {
@@ -333,7 +333,7 @@ func (s *Session) saveDoubt(guide, question, answer string) {
 		if prev := vault.Section(n.Body, doubtsHeading); prev != "" {
 			all = prev + "\n\n" + entry
 		}
-		n.Body = vault.PlaceSection(n.Body, doubtsHeading, all, after)
+		n.Body = vault.PlaceSection(n.Body, s.h(doubtsHeading), all, after)
 		return nil
 	})
 	if err != nil {
@@ -374,7 +374,7 @@ func (s *Session) ConceptNote(ctx context.Context, title, summary, guide string)
 		// no guide to point back to
 		_ = s.V.UpdateConcept(id, func(cn *vault.Concept) error {
 			cn.Meta.Guides = nil
-			cn.Body = vault.ReplaceSection(cn.Body, "Aparece en", "Surgió en el chat.")
+			cn.Body = vault.ReplaceSection(cn.Body, s.h("Aparece en"), s.tr("Surgió en el chat."))
 			return nil
 		})
 	} else {

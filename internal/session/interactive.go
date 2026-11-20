@@ -61,7 +61,7 @@ func pendingInteractive(n vault.Note) (why string, ok bool) {
 func (s *Session) Interactive(ctx context.Context, slug, brief string) error {
 	note, err := s.V.Load(slug)
 	if err != nil {
-		return fmt.Errorf("no hay nota para «%s»: %w", slug, err)
+		return failf("no hay nota para «%s»: %w", slug, err)
 	}
 	prompt := "Topic: " + note.Meta.Title + "\nWhat the learner studied: " + s.V.LoadHandoff(slug)
 	if brief != "" {
@@ -86,9 +86,9 @@ func (s *Session) Interactive(ctx context.Context, slug, brief string) error {
 	}
 	why := brief
 	if why == "" {
-		why = "Simulación generada para explorar el tema"
+		why = s.tr("Simulación generada para explorar el tema")
 	}
-	note.Meta.Resources = append(kept, vault.Resource{Type: "interactive", Title: "Simulación: " + note.Meta.Title, URL: rel, Why: why})
+	note.Meta.Resources = append(kept, vault.Resource{Type: "interactive", Title: s.trf("Simulación: %s", note.Meta.Title), URL: rel, Why: why})
 	note.Body = vault.ReplaceSection(note.Body, "Recursos", resourceLines(note.Meta.Resources))
 	if err := s.V.Save(note); err != nil {
 		return err
@@ -103,7 +103,7 @@ func (s *Session) Interactive(ctx context.Context, slug, brief string) error {
 
 // buildHTML asks for a self-contained page and checks it, giving the model one chance to fix it.
 func (s *Session) buildHTML(ctx context.Context, prompt string) (string, error) {
-	c := s.convo(prompts.Get("interactive", s.Cfg.Language))
+	c := s.convo(prompts.Get("interactive", s.aiLang()))
 	for attempt := 0; ; attempt++ {
 		resp, err := c.Say(ctx, prompt, nil)
 		if err != nil {
@@ -115,7 +115,7 @@ func (s *Session) buildHTML(ctx context.Context, prompt string) (string, error) 
 			return html, nil
 		}
 		if attempt == 1 {
-			return "", fmt.Errorf("no logré una simulación válida: %w", err)
+			return "", failf("no logré una simulación válida: %w", err)
 		}
 		prompt = "That page was rejected: " + err.Error() + ". Fix it and output the complete document again."
 	}

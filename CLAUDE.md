@@ -12,7 +12,7 @@ gofmt -l .                                    # CI falla si lista algo
 node --check internal/web/static/app.js       # sintaxis del frontend (no tiene build ni tests JS)
 ```
 
-**Después de cada cambio, recompila el exe** de la raíz del repo con `go build -o studyhomie.exe ./cmd/studyhomie`, para que el binario esté siempre al día con el código. Si la app está corriendo, ciérrala antes, porque Windows no deja sobrescribir un `.exe` en uso.
+**Después de cada cambio, recompila e instala:** `go build -o studyhomie.exe ./cmd/studyhomie` (el exe de la raíz del repo) y `go install ./cmd/studyhomie`. Este segundo es el que importa: el comando `studyhomie` del usuario es `%USERPROFILE%\go\bin\studyhomie.exe`, el del PATH, no el del repo. Windows no deja sobrescribir un `.exe` en uso, pero sí renombrarlo: si la app está abierta, mueve el de `go\bin` a `studyhomie.exe.old` antes del `go install` y avisa al usuario que reinicie la app.
 
 Para probarla a mano: `studyhomie init --provider claude-cli` en una carpeta temporal y después `studyhomie serve --port 8799 --no-open`. El frontend está embebido (`//go:embed static`), así que después de tocar `internal/web/static/` hay que **recompilar y reiniciar** el servidor.
 
@@ -30,6 +30,7 @@ Para probarla a mano: `studyhomie init --provider claude-cli` en una carpeta tem
 | `internal/viz` | Valida y limpia los widgets ` ```viz ` de las guías. |
 | `internal/update` | Autoactualización desde GitHub Releases. |
 | `internal/config` | `studyhomie.toml` (`Default()` tiene los valores por defecto). |
+| `internal/i18n` | Idiomas: catálogos, `T`/`Sprintf`, encabezados de sección en cada idioma. |
 
 ## Modelo de datos (vault)
 
@@ -44,9 +45,20 @@ Para probarla a mano: `studyhomie init --provider claude-cli` en una carpeta tem
 - **Profundidad de guía** (`GuideReq.Depth`, 0–4, selector «Escribir ahora» del chat): cuántos niveles de conceptos previos se escriben como notas. El planner (`prompts/plan.md`) mapea hasta lo básico (`maxMapDepth`), y lo que queda más abajo de `Depth` va a `pending`. Es **aglomerativo**: junta todo lo que el tema da por sabido.
 - **Profundidad de roadmap** (`reach`, 1–3: enfocado / con bases / desde cero): cuánto del campo abarca la ruta. El roadmap es **lineal**: una secuencia numerada. Solo se escribe la guía del tema 1. El tema N+1 se desbloquea cuando el N tiene `mastery ≥ pass_score` (70 por defecto, en Ajustes) con estado `tested` o `explained`. En ese momento `Session.advance` escribe su guía. `Guide()` rechaza los temas bloqueados (`checkUnlocked`), y las guías de roadmap no piden aprobar el plan (`GuideReq.Auto`).
 
+## Idiomas (i18n)
+
+La interfaz y la IA hablan español, inglés, francés, chino (simplificado) y portugués de Brasil (`internal/i18n`, `Langs`). Lo elige `language` en `studyhomie.toml` o Ajustes → Idioma. Si está vacío, la primera vez se toma el idioma del navegador.
+
+- **El español es el idioma fuente y la clave.** Cada mensaje se escribe en español y su texto exacto es la clave en `internal/i18n/locales/{en,fr,zh,pt}.json`; el español no tiene catálogo. Si un mensaje no está en un catálogo, se muestra en español.
+- **Go:** `s.printf`, `s.termf`, `s.status`, `s.readLine`, `s.confirm`, `s.tr` y `s.trf` traducen su formato solos. Los errores que ve el usuario se crean con `inputErrorf`/`failf` y se traducen al mostrarlos (`ErrorText`). Un texto definido lejos de donde se muestra (una lista de opciones, un mapa) se marca con `i18n.N("…")`. Los prompts reciben `s.aiLang()`.
+- **Web:** `/i18n.js` (servido por Go antes que todo) define `window.I18N` y las funciones `t('texto {var}', { var })` y `tn(n, 'singular', 'plural')`. En `viz.js` se llama `tr()`, porque ahí `t` es una variable local. Los textos fijos de `index.html` llevan `data-i18n` (o `data-i18n-title`, `-placeholder`, `-aria-label`). Los errores del servidor llegan en español y `api()` los traduce si los conoce.
+- **Secciones de las notas:** `i18n.Heading(lang, "Guía")` da el encabezado en el idioma activo. `vault.Section`/`ReplaceSection` y `sectionOf`/`stripSection` en JS encuentran la sección en cualquiera de los cinco idiomas, así que siempre se buscan por su nombre en español.
+- **Preguntas del flujo:** `Session.Ask` recibe la etiqueta en español. La web la manda traducida en `label` y en español en `key`, y `app.js` decide qué botones mostrar mirando `key`.
+- **Test:** `TestCatalogsCoverEveryMessage` (`internal/i18n`) junta con el AST de Go y regex de JS todos los mensajes marcados, y falla si a algún catálogo le falta uno, si sobra alguno o si cambian los marcadores (`%s`, `{name}`). Con `I18N_DUMP=<dir> go test ./internal/i18n` escribe en `<dir>/<idioma>.json` lo que falta traducir. **Al agregar o cambiar un texto, agrega su traducción en los cuatro catálogos.**
+
 ## Convenciones
 
-- **Idioma:** la interfaz y los mensajes al usuario van en **español**. Los comentarios de código, los nombres y los prompts van en **inglés**. Los prompts piden escribir en `{{language}}`.
+- **Idioma del código:** los comentarios, los nombres y los prompts van en **inglés**. Los mensajes al usuario se escriben en **español** y se traducen (ver «Idiomas»).
 - **Consola vs. web:** `Session.printf` sale en los dos, `termf` solo en la consola (rutas, avisos técnicos, convenciones como «.» o `/fin`) y `status` va al indicador de trabajo. Cuando hay UI (`Session.Card != nil`), lo estructurado sale como **tarjeta** (`card.go`: `question`, `plan`, `progress`, `guide`, `score`, `roadmap`…) en lugar de texto, y `app.js` la dibuja en `renderCard`.
 - **Errores del usuario:** `inputErrorf(...)` (la web responde 400 y el chat lo muestra tal cual); el resto son fallas.
 - **Tests:** la IA se reemplaza con `fake` (en `session`) o `scripted` (en `web`), que devuelven respuestas en orden, así que **cada llamada a la IA consume una respuesta**. Si un flujo agrega una llamada (por ejemplo, la guía 1 al crear un roadmap), hay que agregar su respuesta en los tests. `newSession` usa `Depth=0` e `Iceberg=false` para que no haya llamada de plan.
