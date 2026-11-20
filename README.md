@@ -3,9 +3,9 @@
 **Aprende con intuición y comprueba que puedes explicarlo.**
 Un asistente de estudio con IA que corre en tu computadora: un programa de consola con una interfaz web local, y tus notas en un vault de Markdown compatible con Obsidian.
 
-Le pides un tema y escribe una guía de estudio con visuales interactivos, mapea todo lo que ese tema da por sabido hasta lo básico (un «iceberg» de conceptos) y te hace practicar: preguntas que piden razonar y explicarlo con tus palabras. Funciona con la IA que ya tengas: Claude Code, Codex, Antigravity, cualquier API conocida o un modelo local.
+Le preguntas desde un **chat** (con archivos o imágenes adjuntas) y escribe una guía de estudio con visuales interactivos, mapea todo lo que ese tema da por sabido hasta lo básico (un «iceberg» de conceptos), guarda tus propios apuntes en el vault y te hace practicar: preguntas que piden razonar y explicarlo con tus palabras. Funciona con la IA que ya tengas: Claude Code, Codex, Antigravity, cualquier API conocida o un modelo local.
 
-![Una guía junto al chat](docs/img/nota.png)
+![Chat de estudio con guía y visual interactivo](docs/img/nota.png)
 
 ## Instálalo con tu agente de IA
 
@@ -267,7 +267,11 @@ Minimal, sobre un fondo de puntos, en claro u oscuro. Todo son paneles acoplable
 
 ![El iceberg de conceptos](docs/img/sesion.png)
 
-![El mapa](docs/img/mapa.png)
+![El mapa de conocimiento](docs/img/mapa.png)
+
+![Apuntes propios por guía o concepto](docs/img/apuntes.png)
+
+![Panel Vault: búsqueda, edición y varios vaults](docs/img/vault.png)
 
 ## Elegir la IA
 
