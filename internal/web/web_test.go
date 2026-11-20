@@ -57,6 +57,13 @@ func newTestServer(t *testing.T, p provider.Provider) (*Server, *httptest.Server
 	cfg := config.Default()
 	cfg.Depth, cfg.Iceberg = 0, false // guides without concept notes, so the scripted replies stay in order
 	s := New(cfg, v, p)
+	// runs save themselves in the background: stop that before the temporary vault is removed
+	// (cleanups run last-registered first, so this one runs before TempDir's)
+	t.Cleanup(func() {
+		if s.store != nil {
+			s.store.close()
+		}
+	})
 	s.Now = func() time.Time { return time.Date(2026, 10, 27, 9, 0, 0, 0, time.UTC) }
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
