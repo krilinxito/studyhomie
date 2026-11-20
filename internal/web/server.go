@@ -47,6 +47,9 @@ type Server struct {
 	Now func() time.Time
 	// Warning, if set, is shown in the UI: the AI backend is not ready.
 	Warning string
+	// ConfigPath is where the settings page saves the AI choice; empty keeps it in memory.
+	ConfigPath string
+	pmu        sync.RWMutex // guards P, Cfg and Warning, which the settings page can change
 	// CheckLinks verifies cited URLs; nil uses the real check. Tests replace it.
 	CheckLinks func(ctx context.Context, urls []string) map[string]bool
 
@@ -97,6 +100,10 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /", pageHeaders(http.FileServerFS(static)))
 
 	mux.HandleFunc("GET /api/state", s.state)
+	mux.HandleFunc("GET /api/settings", s.getSettings)
+	mux.HandleFunc("POST /api/settings", s.saveSettings)
+	mux.HandleFunc("POST /api/settings/models", s.listModels)
+	mux.HandleFunc("POST /api/settings/test", s.testSettings)
 	mux.HandleFunc("GET /api/graph", s.graph)
 	mux.HandleFunc("GET /api/notes/{slug}", s.note)
 	mux.HandleFunc("POST /api/notes/{slug}/extend", s.extend)
@@ -179,12 +186,13 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		active = s.active.ID
 	}
 	s.mu.Unlock()
+	p, cfg, warning := s.backend()
 	writeJSON(w, 200, map[string]any{
-		"provider":  s.P.Name(),
+		"provider":  p.Name(),
 		"vault":     s.V.Root,
-		"interests": s.Cfg.Interests,
+		"interests": cfg.Interests,
 		"activeRun": active,
-		"warning":   s.Warning,
+		"warning":   warning,
 	})
 }
 
@@ -195,7 +203,8 @@ const answerTimeout = 3 * time.Minute
 // shortSession is a session for actions that do not need a conversation with the learner:
 // they take their input from the request and send the result back in the response.
 func (s *Server) shortSession() *session.Session {
-	return &session.Session{P: s.P, V: s.V, Cfg: s.Cfg, CheckLinks: s.CheckLinks}
+	p, cfg, _ := s.backend()
+	return &session.Session{P: p, V: s.V, Cfg: cfg, CheckLinks: s.CheckLinks}
 }
 
 // drain reads what is left of the request body. Go only notices that the browser closed the connection

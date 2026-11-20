@@ -54,3 +54,29 @@ func TestCheckAPIKey(t *testing.T) {
 		t.Errorf("key is set, got %q", msg)
 	}
 }
+
+func TestEveryCatalogEntryBuilds(t *testing.T) {
+	for _, in := range Catalog {
+		p, err := New(config.Config{Provider: in.ID, Model: "m", BaseURL: "http://localhost:1/v1"})
+		if err != nil || p == nil || p.Name() != in.ID {
+			t.Errorf("%s: %v %v", in.ID, p, err)
+		}
+	}
+}
+
+func TestCheckAsksForAModelWhereThereIsNoDefault(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "sk")
+	if msg := Check(config.Config{Provider: "openai"}); !strings.Contains(msg, "modelo") {
+		t.Errorf("openai without a model: %q", msg)
+	}
+	if msg := Check(config.Config{Provider: "openai", Model: "m"}); msg != "" {
+		t.Errorf("openai with key and model: %q", msg)
+	}
+	if msg := Check(config.Config{Provider: "ollama", Model: "qwen"}); msg != "" {
+		t.Errorf("a local server needs no key: %q", msg)
+	}
+	t.Setenv("GROQ_API_KEY", "")
+	if msg := Check(config.Config{Provider: "groq", Model: "m"}); !strings.Contains(msg, "GROQ_API_KEY") {
+		t.Errorf("groq without key: %q", msg)
+	}
+}

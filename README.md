@@ -23,9 +23,10 @@ Desde el chat también puedes pedir el **reto del día** (un tema al azar de tus
 ## Requisitos
 
 - Un navegador.
-- **Una de estas dos** formas de acceder a un modelo de IA:
-  - [Claude Code](https://claude.com/claude-code) instalado y con sesión iniciada (usa tu propio plan), **o**
-  - una clave de la [API de Anthropic](https://console.anthropic.com/) (se paga por uso).
+- **Una** forma de acceder a un modelo de IA (ver [Elegir la IA](#elegir-la-ia)):
+  - un programa de terminal con tu suscripción: [Claude Code](https://claude.com/claude-code) (por defecto), Codex CLI o Antigravity CLI, **o**
+  - la clave de una API: Anthropic, OpenAI, Gemini, OpenRouter, Groq, DeepSeek, Mistral, xAI…, **o**
+  - un modelo local con Ollama o LM Studio.
 
 ## Instalación
 
@@ -86,26 +87,44 @@ Las guías y notas admiten:
 
 ## Elegir la IA
 
-Por defecto usa **Claude Code** (`claude-cli`). Para cambiar, ejecuta `studyhomie init` dentro de tu carpeta: crea `studyhomie.toml`, que puedes editar.
+Por defecto usa **Claude Code**. Para cambiar, abre **Ajustes** (el engranaje arriba a la derecha): eliges la IA y el modelo, puedes **cargar la lista de modelos** que ofrece y **probar la conexión** antes de guardar. La elección se guarda en `studyhomie.toml` y se aplica al instante; lo que ya esté en curso termina con la IA anterior.
+
+**Con tu suscripción (programas de terminal).** StudyHomie solo ejecuta el comando; no lee ni guarda tus credenciales.
 
 | `provider` | Qué usa | Qué necesitas |
 |---|---|---|
-| `claude-cli` (por defecto) | Tu instalación local de Claude Code, con tu sesión. StudyHomie no lee ni guarda tus credenciales: solo ejecuta el comando `claude`. | Instalar Claude Code y ejecutar `claude` una vez para iniciar sesión. |
-| `anthropic-api` | La API de Anthropic con tu clave. | Definir la variable de entorno `ANTHROPIC_API_KEY`. |
+| `claude-cli` (por defecto) | Claude Code, con tu plan de Claude | Instalarlo (`irm https://claude.ai/install.ps1 \| iex` en Windows) y ejecutar `claude` una vez para iniciar sesión |
+| `codex` | Codex CLI, con tu cuenta de ChatGPT o una clave de OpenAI | `npm install -g @openai/codex` y `codex login` |
+| `agy` (experimental) | Antigravity CLI, con tu cuenta de Google | Ejecutar `agy` una vez para iniciar sesión |
 
-Con la API puedes elegir modelo (`model = "claude-sonnet-5-5"`, por ejemplo). Por defecto usa `claude-opus-5-5`; un modelo más pequeño sale más barato.
+Codex y Antigravity son agentes con herramientas propias: StudyHomie los ejecuta en una carpeta temporal vacía y les pide solo responder, así nunca tocan tus archivos.
 
-Definir la clave:
+**APIs (clave propia, pago por uso).** La clave va siempre en una variable de entorno, nunca en la app ni en archivos.
+
+| `provider` | Variable | Búsqueda web |
+|---|---|---|
+| `anthropic-api` | `ANTHROPIC_API_KEY` | sí |
+| `openai` | `OPENAI_API_KEY` | sí |
+| `gemini` | `GEMINI_API_KEY` (o `GOOGLE_API_KEY`) | sí (Google Search) |
+| `openrouter` | `OPENROUTER_API_KEY` | sí |
+| `groq`, `deepseek`, `mistral`, `xai`, `together` | `GROQ_API_KEY`, `DEEPSEEK_API_KEY`, … | no |
+| `openai-compatible` | `OPENAI_COMPAT_API_KEY` (si hace falta) + `base_url` | no |
+
+**En tu PC.** `ollama` (`http://localhost:11434/v1`) y `lmstudio` (`http://localhost:1234/v1`), sin clave; la URL se puede cambiar. Con modelos locales, los de 14B o más siguen mejor el formato de las guías.
+
+Sin búsqueda web, las guías salen sin videos ni webs recomendados; todo lo demás funciona igual. Salvo los programas de terminal y la API de Anthropic, hay que elegir un modelo (`model`); `quick_model` es opcional y se usa para el chat, las notas de concepto y el plan.
+
+Definir una clave:
 
 ```
 # Windows (PowerShell), una vez; abre una terminal nueva después
-setx ANTHROPIC_API_KEY "sk-ant-..."
+setx OPENAI_API_KEY "sk-..."
 
 # macOS / Linux
-export ANTHROPIC_API_KEY="sk-ant-..."
+export OPENAI_API_KEY="sk-..."
 ```
 
-> Revisa los términos de tu plan de Claude antes de compartir o automatizar el uso del CLI. StudyHomie lo ejecuta localmente, con tu sesión, como lo harías tú en la terminal.
+> Revisa los términos de cada servicio antes de automatizar el uso de su CLI. StudyHomie los ejecuta localmente, con tu sesión, como lo harías tú en la terminal.
 
 ## Configuración (`studyhomie.toml`)
 
@@ -113,7 +132,8 @@ Todo es opcional; sin el archivo se usan estos valores.
 
 | Clave | Por defecto | Para qué |
 |---|---|---|
-| `provider` | `"claude-cli"` | `claude-cli` o `anthropic-api` |
+| `provider` | `"claude-cli"` | La IA: ver [Elegir la IA](#elegir-la-ia) |
+| `base_url` | vacío | URL de un servidor local o compatible con OpenAI |
 | `model` | vacío | Modelo a usar; vacío = el del proveedor |
 | `quick_model` | vacío | Modelo para las respuestas cortas (conceptos base y dudas); vacío = `model`. Poner uno más rápido y barato hace que respondan antes |
 | `port` | `8765` | Puerto de la interfaz web |

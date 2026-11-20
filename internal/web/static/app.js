@@ -305,8 +305,9 @@ $('#btn-theme').addEventListener('click', () => {
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (!document.documentElement.dataset.theme) applyTheme(); });
 
 /* ---------- the dock: panels you can drag, split, stack and float ---------- */
-const PANES = { chat: 'Chat', chats: 'Chats', guide: 'Guía', concepts: 'Conceptos', map: 'Mapa', practice: 'Practicar' };
-const STUDY = ['guide', 'concepts', 'map', 'practice'];
+const PANES = { chat: 'Chat', chats: 'Chats', guide: 'Guía', concepts: 'Conceptos', map: 'Mapa', practice: 'Practicar', settings: 'Ajustes' };
+const STUDY = ['guide', 'concepts', 'map', 'practice']; // the default study group
+const NEAR_STUDY = [...STUDY, 'settings']; // panels that open next to the study group
 
 function createDock() {
   for (const el of $$('#panes > .pane')) PANE_EL[el.dataset.pane] = el;
@@ -356,7 +357,7 @@ function show(id) {
   if (!dock) return;
   let p = dock.getPanel(id);
   if (!p) {
-    const near = STUDY.includes(id) ? STUDY.map((x) => dock.getPanel(x)).find(Boolean) : null;
+    const near = NEAR_STUDY.includes(id) ? NEAR_STUDY.map((x) => dock.getPanel(x)).find(Boolean) : null;
     const chat = dock.getPanel('chat');
     const position = near ? { referencePanel: near.id, direction: 'within' }
       : chat && id !== 'chat' ? { referencePanel: 'chat', direction: id === 'chats' ? 'left' : 'right' } : undefined;
@@ -372,7 +373,110 @@ function onShown(id) {
   if (id === 'map') fitMap();
   if (id === 'concepts') renderConcepts();
   if (id === 'practice') renderPractice();
+  if (id === 'settings') renderSettings();
 }
+$('#btn-settings').addEventListener('click', () => show('settings'));
+
+/* ---------- Ajustes: which AI answers ---------- */
+const KIND = { cli: 'Con tu suscripción (programa de terminal)', api: 'APIs en la nube (clave propia, pago por uso)', local: 'En tu PC (modelos locales)' };
+const SET = { data: null, pick: '', models: [] };
+
+async function renderSettings() {
+  const root = PANE_EL.settings;
+  if (!root) return;
+  try { SET.data = await api('/api/settings'); } catch (err) { root.replaceChildren(h('p', { class: 'hint', style: 'padding:24px' }, err.message)); return; }
+  const cur = SET.data.current;
+  if (!SET.pick) SET.pick = cur.provider || 'claude-cli';
+  drawSettings();
+}
+
+function drawSettings() {
+  const root = PANE_EL.settings;
+  const { current: cur, providers: list, warning } = SET.data;
+  const sel = list.find((p) => p.id === SET.pick) || list[0];
+  const same = sel.id === (cur.provider || 'claude-cli');
+  const model = h('input', { type: 'text', list: 'model-list', value: same ? cur.model : (sel.defaultModel || ''), placeholder: sel.defaultModel || (sel.kind === 'cli' ? 'El que use el programa por defecto' : 'Elige o escribe un modelo'), 'aria-label': 'Modelo principal' });
+  const quick = h('input', { type: 'text', list: 'model-list', value: same ? cur.quickModel : '', placeholder: 'Opcional: uno más rápido y barato', 'aria-label': 'Modelo rápido' });
+  const url = sel.editURL ? h('input', { type: 'url', value: same && cur.baseURL ? cur.baseURL : (sel.baseURL || ''), placeholder: 'https://…/v1', 'aria-label': 'URL del servicio' }) : null;
+  const datalist = h('datalist', { id: 'model-list' }, SET.models.map((m) => h('option', { value: m })));
+  const result = h('div', { class: 'set-result', role: 'status' });
+  const body = () => ({ provider: sel.id, model: model.value, quickModel: quick.value, baseURL: url ? url.value : '' });
+  const busy = (btn, on, label) => { btn.disabled = on; if (label) btn.lastChild.textContent = label; };
+
+  const loadModels = h('button', { class: 'btn small', type: 'button', onclick: async (e) => {
+    const b = e.currentTarget;
+    busy(b, true, 'Cargando…');
+    try {
+      SET.models = (await api('/api/settings/models', { method: 'POST', body: body() })).models;
+      result.replaceChildren(h('span', { class: 'ok' }, SET.models.length ? `${SET.models.length} modelos disponibles: elige en la lista del campo.` : 'Este proveedor no da una lista; escribe el nombre del modelo.'));
+      datalist.replaceChildren(...SET.models.map((m) => h('option', { value: m })));
+      model.focus();
+    } catch (err) { result.replaceChildren(h('span', { class: 'bad' }, err.message)); }
+    busy(b, false, 'Cargar modelos');
+  } }, icon('search'), 'Cargar modelos');
+  const test = h('button', { class: 'btn small', type: 'button', onclick: async (e) => {
+    const b = e.currentTarget;
+    busy(b, true, 'Probando…');
+    result.replaceChildren(h('span', { class: 'hint' }, 'Enviando un mensaje de prueba…'));
+    try {
+      const r = await api('/api/settings/test', { method: 'POST', body: body() });
+      result.replaceChildren(h('span', { class: 'ok' }, icon('check'), `Responde: «${r.reply.slice(0, 80)}» en ${(r.ms / 1000).toFixed(1)} s`));
+    } catch (err) { result.replaceChildren(h('span', { class: 'bad' }, err.message)); }
+    busy(b, false, 'Probar conexión');
+  } }, icon('plug'), 'Probar conexión');
+  const save = h('button', { class: 'btn primary', type: 'button', onclick: async (e) => {
+    const b = e.currentTarget;
+    busy(b, true);
+    try {
+      const r = await api('/api/settings', { method: 'POST', body: body() });
+      $('#provider-badge').textContent = r.provider;
+      $('#banner').textContent = r.warning || '';
+      $('#banner').hidden = !r.warning;
+      toast(`Listo: ahora responde ${sel.name}.`);
+      await renderSettings();
+    } catch (err) { result.replaceChildren(h('span', { class: 'bad' }, err.message)); busy(b, false); }
+  } }, 'Guardar y usar');
+
+  const card = (p) => h('button', {
+    class: `prov${p.id === sel.id ? ' on' : ''}${p.ready ? '' : ' off'}`, type: 'button', role: 'radio', 'aria-checked': String(p.id === sel.id),
+    onclick: () => {
+      SET.pick = p.id; SET.models = [];
+      drawSettings();
+      $('.set-form', PANE_EL.settings)?.scrollIntoView({ behavior: smoothness(), block: 'nearest' });
+    },
+  },
+  h('span', { class: 'prov-name' }, p.name, p.id === (cur.provider || 'claude-cli') ? h('em', {}, 'en uso') : null),
+  h('span', { class: 'prov-tags' },
+    h('span', { class: `tag${p.ready ? ' good' : ''}` }, p.ready ? 'disponible' : p.reason),
+    p.search ? h('span', { class: 'tag' }, 'búsqueda web') : null,
+    p.experimental ? h('span', { class: 'tag warn' }, 'experimental') : null));
+
+  const keyHelp = sel.kind === 'api' && (sel.keyEnvs || []).length ? h('div', { class: 'set-key' },
+    h('p', {}, 'La clave nunca pasa por la app: va en una variable de entorno. ', sel.ready ? h('strong', {}, `${sel.keyEnvs[0]} está definida.`) : h('strong', {}, `Falta ${sel.keyEnvs[0]}.`)),
+    !sel.ready ? h('pre', {}, `setx ${sel.keyEnvs[0]} "tu-clave"`) : null,
+    !sel.ready ? h('p', { class: 'hint' }, 'En PowerShell; después cierra y vuelve a abrir la terminal y StudyHomie. En macOS o Linux: export en tu shell.') : null) : null;
+
+  root.replaceChildren(h('div', { class: 'settings' },
+    h('header', { class: 'c-head' }, h('p', { class: 'eyebrow' }, 'Ajustes'), h('h2', {}, '¿Qué IA responde?'),
+      h('p', { class: 'hint' }, `Se guarda en ${SET.data.configPath || 'studyhomie.toml'}. Lo que ya esté en curso termina con la IA anterior.`)),
+    warning ? h('p', { class: 'set-warning' }, warning) : null,
+    Object.entries(KIND).map(([kind, title]) => h('section', { class: 'set-group' }, h('h3', {}, title),
+      h('div', { class: 'prov-grid', role: 'radiogroup' }, list.filter((p) => p.kind === kind).map(card)))),
+    h('section', { class: 'set-form' },
+      h('h3', {}, sel.name),
+      sel.note ? h('p', { class: 'hint' }, mdInline(sel.note)) : null,
+      !sel.search ? h('p', { class: 'hint' }, 'Sin búsqueda web: las guías saldrán sin videos ni webs recomendados; todo lo demás funciona igual.') : null,
+      keyHelp,
+      url ? h('label', {}, 'URL del servicio', url) : null,
+      h('label', {}, 'Modelo principal', model),
+      h('label', {}, 'Modelo rápido (chat, notas de concepto, plan)', quick),
+      datalist,
+      h('div', { class: 'actions' }, sel.kind !== 'cli' || sel.id === 'agy' ? loadModels : null, test, save),
+      result)));
+}
+
+// a little Markdown for the notes of the catalogue (code spans)
+function mdInline(s) { const span = h('span'); span.innerHTML = DOMPurify.sanitize(marked.parseInline(s)); return span; }
 
 // the layout menu: open a panel, or start over
 $('#btn-layout').addEventListener('click', (e) => {

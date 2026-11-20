@@ -5,10 +5,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -784,5 +787,47 @@ func TestExplainEndpointAndPendingInTheGraph(t *testing.T) {
 	_, body = do(t, ts, "GET", "/api/graph", nil, nil)
 	if strings.Contains(string(body), `"kind":"pending"`) || !strings.Contains(string(body), `"id":"fraccion","label":"Fracción","kind":"concept"`) {
 		t.Errorf("explained concept should be a concept now: %s", body)
+	}
+}
+
+func TestSettingsSwitchTheBackend(t *testing.T) {
+	ai := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/models") {
+			fmt.Fprint(w, `{"data":[{"id":"qwen3:14b"}]}`)
+			return
+		}
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"listo\"}}]}\n\ndata: [DONE]\n\n")
+	}))
+	defer ai.Close()
+	s, ts := newTestServer(t, &scripted{})
+	s.ConfigPath = filepath.Join(t.TempDir(), "studyhomie.toml")
+
+	_, body := do(t, ts, "GET", "/api/settings", nil, nil)
+	if !strings.Contains(string(body), `"id":"ollama"`) || !strings.Contains(string(body), `"id":"codex"`) {
+		t.Fatalf("settings: %s", body)
+	}
+	choice := map[string]string{"provider": "ollama", "model": "qwen3:14b", "baseURL": ai.URL + "/v1"}
+	res, body := do(t, ts, "POST", "/api/settings/models", choice, nil)
+	if res.StatusCode != 200 || !strings.Contains(string(body), "qwen3:14b") {
+		t.Errorf("models: %d %s", res.StatusCode, body)
+	}
+	res, body = do(t, ts, "POST", "/api/settings/test", choice, nil)
+	if res.StatusCode != 200 || !strings.Contains(string(body), `"reply":"listo"`) {
+		t.Errorf("test: %d %s", res.StatusCode, body)
+	}
+	res, body = do(t, ts, "POST", "/api/settings", choice, nil)
+	if res.StatusCode != 200 {
+		t.Fatalf("save: %d %s", res.StatusCode, body)
+	}
+	_, body = do(t, ts, "GET", "/api/state", nil, nil)
+	if !strings.Contains(string(body), `"provider":"ollama"`) {
+		t.Errorf("the app must use the new backend at once: %s", body)
+	}
+	saved, _ := os.ReadFile(s.ConfigPath)
+	if !strings.Contains(string(saved), `provider = "ollama"`) || !strings.Contains(string(saved), `model = "qwen3:14b"`) || !strings.Contains(string(saved), "base_url") {
+		t.Errorf("config file:\n%s", saved)
+	}
+	if res, _ := do(t, ts, "POST", "/api/settings", map[string]string{"provider": "nope"}, nil); res.StatusCode != 400 {
+		t.Errorf("unknown provider must be refused, got %d", res.StatusCode)
 	}
 }

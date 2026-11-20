@@ -323,8 +323,9 @@ func (s *Server) StartRun(req StartReq) (*Run, error) {
 	}
 	run.scheduleSave(false)
 
+	prov, cfg, _ := s.backend()
 	sess := &session.Session{
-		P: s.P, V: s.V, Cfg: s.Cfg, CheckLinks: s.CheckLinks,
+		P: prov, V: s.V, Cfg: cfg, CheckLinks: s.CheckLinks,
 		In:  bufio.NewReader(run.in),
 		Out: outWriter{run},
 		Ask: func(kind, label, def string) { run.emit(Event{Type: "ask", Kind: kind, Label: label, Def: def}) },

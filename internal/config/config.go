@@ -11,7 +11,8 @@ import (
 const FileName = "studyhomie.toml"
 
 type Config struct {
-	Provider      string   `toml:"provider"`    // claude-cli | anthropic-api
+	Provider      string   `toml:"provider"`    // see providers.Catalog: claude-cli, codex, agy, anthropic-api, openai, gemini, openrouter, ollama…
+	BaseURL       string   `toml:"base_url"`    // local servers and other OpenAI-compatible services
 	Model         string   `toml:"model"`       // empty = the provider's default
 	QuickModel    string   `toml:"quick_model"` // for short answers (base concepts, doubts); empty = Model
 	Port          int      `toml:"port"`        // local web UI

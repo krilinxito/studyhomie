@@ -89,6 +89,7 @@ func run(ctx context.Context, cmd string, args []string) error {
 	if cmd == "serve" {
 		srv := web.New(cfg, v, p)
 		srv.Warning = providers.Check(cfg)
+		srv.ConfigPath = config.FileName
 		if srv.Warning != "" {
 			fmt.Fprintln(os.Stderr, "Aviso:", srv.Warning)
 		}
