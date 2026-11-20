@@ -9,8 +9,9 @@ Un asistente de estudio con IA que corre en tu computadora, con una interfaz web
 
 Todo empieza en un **chat**. Pregunta lo que quieras y te responde ahí mismo; pide que te explique un tema a fondo y escribe una **guía de estudio** con sus **notas de concepto** aparte.
 
-- **Profundidad.** Junto al cuadro de texto eliges de 0 a 4 cuántos niveles de prerrequisitos se escriben como notas propias. Con 0 sale solo la guía. Con 1, lo que el tema usa directamente. Con 4 baja hasta lo básico. También puedes decirlo con tus palabras: «desde lo más básico», «enfocado en audio».
-- **Plan editable.** Antes de escribir nada te muestra el árbol de conceptos por niveles. Desmarcas lo que ya sabes (y se va con ello lo que solo dependía de eso), añades lo que falte, y decides: guía y notas, solo la guía, o cancelar. Los conceptos que ya están en tu vault se enlazan, no se reescriben.
+- **Un iceberg de conceptos.** Cada guía mapea todo lo que da por sabido, nivel por nivel, hasta lo básico. Mapear es barato: solo títulos y una frase. Junto al cuadro de texto, **«Escribir ahora»** (0 a 4) decide cuántos niveles se escriben de entrada como notas propias; lo que queda más abajo se ve en gris, «bajo el agua», y se escribe con un clic en **Explicar** solo si lo necesitas. Así sirve para quien llega sin base, sin gastar tokens en lo que ya sabes. También puedes decirlo con tus palabras: «desde lo más básico», «enfocado en audio».
+- **Nada se da por sabido en silencio.** La guía enlaza cada término que asume. Si ese concepto aún no tiene nota, el enlace sale en gris con «explicar»: un clic y se escribe.
+- **Plan editable.** Antes de escribir nada te muestra el árbol: lo que se escribe ahora y lo que queda bajo el agua. Desmarcas lo que ya sabes (y se va con ello lo que solo dependía de eso), marcas algo de abajo si lo quieres ya, añades lo que falte, y decides: guía y notas, solo la guía, o cancelar. Los conceptos que ya están en tu vault se enlazan, no se reescriben.
 - **Intuición sin plantillas.** Nada de «imagina que tienes…». Las guías arrancan con un problema concreto con números, te hacen reinventar la idea (el intento ingenuo, por qué falla y el arreglo), la empujan a los casos extremos, la miran desde otro ángulo y cuentan qué problema tenía quien la inventó. La fórmula llega al final, como conclusión.
 - **Visuales para mover, al estilo 3Blue1Brown.** Dentro de la guía hay widgets en vivo: funciones con sliders, una matriz que deforma el plano (con î, ĵ y el determinante como área), procesos paso a paso, experimentos aleatorios que se repiten mil veces y preguntas de «predice antes de seguir leyendo». Si ninguno sirve, la guía propone una página interactiva que se construye cuando la pides.
 - **Practicar.** Preguntas que piden razonar y no memorizar, explicar el tema con tus palabras (método Feynman) y tarjetas de repaso hechas con tus notas de concepto.
@@ -59,7 +60,7 @@ go build -o studyhomie ./cmd/studyhomie
    studyhomie
    ```
 
-3. **Escribe en el chat** lo que quieras entender, elige la profundidad y envía. La guía aparece en el panel de la derecha.
+3. **Escribe en el chat** lo que quieras entender, elige cuánto escribir ahora y envía. La guía aparece en su panel.
 
 Para parar el programa, `Ctrl+C` en la terminal. Cada carpeta es un vault independiente: puedes tener una por materia, o una sola para todo.
 
@@ -67,14 +68,14 @@ Para parar el programa, `Ctrl+C` en la terminal. Cada carpeta es un vault indepe
 
 ## Interfaz
 
-Tres columnas: tus **chats** a la izquierda, el **chat** en el centro y el **panel de estudio** a la derecha, con cuatro pestañas:
+Un estilo minimal sobre un fondo de puntos, en modo claro u oscuro (el botón de sol/luna; por defecto sigue al sistema). Todo son **paneles acoplables**: arrastra una pestaña para dividir la pantalla, apilarla con otras o moverla de lugar, y redimensiona arrastrando los bordes. Tu layout se recuerda; el botón de paneles vuelve a abrir uno que cerraste o **restablece el layout**. En el móvil queda todo en un solo grupo de pestañas.
 
-- **Guía**: la guía abierta como artículo, con sus visuales y recursos.
-- **Conceptos**: las notas de concepto de la guía, por niveles, como líneas de metro. Si algo de arriba no se entiende, baja un nivel.
-- **Mapa**: un plano de metro. Cada guía es una línea de color y sus conceptos son estaciones que desembocan en ella. Una guía está vacía si aún no la exploras, medio llena con la guía lista, llena si ya la comprobaste y con anillo cuando la explicaste.
+- **Chats**: tu historial. Los chats se guardan en `vault/.studyhomie/sessions/` y se pueden **continuar**: escribe en uno viejo y sigue donde lo dejaste, con su contexto.
+- **Chat**: donde preguntas y pides guías, quizzes, el reto del día o una nota de concepto.
+- **Guía**: la guía abierta como artículo, con sus visuales, sus enlaces grises por explicar y sus recursos.
+- **Conceptos**: el iceberg de la guía. Arriba del agua el tema; abajo, nivel por nivel, lo que necesita: lo blanco tiene nota, lo punteado se explica al pulsarlo.
+- **Mapa**: cada guía con sus conceptos, conectados por lo que requiere cada uno; los pendientes salen en gris.
 - **Practicar**: preguntas, explicar con tus palabras, tarjetas de repaso y simulación.
-
-El panel se puede ampliar u ocultar; en el móvil se ve una columna a la vez. Los chats se guardan en `vault/.studyhomie/sessions/` y se pueden **continuar**: escribe en un chat viejo y sigue donde lo dejaste, con su contexto.
 
 Las guías y notas admiten:
 
@@ -120,7 +121,8 @@ Todo es opcional; sin el archivo se usan estos valores.
 | `vault` | `"vault"` | Carpeta de las notas |
 | `interests` | lista amplia | Campos de los que sale el reto diario. "Totalmente aleatorio" suma además los campos por defecto |
 | `context_window` / `compact_at` | `200000` / `0.6` | Cuándo se resume una conversación larga para que no se acumule el contexto |
-| `depth` | `1` | Profundidad de las guías que se escriben fuera del chat (roadmap, reto del día, terminal) |
+| `depth` | `1` | Niveles de conceptos que se escriben de entrada en las guías hechas fuera del chat (roadmap, reto del día, terminal) |
+| `iceberg` | `true` | Mapear siempre los conceptos hasta lo básico, aunque se escriban menos |
 | `parallel` | `3` | Notas de concepto que se escriben a la vez |
 
 ## Tu vault

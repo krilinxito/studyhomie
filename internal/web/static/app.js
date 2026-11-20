@@ -1,7 +1,20 @@
 'use strict';
 
 /* ---------- helpers ---------- */
-const $ = (sel, root = document) => root.querySelector(sel);
+// The panels live in a dock, and a panel that is not on screen is taken out of the page. So a lookup
+// falls back to the panels themselves: code that fills a hidden panel still finds its elements.
+const PANE_EL = {};
+function $(sel, root) {
+  if (root) return root.querySelector(sel);
+  const hit = document.querySelector(sel);
+  if (hit) return hit;
+  for (const el of Object.values(PANE_EL)) {
+    if (el.isConnected) continue;
+    const f = el.matches(sel) ? el : el.querySelector(sel);
+    if (f) return f;
+  }
+  return null;
+}
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 function h(tag, attrs, ...kids) {
@@ -17,6 +30,17 @@ function h(tag, attrs, ...kids) {
     el.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
   }
   return el;
+}
+
+// an icon from icons.svg (Lucide)
+function icon(name) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('class', 'ic');
+  svg.setAttribute('aria-hidden', 'true');
+  const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+  use.setAttribute('href', `icons.svg#i-${name}`);
+  svg.append(use);
+  return svg;
 }
 
 async function api(path, opts = {}) {
@@ -52,25 +76,27 @@ function slugify(s) {
   }
   return out.replace(/-+$/, '');
 }
-const foldSlug = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '');
+const foldSlug = (s) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
-// per-browser conveniences (open guide, tab, depth); the app works the same without them
+// per-browser conveniences (open guide, depth, layout, theme); the app works the same without them
 const store = {
   get(k, d) { try { const v = localStorage.getItem(`sh.${k}`); return v == null ? d : JSON.parse(v); } catch { return d; } },
-  set(k, v) { try { localStorage.setItem(`sh.${k}`, JSON.stringify(v)); } catch { /* private mode */ } },
+  set(k, v) { try { if (v == null) localStorage.removeItem(`sh.${k}`); else localStorage.setItem(`sh.${k}`, JSON.stringify(v)); } catch { /* private mode */ } },
 };
 
 const STATUS = { new: 'Por descubrir', prepared: 'Guía lista', tested: 'Comprobado', explained: 'Explicado' };
 const SECTION = { 'Guía': 'La guía', 'Conceptos base': 'Conceptos base', 'Dudas': 'Dudas', 'Prueba': 'Preguntas', 'Feynman': 'Explicación', 'Conexiones': 'Conexiones' };
 const TYPE = { video: 'Video', web: 'Web', book: 'Libro', paper: 'Paper', interactive: 'Interactivo' };
-const DEPTH = ['Solo el tema', 'Lo inmediato', 'Dos niveles', 'Tres niveles', 'Desde lo básico'];
+const DEPTH = ['solo la guía', '1 nivel de conceptos', '2 niveles', '3 niveles', 'hasta lo básico'];
 const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-const smoothness = () => (matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth');
+const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+const smoothness = () => (reducedMotion() ? 'auto' : 'smooth');
 const isPhone = () => matchMedia('(max-width: 880px)').matches;
+// a change of view, animated when the browser can
+const vt = (fn) => (document.startViewTransition && !reducedMotion() ? document.startViewTransition(fn) : fn());
 
-// Every guide is a metro line with its own colour (--l0 … --l7); a guide inside a roadmap shares the
-// roadmap's line, and its concepts ride on it. The colour comes from the line's key, probing forward
-// on a clash, so a line keeps its colour as long as the others do not change.
+// Each guide has a colour of its own (--l0 … --l7) that its concepts share. The colour comes from the
+// line's key, probing forward on a clash, so it stays put as long as the others do not change.
 const LINES = 8;
 function assignLines(keys) {
   const taken = new Set(), out = new Map();
@@ -86,6 +112,8 @@ function assignLines(keys) {
 }
 const lineColor = (group) => `var(--${S.lines.has(group) ? `l${S.lines.get(group)}` : 'l-none'})`;
 const nodeOf = (slug) => ((S.graph && S.graph.nodes) || []).find((n) => n.id === slug);
+// a note that exists and has been written (a pending concept is mapped, not written)
+const writtenNode = (slug) => { const n = nodeOf(slug) || nodeOf(foldSlug(slug)); return n && n.kind !== 'pending' ? n : null; };
 function groupTitle(key) {
   if (!key) return 'Sueltos';
   if (key.startsWith('g:')) return (nodeOf(key.slice(2)) || {}).label || key.slice(2);
@@ -141,8 +169,18 @@ function mdBlock(src, opts) {
   d.innerHTML = renderMd(src, opts);
   enhanceCallouts(d);
   enhanceDiagrams(d);
+  markPending(d);
   if (!(opts && opts.streaming)) Viz.enhance(d, opts && opts.viz);
   return d;
+}
+
+// Links to concepts that have no note yet are grey: one click explains them.
+function markPending(root) {
+  if (!S.graph) return;
+  for (const a of $$('a[href^="#note/"]', root)) {
+    const slug = decodeURIComponent(a.getAttribute('href').slice(6));
+    if (!writtenNode(slug)) a.classList.add('pending');
+  }
 }
 
 /* ---------- rich blocks inside Markdown: callouts and diagrams ---------- */
@@ -181,7 +219,7 @@ function loadMermaid() {
     s.src = 'vendor/mermaid.min.js';
     s.onload = () => {
       window.mermaid.initialize({
-        startOnLoad: false, securityLevel: 'strict', theme: 'neutral',
+        startOnLoad: false, securityLevel: 'strict', theme: effectiveTheme() === 'dark' ? 'dark' : 'neutral',
         htmlLabels: false, flowchart: { htmlLabels: false }, fontFamily: getComputedStyle(document.body).fontFamily,
       });
       resolve(window.mermaid);
@@ -242,60 +280,139 @@ function sectionOf(body, heading) {
 /* ---------- state ---------- */
 const S = {
   info: null, graph: null, roadmaps: [], lines: new Map(),
-  guide: store.get('guide', ''), note: null, concept: null, tab: store.get('tab', 'guide'),
-  run: null, depth: store.get('depth', 1), cy: null, needsFit: false, filter: '', chats: [],
+  guide: store.get('guide', ''), note: null, concept: null, lit: '',
+  run: null, depth: store.get('depth', 1), cy: null, needsFit: false, filter: '', chats: [], dock: null,
 };
 
-/* ---------- layout: three columns on a desk, one pane at a time on a phone ---------- */
-function setLayout(layout) {
-  document.body.dataset.layout = layout;
-  $('#btn-show-panel').hidden = layout !== 'chat';
-  $('#btn-wide').textContent = layout === 'panel' ? 'Reducir' : 'Ampliar';
-  store.set('layout', layout);
-  fitMap();
+/* ---------- theme ---------- */
+const effectiveTheme = () => document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+function applyTheme() {
+  $('#btn-theme use').setAttribute('href', `icons.svg#i-${effectiveTheme() === 'dark' ? 'sun' : 'moon'}`);
+  if (S.cy) S.cy.style(cyStyle());
+  // widgets read their colours when drawn: draw what is open again
+  if (S.note) renderReader(S.note);
+  renderConcepts();
+  renderPractice();
 }
-$('#btn-wide').addEventListener('click', () => setLayout(document.body.dataset.layout === 'panel' ? 'both' : 'panel'));
-$('#btn-hide-panel').addEventListener('click', () => { if (isPhone()) setPane('chat'); else setLayout('chat'); });
-$('#btn-show-panel').addEventListener('click', () => setLayout('both'));
+$('#btn-theme').addEventListener('click', () => {
+  const next = effectiveTheme() === 'dark' ? 'light' : 'dark';
+  vt(() => {
+    document.documentElement.dataset.theme = next;
+    store.set('theme', next);
+    applyTheme();
+  });
+});
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (!document.documentElement.dataset.theme) applyTheme(); });
 
-function setPane(pane) {
-  document.body.dataset.pane = pane;
-  $$('.panes button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.pane === pane)));
-  fitMap();
-}
-$$('.panes button').forEach((b) => b.addEventListener('click', () => setPane(b.dataset.pane)));
+/* ---------- the dock: panels you can drag, split, stack and float ---------- */
+const PANES = { chat: 'Chat', chats: 'Chats', guide: 'Guía', concepts: 'Conceptos', map: 'Mapa', practice: 'Practicar' };
+const STUDY = ['guide', 'concepts', 'map', 'practice'];
 
-// shows the study panel, wherever it is
-function revealPanel() {
-  if (isPhone()) setPane('panel');
-  else if (document.body.dataset.layout === 'chat') setLayout('both');
+function createDock() {
+  for (const el of $$('#panes > .pane')) PANE_EL[el.dataset.pane] = el;
+  const DV = window['dockview-core'];
+  const dock = DV.createDockview($('#dock'), {
+    theme: DV.themeLightSpaced,
+    createComponent: ({ name }) => ({ element: PANE_EL[name], init() {} }),
+  });
+  S.dock = dock;
+  const saved = !isPhone() && store.get('dock', null);
+  let restored = false;
+  if (saved) {
+    try { dock.fromJSON(saved); restored = !!dock.getPanel('chat'); } catch { restored = false; }
+  }
+  if (!restored) defaultLayout();
+  let saveTimer;
+  dock.onDidLayoutChange(() => {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => { if (!isPhone()) store.set('dock', dock.toJSON()); }, 300);
+  });
+  dock.onDidActivePanelChange((p) => { if (p) onShown(p.id); });
 }
 
-function setTab(tab) {
-  S.tab = tab;
-  store.set('tab', tab);
-  $$('.ptabs button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
-  for (const t of ['guide', 'concepts', 'map', 'practice']) $(`#p-${t}`).hidden = t !== tab;
-  if (tab === 'map') fitMap();
-  if (tab === 'concepts') renderConcepts();
-  if (tab === 'practice') renderPractice();
+function defaultLayout() {
+  const dock = S.dock;
+  dock.clear();
+  dock.addPanel({ id: 'chat', component: 'chat', title: PANES.chat });
+  if (isPhone()) {
+    for (const id of [...STUDY, 'chats']) dock.addPanel({ id, component: id, title: PANES[id], position: { referencePanel: 'chat', direction: 'within' }, inactive: true });
+    dock.getPanel('chat').api.setActive();
+    return;
+  }
+  dock.addPanel({ id: 'guide', component: 'guide', title: PANES.guide, position: { referencePanel: 'chat', direction: 'right' } });
+  for (const id of ['concepts', 'map', 'practice']) dock.addPanel({ id, component: id, title: PANES[id], position: { referencePanel: 'guide', direction: 'within' }, inactive: true });
+  dock.addPanel({ id: 'chats', component: 'chats', title: PANES.chats, position: { referencePanel: 'chat', direction: 'left' } });
+  try {
+    dock.getPanel('chats').group.api.setSize({ width: 250 });
+    dock.getPanel('chat').group.api.setSize({ width: Math.round(window.innerWidth * 0.36) });
+  } catch { /* sizes are a nicety */ }
+  dock.getPanel('guide').api.setActive();
+  dock.getPanel('chat').api.setActive();
 }
-$$('.ptabs button').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab)));
+
+// shows a panel, adding it back if it was closed
+function show(id) {
+  const dock = S.dock;
+  if (!dock) return;
+  let p = dock.getPanel(id);
+  if (!p) {
+    const near = STUDY.includes(id) ? STUDY.map((x) => dock.getPanel(x)).find(Boolean) : null;
+    const chat = dock.getPanel('chat');
+    const position = near ? { referencePanel: near.id, direction: 'within' }
+      : chat && id !== 'chat' ? { referencePanel: 'chat', direction: id === 'chats' ? 'left' : 'right' } : undefined;
+    p = dock.addPanel({ id, component: id, title: PANES[id], position });
+  }
+  p.api.setActive();
+  onShown(id);
+}
+const isShown = (id) => { const p = S.dock && S.dock.getPanel(id); return !!(p && p.api.isVisible); };
+
+// a panel came on screen: draw what it shows now
+function onShown(id) {
+  if (id === 'map') fitMap();
+  if (id === 'concepts') renderConcepts();
+  if (id === 'practice') renderPractice();
+}
+
+// the layout menu: open a panel, or start over
+$('#btn-layout').addEventListener('click', (e) => {
+  e.stopPropagation();
+  const menu = $('#layout-menu');
+  if (!menu.hidden) { menu.hidden = true; return; }
+  menu.replaceChildren(
+    ...Object.entries(PANES).map(([id, title]) => h('button', { type: 'button', onclick: () => { menu.hidden = true; show(id); } },
+      S.dock.getPanel(id) ? '● ' : '○ ', title)),
+    h('hr'),
+    h('button', { type: 'button', onclick: () => { menu.hidden = true; store.set('dock', null); defaultLayout(); toast('Layout restablecido.'); } },
+      icon('rotate-ccw'), 'Restablecer layout'),
+    h('p', { class: 'hint', style: 'padding: 6px 10px 2px' }, 'Arrastra una pestaña para dividir la pantalla o apilarla en otro grupo.'));
+  menu.hidden = false;
+  $('#btn-layout').setAttribute('aria-expanded', 'true');
+});
+document.addEventListener('click', (e) => {
+  const menu = $('#layout-menu');
+  if (!menu.hidden && !e.target.closest('.menu')) { menu.hidden = true; $('#btn-layout').setAttribute('aria-expanded', 'false'); }
+  const pop = $('#explain-pop');
+  if (!pop.hidden && !e.target.closest('#explain-pop') && !e.target.closest('a.pending')) pop.hidden = true;
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { $('#layout-menu').hidden = true; $('#explain-pop').hidden = true; } });
 
 /* ---------- opening notes ---------- */
-// Opens a guide (Guía tab) or a concept (Conceptos tab) in the panel.
-async function openNote(slug, { quiet = false, reveal = true } = {}) {
+// Opens a guide (Guía) or a concept (Conceptos).
+async function openNote(slug, { quiet = false } = {}) {
   try {
     const n = await api(`/api/notes/${encodeURIComponent(slug)}`);
-    if (n.kind === 'concept') {
-      S.concept = n;
-      if (!quiet) setTab('concepts'); else if (S.tab === 'concepts') renderConcepts();
-      $('#p-concepts').scrollTop = 0;
-    } else {
-      setGuide(n);
-      if (!quiet) setTab('guide');
-    }
-    if (reveal && !quiet) revealPanel();
+    vt(() => {
+      if (n.kind === 'concept') {
+        S.concept = n;
+        renderConcepts();
+        PANE_EL.concepts.scrollTop = 0;
+        if (!quiet) show('concepts');
+      } else {
+        setGuide(n);
+        if (!quiet) show('guide');
+      }
+    });
   } catch (err) { toast(err.message); }
 }
 
@@ -305,11 +422,11 @@ function setGuide(n) {
   S.guide = n.slug;
   store.set('guide', n.slug);
   if (changed) S.concept = null;
-  const top = $('#p-guide').scrollTop;
+  const top = PANE_EL.guide.scrollTop;
   renderReader(n);
-  $('#p-guide').scrollTop = changed ? 0 : top;
-  if (S.tab === 'concepts') renderConcepts();
-  if (S.tab === 'practice') renderPractice();
+  PANE_EL.guide.scrollTop = changed ? 0 : top;
+  renderConcepts();
+  renderPractice();
 }
 
 async function reloadGuide() {
@@ -320,8 +437,8 @@ function closeGuide() {
   S.note = null; S.guide = ''; S.concept = null;
   store.set('guide', '');
   renderReader(null);
-  if (S.tab === 'concepts') renderConcepts();
-  if (S.tab === 'practice') renderPractice();
+  renderConcepts();
+  renderPractice();
 }
 
 // wikilinks and simulation links rendered anywhere in the app
@@ -332,12 +449,60 @@ document.addEventListener('click', (e) => {
   const href = a.getAttribute('href');
   if (href.startsWith('#sim/')) { openSim(decodeURIComponent(href.slice(5)), S.note && S.note.meta.title); return; }
   const slug = decodeURIComponent(href.slice(6));
-  const known = nodeOf(slug) || nodeOf(foldSlug(slug));
-  if (known) { openNote(known.id); return; }
-  // a link to something not in the vault yet is a gap: offer to fill it
-  const title = a.textContent.trim() || slug;
-  if (confirm(`«${title}» aún no está en tu vault. ¿Te preparo una guía?`)) chatAction({ action: 'guide', topic: title, depth: S.depth }, `Guía: ${title}`);
+  const known = writtenNode(slug);
+  if (known && !a.classList.contains('pending')) { openNote(known.id); return; }
+  explainPop(a, slug);
 });
+
+// The popover of a grey link: what the concept is, and a button to explain it.
+function explainPop(a, slug) {
+  const pop = $('#explain-pop');
+  const title = a.textContent.trim() || slug;
+  const pend = (S.note && (S.note.meta.pending || []).find((p) => p.id === slug || p.id === foldSlug(slug))) || nodeOf(slug) || {};
+  const guide = owningGuide(slug);
+  pop.replaceChildren(
+    h('p', { class: 'eyebrow' }, 'Aún sin nota'),
+    h('h4', {}, pend.title || pend.label || title),
+    h('p', {}, pend.summary || 'Escribo una nota corta, con lo justo para seguir la guía. Queda en tu vault.'),
+    h('div', { class: 'actions' },
+      h('button', { class: 'btn small primary', type: 'button', onclick: () => {
+        pop.hidden = true;
+        explainConcept(slug, { guide, title: pend.title || title, el: a });
+      } }, icon('sparkles'), 'Explicar'),
+      h('button', { class: 'btn small ghost', type: 'button', onclick: () => {
+        pop.hidden = true;
+        chatAction({ action: 'guide', topic: pend.title || title, depth: S.depth }, `Guía: ${pend.title || title}`);
+      } }, 'Guía completa')));
+  pop.hidden = false;
+  const r = a.getBoundingClientRect();
+  const w = pop.offsetWidth, ht = pop.offsetHeight;
+  pop.style.left = `${Math.max(8, Math.min(window.innerWidth - w - 8, r.left))}px`;
+  pop.style.top = `${r.bottom + ht + 12 > window.innerHeight ? r.top - ht - 8 : r.bottom + 8}px`;
+}
+
+// the guide a concept to explain belongs to: the open one, or the guide the open concept comes from
+function owningGuide(slug) {
+  if (S.note && ((S.note.meta.pending || []).some((p) => p.id === slug) || !S.concept)) return S.note.slug;
+  if (S.concept && (S.concept.guides || []).length) return S.concept.guides[0].slug;
+  return S.note ? S.note.slug : '';
+}
+
+// Writes the note of a concept under water. el (a link or a pill) shows that it is being written.
+async function explainConcept(ref, { guide = S.guide, title = ref, el } = {}) {
+  if (!guide) { chatAction({ action: 'concept', title }, `Explícame «${title}»`); return; }
+  el?.classList.add('writing');
+  try {
+    const r = await api(`/api/notes/${encodeURIComponent(guide)}/explain`, { method: 'POST', body: { ref } });
+    S.lit = r.slug;
+    await loadGraph();
+    if (S.guide === guide) await reloadGuide(); else renderConcepts();
+    if (S.concept) { try { S.concept = await api(`/api/notes/${encodeURIComponent(S.concept.slug)}`); renderConcepts(); } catch { /* it stays as it was */ } }
+    toast(`«${title}» ya tiene su nota.`);
+  } catch (err) {
+    el?.classList.remove('writing');
+    toast(err.message);
+  }
+}
 
 function openSim(slug, title) {
   $('#sim-title').textContent = title || 'Simulación';
@@ -347,7 +512,7 @@ function openSim(slug, title) {
 $('#sim-close').addEventListener('click', () => $('#sim-dialog').close());
 $('#sim-dialog').addEventListener('close', () => { $('#sim-frame').src = 'about:blank'; });
 
-/* ---------- Guía tab: the guide as an article ---------- */
+/* ---------- Guía: the guide as an article ---------- */
 const statusChip = (status) => h('span', { class: 'chip status', style: `--c: var(--s-${status})` }, STATUS[status] || status);
 
 // widgets in a note can build their own page on demand
@@ -366,7 +531,7 @@ function guideList() {
     groups.get(k).push(n);
   }
   const keys = [...groups.keys()].sort((a, b) => (!a) - (!b) || groupTitle(a).localeCompare(groupTitle(b)));
-  return h('div', { class: 'guide-list' }, keys.map((k) => h('section', { class: 'dg', style: k ? `--lc: ${lineColor(k)}` : null },
+  return h('div', { class: 'guide-list' }, keys.map((k) => h('section', { class: 'dg' },
     h('h3', {}, k ? groupTitle(k) : 'Tus guías'),
     h('ul', {}, groups.get(k).sort((a, b) => (a.order || 0) - (b.order || 0) || a.label.localeCompare(b.label)).map((n) => h('li', {},
       h('button', { class: 'dn', type: 'button', style: `--lc: ${lineColor(n.group)}`, onclick: () => openNote(n.id) },
@@ -379,7 +544,7 @@ function renderReader(n) {
   if (!n) {
     root.append(h('div', { class: 'panel-empty' },
       h('h3', {}, 'Aquí aparecerá tu guía'),
-      h('p', {}, 'Pide en el chat lo que quieras entender. La profundidad, junto al cuadro de texto, decide cuántos niveles de conceptos base se escriben como notas aparte.'),
+      h('p', {}, 'Pide en el chat lo que quieras entender. «Escribir ahora» decide cuántos niveles de conceptos base se escriben de entrada; los demás quedan mapeados, en gris, para explicarlos cuando los necesites.'),
       guideList() || ''));
     return;
   }
@@ -388,22 +553,23 @@ function renderReader(n) {
   const title = m.title || n.slug;
   const node = nodeOf(n.slug);
   const concepts = n.concepts || [];
+  const under = (m.pending || []).length;
   const wrap = h('div', { class: 'reader-wrap', style: `--line-c: ${lineColor(node ? node.group : '')}` });
   wrap.append(h('header', { class: 'r-head' },
-    h('button', { class: 'crumb', type: 'button', onclick: closeGuide }, '← Todas las guías'),
+    h('button', { class: 'crumb', type: 'button', onclick: closeGuide }, icon('arrow-left'), 'Todas las guías'),
     h('p', { class: 'r-line' }, m.roadmap ? groupTitle(m.roadmap) : 'Guía'),
     h('h1', {}, title),
     h('div', { class: 'chips' }, statusChip(status),
-      m.depth ? h('span', { class: 'chip' }, `Profundidad ${m.depth}`) : null,
       m.focus ? h('span', { class: 'chip' }, `Foco: ${m.focus}`) : null,
       m.field ? h('span', { class: 'chip' }, m.field) : null),
     m.mastery ? h('div', { class: 'mastery' },
       h('div', { class: 'row' }, h('span', {}, 'Lo que llevas'), h('span', {}, `${m.mastery}/100`)),
       h('div', { class: 'bar' }, h('i', { style: `width:${m.mastery}%; background: var(--line-c)` }))) : null,
     h('div', { class: 'actions' },
-      concepts.length ? h('button', { class: 'btn small yellow', type: 'button', onclick: () => setTab('concepts') }, `${concepts.length} conceptos base`) : null,
-      status !== 'new' ? h('button', { class: 'btn small green', type: 'button', onclick: () => setTab('practice') }, 'Practicar') : null,
-      h('button', { class: 'btn small blue', type: 'button', onclick: () => askAbout(`Sobre «${title}»: `) }, 'Preguntar en el chat'))));
+      concepts.length || under ? h('button', { class: 'btn small yellow', type: 'button', onclick: () => show('concepts') },
+        icon('mountain-snow'), `${concepts.length} conceptos${under ? ` · ${under} bajo el agua` : ''}`) : null,
+      status !== 'new' ? h('button', { class: 'btn small', type: 'button', onclick: () => show('practice') }, icon('target'), 'Practicar') : null,
+      h('button', { class: 'btn small ghost', type: 'button', onclick: () => askAbout(`Sobre «${title}»: `) }, icon('message-circle'), 'Preguntar'))));
 
   const article = h('article', { class: 'r-article' });
   const bodySrc = stripEmoji(stripSection(n.body, 'Recursos')).trim();
@@ -423,7 +589,7 @@ function renderReader(n) {
   const before = n.requires || [];
   if (before.length || back.length) {
     const nb = (label, l) => h('button', { class: 'neighbor', type: 'button', onclick: () => openNote(l.slug) }, h('small', {}, label), h('strong', {}, l.title));
-    article.append(h('section', { class: 'r-next' }, h('h2', {}, 'En la línea'),
+    article.append(h('section', { class: 'r-next' }, h('h2', {}, 'Relacionado'),
       before.map((l) => nb('Antes', l)), back.map((l) => nb('Enlaza aquí', l))));
   }
   wrap.append(article);
@@ -468,8 +634,8 @@ function resourceCard(r, ctx = {}) {
   return h('li', { class: 'res' }, head(h('strong', {}, r.title)), why);
 }
 
-/* ---------- Conceptos tab: the guide's concept notes, level by level ---------- */
-// level 1 is what the topic needs directly, then what those need, and so on
+/* ---------- Conceptos: the iceberg ---------- */
+// Levels of the written concepts: 1 for what the topic needs directly, then what those need, and so on.
 function conceptLevels(n) {
   const list = n.concepts || [];
   const by = new Map(list.map((c) => [c.slug, c]));
@@ -482,35 +648,56 @@ function conceptLevels(n) {
     frontier = next;
   }
   for (const c of list) if (!level.has(c.slug)) level.set(c.slug, 1);
-  const out = [];
-  for (const c of list) (out[level.get(c.slug) - 1] ||= []).push(c);
-  return out.filter(Boolean);
+  return level;
 }
-const levelName = (l, last) => (l === 1 ? 'Lo que el tema usa directamente' : last ? 'La base de todo' : `Base de la base (nivel ${l})`);
+const levelName = (l) => (l === 1 ? 'Lo que el tema usa directamente' : l === 2 ? 'Lo que eso necesita' : `Más hondo (nivel ${l})`);
 
 function renderConcepts() {
-  const root = $('#p-concepts');
+  const root = PANE_EL.concepts;
+  if (!root) return;
   root.replaceChildren();
   if (S.concept) { root.append(conceptReader(S.concept)); return; }
   const n = S.note;
   const box = h('div', { class: 'concepts-wrap' });
-  if (n && (n.concepts || []).length) {
-    const node = nodeOf(n.slug);
-    const lc = lineColor(node ? node.group : '');
-    const levels = conceptLevels(n);
+  const pending = (n && n.meta.pending) || [];
+  if (n && ((n.concepts || []).length || pending.length)) {
+    const levels = new Map(); // level -> { written, pending }
+    const at = (l) => { if (!levels.has(l)) levels.set(l, { written: [], pending: [] }); return levels.get(l); };
+    const lv = conceptLevels(n);
+    for (const c of n.concepts || []) at(lv.get(c.slug) || 1).written.push(c);
+    for (const p of pending) at(p.level || (levels.size + 1)).pending.push(p);
+    const keys = [...levels.keys()].sort((a, b) => a - b);
+    let i = 0;
+    const pill = (c, isPending) => {
+      const el = h('button', {
+        class: `ice-pill${isPending ? ' pending' : ''}${S.lit === (c.slug || c.id) ? ' lit' : ''}`, type: 'button', style: `--i:${i++}`,
+        title: isPending ? 'Aún sin nota: pulsa para explicarlo' : 'Abrir la nota',
+        onclick: () => (isPending ? explainConcept(c.id, { guide: n.slug, title: c.title, el }) : openNote(c.slug)),
+      }, h('strong', {}, c.title), c.summary ? h('small', {}, c.summary) : null, isPending ? h('span', { class: 'go' }, 'Explicar') : null);
+      return el;
+    };
     box.append(
       h('header', { class: 'c-head' },
-        h('p', { class: 'eyebrow' }, 'Conceptos base'),
+        h('p', { class: 'eyebrow' }, 'Lo que hay debajo'),
         h('h2', {}, n.meta.title),
-        h('p', { class: 'hint' }, 'Cada nivel sostiene al de arriba. Si algo de arriba no se entiende, baja un nivel.')),
-      h('ol', { class: 'levels', style: `--lc: ${lc}` }, levels.map((lv, i) => h('li', { class: 'level' },
-        h('h3', {}, levelName(i + 1, i === levels.length - 1 && i > 0)),
-        h('ul', {}, lv.map((c) => h('li', {}, h('button', { class: `station-btn${c.exists ? '' : ' missing'}`, type: 'button', disabled: !c.exists, onclick: () => openNote(c.slug) },
-          h('i', { class: 'st st-concept', 'aria-hidden': 'true' }),
-          h('span', {}, h('strong', {}, c.title), c.summary ? h('small', {}, c.summary) : null, !c.exists ? h('small', {}, 'No se pudo escribir') : null)))))))));
+        h('p', { class: 'hint' }, pending.length
+          ? 'Lo blanco ya tiene nota. Lo punteado está mapeado pero sin escribir: explícalo solo si lo necesitas.'
+          : 'Cada nivel sostiene al de arriba. Si algo no se entiende, baja un nivel.')),
+      h('div', { class: 'iceberg' },
+        h('div', { class: 'ice-tip' }, h('span', { class: 'tip' }, n.meta.title), h('span', { class: 'ice-wave', 'aria-hidden': 'true' })),
+        h('ol', { class: 'ice-levels' }, keys.map((l) => {
+          const g = levels.get(l);
+          return h('li', { class: `ice-level${l > 1 ? ' deep' : ''}`, style: `--fade:${Math.max(0, 1 - (l - 1) * 0.22)}` },
+            h('h3', {}, levelName(l), h('small', {}, g.pending.length ? `${g.pending.length} por explicar` : '')),
+            h('div', { class: 'ice-pills' }, g.written.map((c) => pill(c, !c.exists)), g.pending.map((p) => pill(p, true))));
+        }))),
+      h('div', { class: 'ice-legend' },
+        h('span', {}, h('i', { class: 'st st-concept' }), 'Con nota'),
+        h('span', {}, h('i', { class: 'st st-pending' }), 'Por explicar (se escribe al pulsarlo)')));
+    S.lit = '';
   } else if (n) {
-    box.append(h('div', { class: 'panel-empty' }, h('h3', {}, 'Esta guía no tiene notas de concepto'),
-      h('p', {}, 'Pide en el chat una guía con más profundidad, o la nota de un concepto concreto: «hazme una nota sobre la varianza».')));
+    box.append(h('div', { class: 'panel-empty' }, h('h3', {}, 'Esta guía no tiene conceptos mapeados'),
+      h('p', {}, 'Las guías nuevas mapean todo lo que dan por sabido. También puedes pedir en el chat la nota de un concepto concreto.')));
   }
   const all = ((S.graph && S.graph.nodes) || []).filter((x) => x.kind === 'concept');
   if (all.length) {
@@ -521,7 +708,7 @@ function renderConcepts() {
       [...byCat].sort((a, b) => a[0].localeCompare(b[0])).map(([cat, list]) => h('section', { class: 'dg' }, h('h3', {}, cat),
         h('div', { class: 'links' }, list.sort((a, b) => a.label.localeCompare(b.label)).map((c) => h('button', { type: 'button', onclick: () => openNote(c.id) }, c.label)))))));
   } else if (!n) {
-    box.append(h('div', { class: 'panel-empty' }, h('h3', {}, 'Aún no hay conceptos'), h('p', {}, 'Las guías con profundidad 1 o más escriben aquí sus conceptos base, cada uno como una nota aparte.')));
+    box.append(h('div', { class: 'panel-empty' }, h('h3', {}, 'Aún no hay conceptos'), h('p', {}, 'Cuando pidas una guía, aquí verás su iceberg: lo que tiene nota y lo que queda por explicar.')));
   }
   root.append(box);
 }
@@ -532,29 +719,30 @@ function conceptReader(c) {
   const body = stripEmoji(c.body.replace(/^# .*\n+/, '')).trim();
   return h('div', { class: 'reader-wrap concept', style: `--line-c: ${lineColor(node ? node.group : '')}` },
     h('header', { class: 'r-head' },
-      h('button', { class: 'crumb', type: 'button', onclick: () => { S.concept = null; renderConcepts(); } }, S.note ? `← Conceptos de ${S.note.meta.title}` : '← Conceptos'),
+      h('button', { class: 'crumb', type: 'button', onclick: () => { vt(() => { S.concept = null; renderConcepts(); }); } }, icon('arrow-left'), S.note ? `Iceberg de ${S.note.meta.title}` : 'Conceptos'),
       h('p', { class: 'r-line' }, ['Concepto', m.category].filter(Boolean).join(' · ')),
       h('h1', {}, m.title || c.slug),
       (m.aliases || []).length ? h('div', { class: 'chips' }, m.aliases.map((a) => h('span', { class: 'chip' }, a))) : null,
-      (c.requires || []).length ? h('div', { class: 'c-req' }, h('span', { class: 'hint' }, 'Se apoya en'), h('div', { class: 'links' }, c.requires.map((l) => h('button', { type: 'button', onclick: () => openNote(l.slug) }, l.title)))) : null,
-      h('div', { class: 'actions' }, h('button', { class: 'btn small blue', type: 'button', onclick: () => askAbout(`Sobre «${m.title}»: `) }, 'Preguntar en el chat'))),
+      (c.requires || []).length ? h('div', { class: 'c-req' }, h('span', { class: 'hint' }, 'Se apoya en'), h('div', { class: 'links' }, c.requires.map((l) => h('button', { type: 'button', onclick: () => (writtenNode(l.slug) ? openNote(l.slug) : explainConcept(l.slug, { title: l.title, guide: owningGuide(l.slug) })) }, l.title)))) : null,
+      h('div', { class: 'actions' }, h('button', { class: 'btn small ghost', type: 'button', onclick: () => askAbout(`Sobre «${m.title}»: `) }, icon('message-circle'), 'Preguntar'))),
     h('article', { class: 'r-article' }, mdBlock(stripSection(body, 'Aparece en'), { viz: vizCtx(c.slug) }),
       (c.guides || []).length ? h('section', { class: 'r-next' }, h('h2', {}, 'Aparece en'),
         c.guides.map((g) => h('button', { class: 'neighbor', type: 'button', onclick: () => openNote(g.slug) }, h('small', {}, 'Guía'), h('strong', {}, g.title)))) : null));
 }
 
 function askAbout(prefix) {
-  if (isPhone()) setPane('chat');
+  show('chat');
   const ta = $('#reply');
   ta.value = prefix;
   ta.focus();
   ta.setSelectionRange(ta.value.length, ta.value.length);
 }
 
-/* ---------- Practicar tab ---------- */
+/* ---------- Practicar ---------- */
 const STEP_RANK = { new: 0, prepared: 1, tested: 2, explained: 3 };
 function renderPractice() {
-  const root = $('#p-practice');
+  const root = PANE_EL.practice;
+  if (!root) return;
   root.replaceChildren();
   const n = S.note;
   if (!n) {
@@ -577,19 +765,19 @@ function renderPractice() {
     h('header', { class: 'c-head' }, h('p', { class: 'eyebrow' }, 'Practicar'), h('h2', {}, title),
       m.mastery ? h('div', { class: 'mastery' }, h('div', { class: 'row' }, h('span', {}, 'Lo que llevas'), h('span', {}, `${m.mastery}/100`)), h('div', { class: 'bar' }, h('i', { style: `width:${m.mastery}%` }))) : null),
     h('ol', { class: 'sequence', 'aria-label': 'Cómo afianzarlo' }, steps.map((s, i) => h('li', {},
-      h('span', { class: `step static${i === current ? ' go' : ''}`, 'data-state': s.done ? 'done' : i === current ? 'current' : 'todo' }, h('span', { class: 'step-n' }, s.done ? '✓' : String(i + 1)), s.label)))),
+      h('span', { class: `step${i === current ? ' go' : ''}`, 'data-state': s.done ? 'done' : i === current ? 'current' : 'todo' }, h('span', { class: 'step-n' }, s.done ? '✓' : String(i + 1)), s.label)))),
     h('section', { class: 'p-card' },
       h('h3', {}, 'Preguntas'),
       h('p', { class: 'hint' }, 'Piden razonar o predecir, no memorizar. Se corrigen al final y el resultado queda en la guía.'),
       h('div', { class: 'quiz-opts' }, nInput, 'preguntas, dificultad', diff,
-        h('button', { class: 'btn green', type: 'button', onclick: () => {
+        h('button', { class: 'btn primary small', type: 'button', onclick: () => {
           const q = Number(nInput.value) || 5;
           chatAction({ action: 'quiz', n: q, difficulty: diff.value }, `Quiz de «${title}»: ${q} preguntas, ${diff.value}`);
         } }, 'Empezar'))),
     h('section', { class: 'p-card' },
       h('h3', {}, 'Explícamelo tú'),
       h('p', { class: 'hint' }, 'Me lo explicas como a alguien que no sabe nada. Te señalo los huecos y te pregunto lo que preguntaría un novato.'),
-      h('button', { class: 'btn blue', type: 'button', onclick: () => chatAction({ action: 'feynman' }, `Quiero explicar «${title}»`) }, 'Empezar a explicar')),
+      h('button', { class: 'btn primary small', type: 'button', onclick: () => chatAction({ action: 'feynman' }, `Quiero explicar «${title}»`) }, 'Empezar a explicar')),
     flashcards(n),
     h('section', { class: 'p-card' },
       h('h3', {}, 'Simulación'),
@@ -609,7 +797,8 @@ function flashcards(n) {
   const cache = new Map();
   const card = h('div', { class: 'flash' });
   const score = h('p', { class: 'hint' });
-  function show() {
+  const flip = () => { card.classList.remove('flip'); void card.offsetWidth; card.classList.add('flip'); };
+  function show1() {
     const c = deck[i];
     card.replaceChildren(h('p', { class: 'eyebrow' }, `Tarjeta ${i + 1} de ${deck.length}`), h('h4', {}, c.title),
       h('button', { class: 'btn small yellow', type: 'button', onclick: reveal }, 'Dar la vuelta'));
@@ -620,44 +809,46 @@ function flashcards(n) {
         try { const full = await api(`/api/notes/${encodeURIComponent(c.slug)}`); text = sectionOf(full.body, 'En una frase') || c.summary || ''; } catch { text = c.summary || ''; }
         cache.set(c.slug, text);
       }
+      flip();
       card.replaceChildren(h('p', { class: 'eyebrow' }, c.title), mdBlock(text || '_Sin resumen._'),
         h('div', { class: 'actions' },
           h('button', { class: 'btn small green', type: 'button', onclick: () => next(true) }, 'Lo sabía'),
           h('button', { class: 'btn small', type: 'button', onclick: () => next(false) }, 'A repasar'),
-          h('button', { class: 'btn small', type: 'button', onclick: () => openNote(c.slug) }, 'Abrir la nota')));
+          h('button', { class: 'btn small ghost', type: 'button', onclick: () => openNote(c.slug) }, 'Abrir la nota')));
     }
   }
-  function next(ok) { seen++; if (ok) known++; i = (i + 1) % deck.length; show(); }
+  function next(ok) { seen++; if (ok) known++; i = (i + 1) % deck.length; flip(); show1(); }
   sec.append(h('p', { class: 'hint' }, 'Di la idea en una frase antes de dar la vuelta a la tarjeta.'), card, score);
-  show();
+  show1();
   return sec;
 }
 
-/* ---------- Mapa tab ---------- */
-// A transit map: each guide is a line, its concepts are stations leading into it.
+/* ---------- Mapa ---------- */
 function cyStyle() {
-  const ink = cssVar('--ink'), bg = cssVar('--bg'), muted = cssVar('--muted');
+  const ink = cssVar('--ink'), surface = cssVar('--surface'), muted = cssVar('--muted'), line = cssVar('--line');
   const lineOf = (i) => cssVar(i < 0 ? '--l-none' : `--l${i}`);
   const s = [
     { selector: 'node', style: {
-      'background-color': bg, 'border-width': 4, 'border-color': lineOf(-1), shape: 'ellipse', width: 22, height: 22,
-      label: 'data(label)', color: ink, 'font-size': 13, 'font-weight': 700, 'font-family': cssVar('--font'),
-      'text-valign': 'bottom', 'text-margin-y': 8, 'text-wrap': 'wrap', 'text-max-width': 130,
-      'text-background-color': bg, 'text-background-opacity': .9, 'text-background-padding': 2,
-      'z-index-compare': 'manual', 'z-index': 10, 'overlay-opacity': 0 } },
-    { selector: 'node[kind = "concept"]', style: { width: 13, height: 13, 'border-width': 3, 'font-size': 11.5, 'font-weight': 600 } },
+      'background-color': surface, 'border-width': 3, 'border-color': lineOf(-1), shape: 'ellipse', width: 20, height: 20,
+      label: 'data(label)', color: ink, 'font-size': 12.5, 'font-weight': 600, 'font-family': cssVar('--font'),
+      'text-valign': 'bottom', 'text-margin-y': 7, 'text-wrap': 'wrap', 'text-max-width': 130,
+      'text-background-color': surface, 'text-background-opacity': .85, 'text-background-padding': 2, 'text-background-shape': 'roundrectangle',
+      'z-index-compare': 'manual', 'z-index': 10, 'overlay-opacity': 0, 'transition-property': 'opacity, background-color', 'transition-duration': '200ms' } },
+    { selector: 'node[kind = "concept"]', style: { width: 12, height: 12, 'border-width': 2, 'font-size': 11.5, 'font-weight': 500 } },
+    { selector: 'node[kind = "pending"]', style: { width: 10, height: 10, 'border-width': 1.5, 'border-style': 'dashed', 'border-color': muted, 'background-color': surface, color: muted, 'font-size': 11, 'font-weight': 400 } },
     { selector: 'edge', style: {
-      width: 7, 'line-color': lineOf(-1), 'curve-style': 'taxi', 'taxi-direction': 'horizontal', 'taxi-radius': 26,
-      'line-cap': 'round', 'z-index-compare': 'manual', 'z-index': 1, 'overlay-opacity': 0 } },
-    { selector: 'edge[kind="related"]', style: { 'curve-style': 'bezier', 'line-style': 'dashed', width: 2, opacity: .45, 'line-color': muted } },
+      width: 3, 'line-color': lineOf(-1), 'curve-style': 'bezier', 'line-cap': 'round', opacity: .75,
+      'z-index-compare': 'manual', 'z-index': 1, 'overlay-opacity': 0 } },
+    { selector: 'edge[kind="related"]', style: { 'line-style': 'dashed', width: 1.2, opacity: .45, 'line-color': muted } },
+    { selector: 'edge[pend = 1]', style: { 'line-style': 'dotted', width: 1.5, 'line-color': line, opacity: 1 } },
     { selector: 'node.grouplabel', style: {
-      width: 1, height: 1, 'background-opacity': 0, 'border-width': 0, label: 'data(label)', 'font-size': 16, 'font-weight': 700,
+      width: 1, height: 1, 'background-opacity': 0, 'border-width': 0, label: 'data(label)', 'font-size': 15, 'font-weight': 700,
       color: ink, 'text-halign': 'right', 'text-valign': 'center', 'text-margin-x': 6, 'text-wrap': 'none', 'text-background-opacity': 0, events: 'no' } },
   ];
   for (let i = -1; i < LINES; i++) {
     const c = lineOf(i);
     s.push(
-      { selector: `node[line = ${i}]`, style: { 'border-color': c } },
+      { selector: `node[line = ${i}][kind != "pending"]`, style: { 'border-color': c } },
       { selector: `node[line = ${i}][kind = "concept"]`, style: { 'background-color': c } },
       { selector: `node[line = ${i}][status = "prepared"]`, style: { 'pie-size': '100%', 'pie-1-background-color': c, 'pie-1-background-size': 50, 'pie-1-background-opacity': 1 } },
       { selector: `node[line = ${i}][status = "tested"]`, style: { 'background-color': c } },
@@ -667,14 +858,14 @@ function cyStyle() {
     );
   }
   s.push(
-    { selector: 'node:selected', style: { 'outline-width': 3, 'outline-color': ink, 'outline-offset': 4, 'outline-opacity': 1 } },
-    { selector: '.dim', style: { opacity: .12 } },
+    { selector: 'node:selected', style: { 'outline-width': 3, 'outline-color': cssVar('--accent'), 'outline-offset': 4, 'outline-opacity': 1 } },
+    { selector: '.dim', style: { opacity: .1 } },
   );
   return s;
 }
 
-const GX = 190, GY = 66; // gap between layers, gap between stations
-// Layered layout: each line is a block, and prerequisites flow left to right into the guide.
+const GX = 180, GY = 62; // gap between layers, gap between stations
+// Layered layout: each guide is a block, and prerequisites flow left to right into it.
 function layeredLayout(g) {
   const pos = {}, labels = [];
   const groups = new Map();
@@ -716,12 +907,12 @@ function layeredLayout(g) {
     layers.forEach((l, li) => { if (!l) return; l.sort((a, b) => (li ? bary(a) - bary(b) : 0) || 0); l.forEach((n, i) => row.set(n.id, i)); });
     const tallest = Math.max(...layers.filter(Boolean).map((l) => l.length));
     layers.forEach((l, li) => l && l.forEach((n, i) => { pos[n.id] = { x: li * GX, y: y0 + ((tallest - l.length) * GY) / 2 + i * GY }; }));
-    y0 += tallest * GY + 130;
+    y0 += tallest * GY + 120;
   }
   return { pos, labels };
 }
 
-const graphSignature = (g) => g.nodes.map((n) => n.id).sort().join('|') + '#' + g.edges.map((e) => `${e.from}>${e.to}`).sort().join('|');
+const graphSignature = (g) => g.nodes.map((n) => `${n.id}:${n.kind}`).sort().join('|') + '#' + g.edges.map((e) => `${e.from}>${e.to}`).sort().join('|');
 
 async function loadGraph() {
   const [g, rms] = await Promise.all([api('/api/graph'), api('/api/roadmaps').catch(() => [])]);
@@ -732,9 +923,16 @@ async function loadGraph() {
   $('#map-empty').hidden = g.nodes.length > 0;
   const lineOf = (k) => (S.lines.has(k) ? S.lines.get(k) : -1);
   const lineOfNode = new Map(g.nodes.map((n) => [n.id, lineOf(n.group)]));
+  const kindOf = new Map(g.nodes.map((n) => [n.id, n.kind]));
   if (!S.cy) {
     S.cy = cytoscape({ container: $('#cy'), elements: [], style: cyStyle(), minZoom: .15, maxZoom: 3 });
-    S.cy.on('tap', 'node', (ev) => { if (!ev.target.hasClass('grouplabel')) openNote(ev.target.id(), { reveal: false }); });
+    S.cy.on('tap', 'node', (ev) => {
+      const n = ev.target;
+      if (n.hasClass('grouplabel')) return;
+      if (n.data('kind') === 'pending') explainConcept(n.id(), { guide: (n.data('grp') || '').replace(/^g:/, '') || S.guide, title: n.data('label') });
+      else openNote(n.id(), { quiet: false });
+    });
+    new ResizeObserver(() => fitMap()).observe($('#cy'));
   }
   if (same) {
     for (const n of g.nodes) S.cy.getElementById(n.id).data({ status: n.status, label: n.label, line: lineOfNode.get(n.id) });
@@ -744,7 +942,7 @@ async function loadGraph() {
     S.cy.add([
       ...g.nodes.map((n) => ({ group: 'nodes', data: { id: n.id, label: n.label, status: n.status, kind: n.kind, grp: n.group, line: lineOfNode.get(n.id) }, position: pos[n.id] })),
       ...labels.map((l) => ({ group: 'nodes', data: { id: `gl:${l.group}`, label: l.label, grp: l.group, line: lineOf(l.group) }, position: { x: l.x, y: l.y }, classes: 'grouplabel', selectable: false, grabbable: false })),
-      ...g.edges.map((e, i) => ({ group: 'edges', data: { id: `e${i}`, source: e.from, target: e.to, kind: e.kind, line: lineOfNode.get(e.to) } })),
+      ...g.edges.map((e, i) => ({ group: 'edges', data: { id: `e${i}`, source: e.from, target: e.to, kind: e.kind, line: lineOfNode.get(e.to), pend: kindOf.get(e.from) === 'pending' || kindOf.get(e.to) === 'pending' ? 1 : 0 } })),
     ]);
     S.needsFit = g.nodes.length > 0;
     fitMap();
@@ -753,12 +951,12 @@ async function loadGraph() {
   applyFilters();
 }
 
-// Cytoscape cannot fit a graph into a hidden container, so a new layout waits until the map is on screen.
+// Cytoscape cannot fit a graph into a hidden panel, so a new layout waits until the map is on screen.
 function fitMap() {
-  if (!S.cy || S.tab !== 'map' || $('#p-map').hidden) return;
+  if (!S.cy || !isShown('map')) return;
   requestAnimationFrame(() => {
     S.cy.resize();
-    if (S.needsFit) { S.cy.fit(undefined, 40); S.needsFit = false; }
+    if (S.needsFit && $('#cy').clientWidth > 0) { S.cy.fit(undefined, 40); S.needsFit = false; }
   });
 }
 
@@ -790,7 +988,16 @@ function applyFilters() {
 $('#search').addEventListener('input', applyFilters);
 
 /* ---------- chat ---------- */
-const T = { raw: '', bubble: null, timer: null, auto: true, progress: null, plan: null, echo: null, choiceCard: null };
+const T = { raw: '', bubble: null, timer: null, auto: true, progress: null, plan: null, echo: null, choiceCard: null, anim: null };
+
+// lists that move get AutoAnimate once it has loaded (an ES module, so it may come after this script)
+function withAutoAnimate(fn) {
+  if (window.autoAnimate) fn(window.autoAnimate); else window.addEventListener('autoanimate-ready', () => fn(window.autoAnimate), { once: true });
+}
+withAutoAnimate((aa) => {
+  T.anim = aa($('#transcript'), { duration: 220 });
+  aa($('#chat-list'), { duration: 200 });
+});
 
 function scrollDown() {
   const t = $('#transcript');
@@ -803,8 +1010,10 @@ $('#transcript').addEventListener('scroll', () => {
 
 function resetTranscript() {
   clearTimeout(T.timer);
+  T.anim?.disable(); // a new conversation replaces the old one at once, without every message flying out
   $('#transcript').replaceChildren();
   Object.assign(T, { raw: '', bubble: null, progress: null, plan: null, choiceCard: null, echo: null, auto: true });
+  requestAnimationFrame(() => T.anim?.enable());
 }
 
 function emptyState() {
@@ -816,18 +1025,18 @@ function emptyState() {
   return h('div', { class: 'chat-empty' },
     h('p', { class: 'eyebrow' }, 'StudyHomie'),
     h('h1', {}, '¿Qué quieres entender hoy?'),
-    h('p', { class: 'lead' }, 'Pregunta lo que sea o pide una guía. La guía trae sus conceptos base como notas aparte, tan hondo como marque la profundidad, y visuales para mover y probar.'),
+    h('p', { class: 'lead' }, 'Pregunta lo que sea o pide una guía. Mapeo todo lo que el tema da por sabido, hasta lo básico; escribo de entrada solo lo que marques en «Escribir ahora», y lo demás queda a un clic.'),
     h('div', { class: 'suggest' },
-      h('button', { class: 'btn small green', type: 'button', onclick: () => chatAction({ action: 'daily', field: '' }, 'El reto de hoy') }, 'El reto de hoy'),
-      h('button', { class: 'btn small blue', type: 'button', onclick: () => $('#attach-input').click() }, 'Subir apuntes'),
-      h('button', { class: 'btn small red', type: 'button', onclick: () => askAbout('Quiero aprender toda una materia: ') }, 'Planear una materia')),
+      h('button', { class: 'btn small', type: 'button', onclick: () => chatAction({ action: 'daily', field: '' }, 'El reto de hoy') }, icon('sparkles'), 'El reto de hoy'),
+      h('button', { class: 'btn small', type: 'button', onclick: () => $('#attach-input').click() }, icon('paperclip'), 'Subir apuntes'),
+      h('button', { class: 'btn small', type: 'button', onclick: () => askAbout('Quiero aprender toda una materia: ') }, icon('map'), 'Planear una materia')),
     h('ul', { class: 'examples' }, ex.map((t) => h('li', {}, h('button', { type: 'button', onclick: () => { $('#reply').value = t; $('#reply').focus(); } }, t)))));
 }
 
 function botText(text) {
   T.raw += text;
   if (!T.bubble) {
-    T.bubble = h('div', { class: 'msg bot' });
+    T.bubble = h('div', { class: 'msg bot streaming' });
     $('#transcript').append(T.bubble);
   }
   clearTimeout(T.timer);
@@ -836,6 +1045,7 @@ function botText(text) {
 function flushBot(streaming) {
   clearTimeout(T.timer);
   if (!T.bubble) return;
+  T.bubble.classList.toggle('streaming', streaming);
   T.bubble.replaceChildren(mdBlock(T.raw, { breaks: true, streaming }));
   scrollDown();
 }
@@ -904,8 +1114,8 @@ function setComposer(mode, e = {}) {
     block: 'Explícalo con tus palabras, como si el otro no supiera nada…',
     busy: 'Espera a que termine, o detenlo.',
   }[mode];
-  $('#composer-hint').textContent = mode === 'block' ? 'Ctrl + Enter para enviar' : mode === 'chat' ? 'Enter envía · Shift + Enter, nueva línea' : '';
-  if (mode !== 'busy' && !isPhone()) (opts ? $('#quick .primary') : ta)?.focus({ preventScroll: true });
+  $('#composer-hint').textContent = mode === 'block' ? 'Ctrl + Enter para enviar' : '';
+  if (mode !== 'busy' && !isPhone() && ta.isConnected) (opts ? $('#quick .primary') : ta)?.focus({ preventScroll: true });
 }
 
 // What the learner sends goes to the live chat, or starts one (continuing the chat on screen, if any).
@@ -935,7 +1145,7 @@ async function chatSend(body) {
 
 // a button that asks the chat to do something, without going through the model
 function chatAction(action, label) {
-  if (isPhone()) setPane('chat');
+  show('chat');
   chatSend({ text: '', action, label });
 }
 
@@ -989,13 +1199,13 @@ $('#attach-input').addEventListener('change', async (e) => {
   } catch (err) { toast(err.message); setWorking(false); } finally { e.target.value = ''; }
 });
 
-// depth: five stations on a line, from 0 (the topic alone) to 4 (down to the basics)
+// "write now": 0 (the guide alone) to 4 (down to the basics); the rest is mapped either way
 function renderDepth() {
   $('#depth-stations').replaceChildren(...DEPTH.map((label, d) => h('button', {
     type: 'button', role: 'radio', 'aria-checked': String(d === S.depth), class: d <= S.depth ? 'on' : null,
-    title: `${d}: ${label}`, 'aria-label': `Profundidad ${d}: ${label}`,
+    title: `${d}: ${label}`, 'aria-label': `Escribir ahora: ${label}`,
     onclick: () => { S.depth = d; store.set('depth', d); renderDepth(); },
-  })));
+  }, String(d))));
   $('#depth-text').textContent = DEPTH[S.depth];
 }
 
@@ -1013,19 +1223,19 @@ function renderCard(c, run) {
         h('div', { class: 'rich-eyebrow' }, 'Guía lista'),
         h('h3', {}, c.topic),
         h('div', { class: 'actions' },
-          h('button', { class: 'btn small blue', type: 'button', onclick: () => openNote(c.slug) }, 'Leer la guía'),
-          h('button', { class: 'btn small yellow', type: 'button', onclick: async () => { await openNote(c.slug, { quiet: true }); setTab('concepts'); revealPanel(); } }, 'Ver conceptos'))));
+          h('button', { class: 'btn small primary', type: 'button', onclick: () => openNote(c.slug) }, icon('book-open'), 'Leer la guía'),
+          h('button', { class: 'btn small', type: 'button', onclick: async () => { await openNote(c.slug, { quiet: true }); show('concepts'); } }, icon('mountain-snow'), 'Ver el iceberg'))));
       if (!run.replay) loadGraph().catch(() => {}).then(() => openNote(c.slug));
       break;
     case 'concept':
       addMsg('card', h('div', { class: 'rich' }, h('div', { class: 'rich-eyebrow' }, 'Nota de concepto'), h('h3', {}, c.topic),
         h('button', { class: 'btn small', type: 'button', onclick: () => openNote(c.slug) }, 'Abrir la nota')));
-      if (!run.replay) loadGraph().catch(() => {});
+      if (!run.replay) loadGraph().catch(() => {}).then(() => reloadGuide());
       break;
     case 'daily':
-      addMsg('card', h('div', { class: 'rich rich-daily' },
+      addMsg('card', h('div', { class: 'rich' },
         h('div', { class: 'rich-eyebrow' }, 'Para descubrir hoy', c.field && h('span', { class: 'chip' }, c.field)),
-        h('h3', {}, c.topic), c.hook && h('p', {}, c.hook)));
+        h('h3', {}, c.topic), c.hook && h('p', { class: 'hint' }, c.hook)));
       break;
     case 'question': addMsg('card', questionCard(c, run)); break;
     case 'score': {
@@ -1045,11 +1255,11 @@ function renderCard(c, run) {
   }
 }
 
-// The plan of concept notes: a tree to prune or extend before anything is written.
+// The plan: what gets a note now, and the part under water, mapped and left to explain on demand.
 function planCard(p, run) {
-  const levels = [];
-  for (const c of p.concepts || []) (levels[c.level - 1] ||= []).push(c);
-  const boxes = new Map();
+  const byLevel = (list) => { const out = []; for (const c of list || []) (out[c.level - 1] ||= []).push(c); return out; };
+  const above = byLevel(p.concepts), below = byLevel(p.pending);
+  const boxes = new Map(), promote = new Map();
   const added = [];
   const addList = h('ul', { class: 'plan-added' });
   const addInput = h('input', { type: 'text', maxlength: 80, placeholder: 'Añadir un concepto…', 'aria-label': 'Añadir un concepto' });
@@ -1057,38 +1267,44 @@ function planCard(p, run) {
     const t = addInput.value.trim();
     if (!t) return;
     added.push(t);
-    addList.append(h('li', {}, t));
+    addList.append(h('li', {}, `+ ${t}`));
     addInput.value = '';
     update();
   };
   addInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } });
   const count = h('p', { class: 'hint' });
-  const go = h('button', { class: 'btn green', type: 'button' });
+  const go = h('button', { class: 'btn primary', type: 'button' });
   const fresh = (p.concepts || []).filter((c) => !c.exists);
   function update() {
-    const kept = fresh.filter((c) => boxes.get(c.id).checked).length + added.length;
+    const kept = fresh.filter((c) => boxes.get(c.id).checked).length + [...promote.values()].filter((cb) => cb.checked).length + added.length;
     go.textContent = kept ? `Escribir la guía y ${kept} ${kept === 1 ? 'nota' : 'notas'}` : 'Escribir solo la guía';
     const linked = (p.concepts || []).filter((c) => c.exists && boxes.get(c.id).checked).length;
-    count.textContent = linked ? `${linked} ya ${linked === 1 ? 'está' : 'están'} en tu vault: se enlazan, no se reescriben.` : '';
+    const under = (p.pending || []).length - [...promote.values()].filter((cb) => cb.checked).length;
+    count.textContent = [linked ? `${linked} ya ${linked === 1 ? 'está' : 'están'} en tu vault: se enlazan.` : '',
+      under > 0 ? `${under} quedan bajo el agua: en gris, para explicar cuando quieras.` : ''].filter(Boolean).join(' ');
   }
+  const item = (c, checked, map, underWater) => {
+    const cb = h('input', { type: 'checkbox', checked: checked || null });
+    cb.addEventListener('change', update);
+    map.set(c.id, cb);
+    return h('li', {}, h('label', { class: `plan-item${c.exists ? ' exists' : ''}${underWater ? ' under' : ''}` }, cb,
+      h('span', {}, h('strong', {}, c.title), c.exists ? h('em', {}, ' · ya en tu vault') : null, c.summary ? h('small', {}, c.summary) : null)));
+  };
+  const levelRows = (levels, under) => levels.map((lv, i) => lv && h('li', { class: under ? 'under' : null },
+    h('span', { class: 'plan-level' }, i === 0 ? 'Directo' : `Nivel ${i + 1}`),
+    h('ul', {}, lv.map((c) => item(c, !under, under ? promote : boxes, under)))));
   const el = h('div', { class: 'rich rich-plan' },
-    h('div', { class: 'rich-eyebrow' }, `Plan de conceptos · profundidad ${p.depth}`),
+    h('div', { class: 'rich-eyebrow' }, icon('mountain-snow'), `Plan · escribir ahora ${p.depth} ${p.depth === 1 ? 'nivel' : 'niveles'}`),
     h('h3', {}, p.topic),
-    h('p', { class: 'hint' }, 'Desmarca lo que ya sabes o no te interesa: lo que dependía solo de eso también se va.'),
-    h('ol', { class: 'plan-levels' }, levels.map((lv, i) => lv && h('li', {},
-      h('span', { class: 'plan-level' }, i === 0 ? 'Directo' : `Nivel ${i + 1}`),
-      h('ul', {}, lv.map((c) => {
-        const cb = h('input', { type: 'checkbox', checked: true });
-        cb.addEventListener('change', update);
-        boxes.set(c.id, cb);
-        return h('li', {}, h('label', { class: `plan-item${c.exists ? ' exists' : ''}` }, cb,
-          h('span', {}, h('strong', {}, c.title), c.exists ? h('em', {}, ' · ya en tu vault') : null, c.summary ? h('small', {}, c.summary) : null)));
-      }))))),
+    h('p', { class: 'hint' }, 'Desmarca lo que ya sabes; marca algo de abajo si lo quieres escrito ya.'),
+    h('ol', { class: 'plan-levels' }, levelRows(above, false)),
+    (p.pending || []).length ? h('p', { class: 'plan-water' }, 'Bajo el agua: mapeado, sin escribir') : null,
+    (p.pending || []).length ? h('ol', { class: 'plan-levels' }, levelRows(below, true)) : null,
     addList,
-    h('div', { class: 'plan-add' }, addInput, h('button', { class: 'btn small', type: 'button', onclick: add }, 'Añadir')),
+    h('div', { class: 'plan-add' }, addInput, h('button', { class: 'btn small', type: 'button', onclick: add }, icon('plus'), 'Añadir')),
     h('div', { class: 'actions' }, go,
       h('button', { class: 'btn', type: 'button', onclick: () => answer('g', 'Solo la guía') }, 'Solo la guía'),
-      h('button', { class: 'btn small', type: 'button', onclick: () => answer('n', 'Cancelar') }, 'Cancelar')),
+      h('button', { class: 'btn ghost small', type: 'button', onclick: () => answer('n', 'Cancelar') }, 'Cancelar')),
     count);
   const state = { el, live: false, answered: false };
   function answer(reply, label) {
@@ -1100,8 +1316,9 @@ function planCard(p, run) {
   }
   go.addEventListener('click', () => {
     const skip = [...boxes].filter(([, cb]) => !cb.checked).map(([id]) => id);
-    if (!skip.length && !added.length) { answer('s', go.textContent); return; }
-    answer(JSON.stringify({ skip, add: added, go: true }), go.textContent);
+    const write = [...promote].filter(([, cb]) => cb.checked).map(([id]) => id);
+    if (!skip.length && !added.length && !write.length) { answer('s', go.textContent); return; }
+    answer(JSON.stringify({ skip, add: added, write, go: true }), go.textContent);
   });
   update();
   if (run.replay) $$('button, input', el).forEach((x) => { x.disabled = true; });
@@ -1237,7 +1454,7 @@ function renderChats() {
   if (!list.length) { ul.append(h('li', { class: 'hint' }, S.chats.length ? 'Ningún chat coincide.' : 'Tus chats aparecerán aquí.')); return; }
   for (const r of list) {
     const node = r.slug && nodeOf(r.slug);
-    ul.append(h('li', { class: `chat-item${S.run && S.run.id === r.id ? ' on' : ''}`, 'data-id': r.id, style: `--lc: ${node ? lineColor(node.group) : 'var(--line)'}` },
+    ul.append(h('li', { class: `chat-item${S.run && S.run.id === r.id ? ' on' : ''}`, 'data-id': r.id, style: node ? `--lc: ${lineColor(node.group)}` : null },
       h('button', { class: 'ci-open', type: 'button', onclick: () => openChat(r) },
         h('span', { class: 'ci-title' }, r.title || 'Chat'),
         h('span', { class: 'ci-meta' }, r.status === 'running' ? 'En curso' : when(r.started), node ? ` · ${node.label}` : '')),
@@ -1248,16 +1465,16 @@ function renderChats() {
           if (S.run && S.run.id === r.id) newChat();
           loadChats();
         } catch (err) { toast(err.message); }
-      } }, '✕')));
+      } }, icon('trash-2'))));
   }
 }
 $('#chat-search').addEventListener('input', renderChats);
-function markActiveChat() { $$('.chat-item').forEach((li) => li.classList.toggle('on', !!S.run && String(S.run.id) === li.dataset.id)); }
+function markActiveChat() { $$('.chat-item', PANE_EL.chats || document).forEach((li) => li.classList.toggle('on', !!S.run && String(S.run.id) === li.dataset.id)); }
 
 function openChat(r) {
   attachRun(r.id, r.title, { replay: r.status !== 'running' });
-  if (r.slug && r.slug !== S.guide && nodeOf(r.slug)) openNote(r.slug, { reveal: false });
-  if (isPhone()) setPane('chat');
+  if (r.slug && r.slug !== S.guide && nodeOf(r.slug)) openNote(r.slug, { quiet: true });
+  show('chat');
 }
 
 function newChat() {
@@ -1269,24 +1486,21 @@ function newChat() {
   setWorking(false);
   setComposer('chat');
   markActiveChat();
-  if (isPhone()) setPane('chat');
 }
-$('#btn-new').addEventListener('click', newChat);
-$('#brand').addEventListener('click', (e) => { e.preventDefault(); newChat(); });
+$('#btn-new').addEventListener('click', () => { newChat(); show('chat'); });
+$('#brand').addEventListener('click', (e) => { e.preventDefault(); newChat(); show('chat'); });
 
 /* ---------- boot ---------- */
 async function refresh() {
   await loadGraph().catch((err) => toast(err.message));
-  if (S.guide) await reloadGuide(); else renderReader(null);
-  if (S.tab === 'concepts') renderConcepts();
-  if (S.tab === 'practice') renderPractice();
+  if (S.guide) await reloadGuide(); else { renderReader(null); renderConcepts(); renderPractice(); }
   renderChats();
 }
 
 async function boot() {
+  createDock();
+  applyTheme();
   renderDepth();
-  setLayout(store.get('layout', 'both'));
-  setTab(S.tab);
   newChat();
   try {
     S.info = await api('/api/state');
@@ -1298,11 +1512,11 @@ async function boot() {
       const me = S.chats.find((r) => r.id === S.info.activeRun);
       attachRun(S.info.activeRun, me ? me.title : 'Chat');
     }
-    // a link straight to a note: #open/<slug>[/<tab>]
+    // a link straight to a note: #open/<slug>[/<panel>]
     const m = /^#open\/([^/]+)(?:\/(guide|concepts|map|practice))?$/.exec(location.hash);
     if (m) {
       await openNote(decodeURIComponent(m[1]), { quiet: !!m[2] });
-      if (m[2]) setTab(m[2]);
+      if (m[2]) show(m[2]);
     }
   } catch (err) { toast(err.message); }
 }

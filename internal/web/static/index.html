@@ -3,45 +3,46 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
   <title>StudyHomie</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="stylesheet" href="vendor/katex/katex.min.css">
   <link rel="stylesheet" href="style.css">
 </head>
-<body data-layout="both" data-pane="chat">
+<body>
   <header class="top">
     <a class="brand" href="#" id="brand" aria-label="StudyHomie, nuevo chat">
-      <img class="logo" src="favicon.svg" alt="" width="34" height="34">
+      <img class="logo" src="favicon.svg" alt="" width="28" height="28">
       <span>StudyHomie</span>
     </a>
-    <nav class="panes" aria-label="Vistas">
-      <button type="button" data-pane="sidebar">Chats</button>
-      <button type="button" data-pane="chat" aria-pressed="true">Chat</button>
-      <button type="button" data-pane="panel">Estudio</button>
-    </nav>
     <div class="top-meta">
       <span class="dot" id="session-dot" hidden title="Hay algo en curso"></span>
       <span class="badge" id="provider-badge" title="Proveedor de IA"></span>
+      <div class="menu">
+        <button class="icon-btn" id="btn-layout" type="button" aria-haspopup="true" aria-expanded="false" title="Paneles y layout"><svg class="ic"><use href="icons.svg#i-layout-dashboard"/></svg></button>
+        <div class="menu-pop" id="layout-menu" hidden></div>
+      </div>
+      <button class="icon-btn" id="btn-theme" type="button" title="Cambiar tema"><svg class="ic"><use href="icons.svg#i-moon"/></svg></button>
     </div>
   </header>
 
   <div class="banner" id="banner" role="alert" hidden></div>
 
-  <main class="app">
-    <!-- historial de chats -->
-    <aside class="sidebar" aria-label="Chats">
-      <button class="btn green new-chat" id="btn-new" type="button">Nuevo chat</button>
+  <main class="dock" id="dock"></main>
+
+  <!-- the panels; the dock mounts each of them -->
+  <div id="panes" hidden>
+    <section class="pane sidebar" data-pane="chats" aria-label="Chats">
+      <button class="btn primary new-chat" id="btn-new" type="button"><svg class="ic"><use href="icons.svg#i-square-pen"/></svg>Nuevo chat</button>
       <label class="sr-only" for="chat-search">Buscar chats</label>
       <input id="chat-search" type="search" placeholder="Buscar chats…" autocomplete="off">
       <ul class="chat-list" id="chat-list"></ul>
-    </aside>
+    </section>
 
-    <!-- el chat -->
-    <section class="chat" aria-label="Chat">
+    <section class="pane chat" data-pane="chat" aria-label="Chat">
       <div class="chat-head">
         <h2 id="chat-title">Nuevo chat</h2>
         <button class="btn small red" id="btn-cancel" type="button" hidden>Detener</button>
-        <button class="btn small" id="btn-show-panel" type="button" title="Mostrar el panel de estudio" hidden>Panel</button>
       </div>
       <div id="transcript" class="transcript" aria-live="polite"></div>
       <div class="working" id="working" hidden><span class="pulse"></span><span id="working-text">Pensando…</span></div>
@@ -49,76 +50,69 @@
         <div class="composer-label" id="composer-label" hidden></div>
         <div class="quick" id="quick" hidden></div>
         <div class="freeform" id="freeform">
-          <label class="sr-only" for="reply">Tu mensaje</label>
-          <textarea id="reply" rows="2" placeholder="Pregunta lo que quieras, o pide una guía: «Explícame la transformada de Fourier, enfocada en audio»"></textarea>
-          <div class="composer-row">
-            <div class="depth" id="depth" role="radiogroup" aria-label="Profundidad de las guías nuevas">
-              <span class="depth-label">Profundidad</span>
-              <span class="depth-line" id="depth-stations"></span>
-              <span class="depth-text" id="depth-text"></span>
+          <div class="composer-box">
+            <label class="sr-only" for="reply">Tu mensaje</label>
+            <textarea id="reply" rows="2" placeholder="Pregunta lo que quieras, o pide una guía"></textarea>
+            <div class="composer-row">
+              <div class="depth" id="depth" role="radiogroup" aria-label="Niveles de conceptos que se escriben ahora">
+                <span class="depth-label" title="Lo que quede más abajo se mapea igual y se explica cuando lo pidas">Escribir ahora</span>
+                <span class="depth-line" id="depth-stations"></span>
+                <span class="depth-text" id="depth-text"></span>
+              </div>
+              <input type="file" id="attach-input" multiple hidden accept=".txt,.md,.markdown,.pdf,.pptx,.docx,.png,.jpg,.jpeg,.webp,.gif">
+              <button class="icon-btn" type="button" id="btn-attach" title="Adjuntar apuntes (PDF, PPTX, DOCX, texto o imágenes)" aria-label="Adjuntar"><svg class="ic"><use href="icons.svg#i-paperclip"/></svg></button>
+              <button class="btn small" type="button" id="btn-finish" hidden>Terminar y evaluar</button>
+              <button class="send-btn" type="submit" id="btn-send" aria-label="Enviar"><svg class="ic"><use href="icons.svg#i-send"/></svg></button>
             </div>
-            <input type="file" id="attach-input" multiple hidden accept=".txt,.md,.markdown,.pdf,.pptx,.docx,.png,.jpg,.jpeg,.webp,.gif">
-            <button class="btn small" type="button" id="btn-attach" title="Adjuntar apuntes (PDF, PPTX, DOCX, texto o imágenes)">Adjuntar</button>
-            <button class="btn" type="button" id="btn-finish" hidden>Terminar y evaluar</button>
-            <button class="btn primary" type="submit" id="btn-send">Enviar</button>
           </div>
           <span class="hint" id="composer-hint"></span>
         </div>
       </form>
     </section>
 
-    <!-- el panel de estudio -->
-    <section class="panel" aria-label="Estudio">
-      <div class="panel-head">
-        <nav class="ptabs" role="tablist" aria-label="Estudio">
-          <button role="tab" type="button" data-tab="guide" aria-selected="true">Guía</button>
-          <button role="tab" type="button" data-tab="concepts" aria-selected="false">Conceptos</button>
-          <button role="tab" type="button" data-tab="map" aria-selected="false">Mapa</button>
-          <button role="tab" type="button" data-tab="practice" aria-selected="false">Practicar</button>
-        </nav>
-        <div class="panel-actions">
-          <button class="btn small" id="btn-wide" type="button" title="Ampliar el panel">Ampliar</button>
-          <button class="btn small" id="btn-hide-panel" type="button" title="Ocultar el panel" aria-label="Ocultar el panel">✕</button>
+    <section class="pane" data-pane="guide" id="p-guide" aria-label="Guía"><div class="reader" id="reader"></div></section>
+    <section class="pane" data-pane="concepts" id="p-concepts" aria-label="Conceptos"></section>
+    <section class="pane map-view" data-pane="map" id="p-map" aria-label="Mapa">
+      <div class="toolbar">
+        <label class="sr-only" for="search">Buscar en el mapa</label>
+        <input id="search" type="search" placeholder="Buscar…" autocomplete="off">
+        <div class="line-chips" id="filter-rm" role="group" aria-label="Filtrar por guía"></div>
+      </div>
+      <div class="map-wrap">
+        <div id="cy" role="img" aria-label="Mapa: cada guía con los conceptos en que se apoya"></div>
+        <div class="empty" id="map-empty" hidden>
+          <h3>Tu mapa está vacío</h3>
+          <p>Pide una guía en el chat. Cada guía y sus conceptos aparecerán aquí, conectados.</p>
         </div>
       </div>
-      <div class="pview" id="p-guide" role="tabpanel"><div class="reader" id="reader"></div></div>
-      <div class="pview" id="p-concepts" role="tabpanel" hidden></div>
-      <div class="pview map-view" id="p-map" role="tabpanel" hidden>
-        <div class="toolbar">
-          <label class="sr-only" for="search">Buscar en el mapa</label>
-          <input id="search" type="search" placeholder="Buscar…" autocomplete="off">
-          <div class="line-chips" id="filter-rm" role="group" aria-label="Filtrar por línea"></div>
-        </div>
-        <div class="map-wrap">
-          <div id="cy" role="img" aria-label="Plano: cada guía es una línea, sus conceptos son estaciones"></div>
-          <div class="empty" id="map-empty" hidden>
-            <h3>Tu mapa está vacío</h3>
-            <p>Pide una guía en el chat. Cada guía y sus conceptos aparecerán aquí como una línea de metro.</p>
-          </div>
-        </div>
-        <ul class="legend" aria-label="Leyenda">
-          <li><i class="st st-new"></i>Por descubrir</li>
-          <li><i class="st st-prepared"></i>Guía lista</li>
-          <li><i class="st st-tested"></i>Comprobado</li>
-          <li><i class="st st-explained"></i>Explicado</li>
-          <li><i class="st st-concept"></i>Concepto</li>
-        </ul>
-      </div>
-      <div class="pview" id="p-practice" role="tabpanel" hidden></div>
+      <ul class="legend" aria-label="Leyenda">
+        <li><i class="st st-new"></i>Por descubrir</li>
+        <li><i class="st st-prepared"></i>Guía lista</li>
+        <li><i class="st st-tested"></i>Comprobado</li>
+        <li><i class="st st-explained"></i>Explicado</li>
+        <li><i class="st st-concept"></i>Concepto</li>
+        <li><i class="st st-pending"></i>Por explicar</li>
+      </ul>
     </section>
-  </main>
+    <section class="pane" data-pane="practice" id="p-practice" aria-label="Practicar"></section>
+  </div>
+
+  <div class="explain-pop" id="explain-pop" role="dialog" aria-label="Explicar un concepto" hidden></div>
 
   <dialog id="sim-dialog" aria-label="Simulación interactiva">
-    <div class="dlg-head"><strong id="sim-title">Simulación</strong><button class="btn" type="button" id="sim-close">Cerrar</button></div>
+    <div class="dlg-head"><strong id="sim-title">Simulación</strong><button class="btn small" type="button" id="sim-close">Cerrar</button></div>
     <iframe id="sim-frame" sandbox="allow-scripts" title="Simulación interactiva" referrerpolicy="no-referrer"></iframe>
   </dialog>
 
   <div id="toast" role="status" aria-live="assertive" hidden></div>
 
+  <script src="theme.js"></script>
   <script src="vendor/marked.min.js"></script>
   <script src="vendor/purify.min.js"></script>
   <script src="vendor/katex/katex.min.js"></script>
   <script src="vendor/cytoscape.min.js"></script>
+  <script src="vendor/dockview/dockview-core.min.js"></script>
+  <script type="module" src="motion.mjs"></script>
   <script src="viz.js"></script>
   <script src="app.js"></script>
 </body>
