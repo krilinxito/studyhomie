@@ -38,6 +38,18 @@ func finishedRun(t *testing.T, s *Server, topic string) int {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+	// a run is marked done before its last snapshot is written: wait for that write too
+	file := filepath.Join(s.V.Root, ".studyhomie", "sessions", itoa(run.ID)+".json")
+	for {
+		var sf sessionFile
+		if data, err := os.ReadFile(file); err == nil && json.Unmarshal(data, &sf) == nil && !sf.Ended.IsZero() {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the finished session was not written")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	return run.ID
 }
 
