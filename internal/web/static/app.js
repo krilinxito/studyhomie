@@ -25,7 +25,7 @@ function h(tag, attrs, ...kids) {
     else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
     else el.setAttribute(k, v === true ? '' : v);
   }
-  for (const kid of kids.flat()) {
+  for (const kid of kids.flat(Infinity)) {
     if (kid == null || kid === false) continue;
     el.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
   }
@@ -378,16 +378,66 @@ function onShown(id) {
 $('#btn-settings').addEventListener('click', () => show('settings'));
 
 /* ---------- Ajustes: which AI answers ---------- */
-// A plain settings page: one dropdown for the AI, a few fields, two buttons.
+// A plain settings page: one dropdown for the AI, dropdowns for its models, two buttons.
 const KIND = { cli: 'Con tu suscripción', api: 'Por API (clave propia)', local: 'En tu PC' };
-const SET = { data: null, pick: '', models: [] };
+const OTHER = '\u0000other'; // the "Otro…" option; cannot collide with a model name
+const SET = { data: null, pick: '', form: {}, models: {} }; // form and models are kept per provider
 
 async function renderSettings() {
   const root = PANE_EL.settings;
   if (!root) return;
   try { SET.data = await api('/api/settings'); } catch (err) { root.replaceChildren(h('p', { class: 'hint', style: 'padding:24px' }, err.message)); return; }
   if (!SET.pick) SET.pick = SET.data.current.provider || 'claude-cli';
+  SET.form = {};
   drawSettings();
+}
+
+// the values being edited for a provider: what is saved if it is the one in use, otherwise its defaults
+function formOf(p) {
+  if (!SET.form[p.id]) {
+    const cur = SET.data.current;
+    const same = p.id === (cur.provider || 'claude-cli');
+    SET.form[p.id] = {
+      model: same ? cur.model : '',
+      quick: same ? cur.quickModel : '',
+      url: same && cur.baseURL ? cur.baseURL : (p.baseURL || ''),
+    };
+  }
+  return SET.form[p.id];
+}
+
+// Asks the provider for its models once; the page redraws when they arrive.
+async function fetchModels(p) {
+  const f = formOf(p);
+  SET.models[p.id] = { loading: true, list: [] };
+  try {
+    const r = await api('/api/settings/models', { method: 'POST', body: { provider: p.id, baseURL: f.url } });
+    SET.models[p.id] = { list: r.models || [] };
+  } catch (err) {
+    SET.models[p.id] = { list: [], error: err.message };
+  }
+  if (SET.pick === p.id && PANE_EL.settings.isConnected) drawSettings();
+}
+
+// A dropdown of models with an "Otro…" option that opens a text field for any other name.
+function modelPicker({ value, list, loading, empty, label, onChange }) {
+  const custom = h('input', { type: 'text', value: value || '', placeholder: 'Nombre exacto del modelo', 'aria-label': `${label}: otro` });
+  const known = !value || list.includes(value);
+  const select = h('select', { 'aria-label': label, disabled: loading || null },
+    loading ? h('option', {}, 'Cargando modelos…') : [
+      h('option', { value: '', selected: !value || null }, empty),
+      list.map((m) => h('option', { value: m, selected: m === value || null }, m)),
+      h('option', { value: OTHER, selected: !known || null }, 'Otro…'),
+    ]);
+  custom.hidden = loading || known;
+  select.addEventListener('change', () => {
+    const other = select.value === OTHER;
+    custom.hidden = !other;
+    if (other) { custom.value = ''; custom.focus(); }
+    onChange(other ? '' : select.value);
+  });
+  custom.addEventListener('input', () => onChange(custom.value.trim()));
+  return h('div', { class: 'set-model' }, select, custom);
 }
 
 function drawSettings() {
@@ -395,19 +445,30 @@ function drawSettings() {
   const { current: cur, providers: list, warning } = SET.data;
   const inUse = cur.provider || 'claude-cli';
   const sel = list.find((p) => p.id === SET.pick) || list[0];
-  const same = sel.id === inUse;
+  const f = formOf(sel);
+  const canList = sel.id !== 'codex' && sel.id !== 'openai-compatible' || !!f.url;
+  if (canList && !SET.models[sel.id] && (sel.ready || sel.kind === 'local' || sel.id === 'openai-compatible')) fetchModels(sel);
+  const mods = SET.models[sel.id] || { list: [] };
 
-  const picker = h('select', { 'aria-label': 'Proveedor de IA', onchange: (e) => { SET.pick = e.target.value; SET.models = []; drawSettings(); } },
+  const picker = h('select', { 'aria-label': 'Proveedor de IA', onchange: (e) => { SET.pick = e.target.value; drawSettings(); } },
     Object.entries(KIND).map(([kind, title]) => h('optgroup', { label: title },
       list.filter((p) => p.kind === kind).map((p) => h('option', { value: p.id, selected: p.id === sel.id || null },
         p.name + (p.id === inUse ? ' (en uso)' : ''))))));
-  const model = h('input', { type: 'text', list: 'model-list', value: same ? cur.model : (sel.defaultModel || ''), placeholder: sel.defaultModel || (sel.kind === 'cli' ? 'El del programa' : 'Nombre del modelo'), 'aria-label': 'Modelo' });
-  const quick = h('input', { type: 'text', list: 'model-list', value: same ? cur.quickModel : '', placeholder: 'Igual que el modelo', 'aria-label': 'Modelo rápido' });
-  const url = sel.editURL ? h('input', { type: 'url', value: same && cur.baseURL ? cur.baseURL : (sel.baseURL || ''), placeholder: 'https://…/v1', 'aria-label': 'URL' }) : null;
-  const datalist = h('datalist', { id: 'model-list' }, SET.models.map((m) => h('option', { value: m })));
+  const hasDefault = sel.kind === 'cli' || !!sel.defaultModel;
+  const model = modelPicker({
+    value: f.model, list: mods.list, loading: mods.loading, label: 'Modelo',
+    empty: hasDefault ? 'Predeterminado' : 'Elige un modelo', onChange: (v) => { f.model = v; },
+  });
+  const quick = modelPicker({
+    value: f.quick, list: mods.list, loading: mods.loading, label: 'Modelo rápido',
+    empty: 'Igual que el modelo', onChange: (v) => { f.quick = v; },
+  });
+  const url = sel.editURL ? h('input', { type: 'url', value: f.url, placeholder: 'https://…/v1', 'aria-label': 'URL' }) : null;
+  url?.addEventListener('change', () => { f.url = url.value.trim(); delete SET.models[sel.id]; drawSettings(); });
   const result = h('p', { class: 'set-result', role: 'status' });
-  const body = () => ({ provider: sel.id, model: model.value, quickModel: quick.value, baseURL: url ? url.value : '' });
+  const body = () => ({ provider: sel.id, model: f.model, quickModel: f.quick, baseURL: url ? f.url : '' });
   const say = (cls, text) => { result.className = `set-result ${cls}`; result.textContent = text; };
+  if (mods.error) say('bad', `No pude cargar los modelos: ${mods.error}`);
 
   // one line of plain status: ready or what is missing, and whether it searches the web
   const facts = [
@@ -415,18 +476,6 @@ function drawSettings() {
     sel.search ? 'busca en la web' : 'sin búsqueda web (las guías salen sin recursos externos)',
     sel.experimental ? 'experimental' : '',
   ].filter(Boolean).join(' · ');
-
-  const loadModels = sel.kind !== 'cli' || sel.id === 'agy' ? h('button', { class: 'link', type: 'button', onclick: async (e) => {
-    const b = e.currentTarget;
-    b.disabled = true; b.textContent = 'cargando…';
-    try {
-      SET.models = (await api('/api/settings/models', { method: 'POST', body: body() })).models;
-      datalist.replaceChildren(...SET.models.map((m) => h('option', { value: m })));
-      say('ok', SET.models.length ? `${SET.models.length} modelos: escribe en el campo para elegir.` : 'Este proveedor no da una lista; escribe el nombre.');
-      model.focus();
-    } catch (err) { say('bad', err.message); }
-    b.disabled = false; b.textContent = 'ver modelos';
-  } }, 'ver modelos') : null;
 
   const test = h('button', { class: 'btn small ghost', type: 'button', onclick: async (e) => {
     const b = e.currentTarget;
@@ -465,9 +514,8 @@ function drawSettings() {
       sel.note ? row('', h('p', { class: 'set-note' }, mdInline(sel.note))) : null,
       keyLine ? row('', keyLine) : null,
       url ? row('URL', url) : null,
-      row('Modelo', model, loadModels),
+      row('Modelo', model),
       row('Modelo rápido', quick, h('p', { class: 'set-facts' }, 'Para el chat, las notas de concepto y el plan.')),
-      datalist,
       row('', h('div', { class: 'set-actions' }, save, test), result)),
     h('p', { class: 'set-foot' }, `Se guarda en ${SET.data.configPath || 'studyhomie.toml'}. Lo que esté en curso termina con la IA anterior.`)));
 }

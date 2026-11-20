@@ -1,6 +1,10 @@
 package providers
 
 import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -78,5 +82,25 @@ func TestCheckAsksForAModelWhereThereIsNoDefault(t *testing.T) {
 	t.Setenv("GROQ_API_KEY", "")
 	if msg := Check(config.Config{Provider: "groq", Model: "m"}); !strings.Contains(msg, "GROQ_API_KEY") {
 		t.Errorf("groq without key: %q", msg)
+	}
+}
+
+func TestModelsForClaude(t *testing.T) {
+	m, err := Models(context.Background(), config.Config{Provider: "claude-cli"})
+	if err != nil || len(m) != 3 || m[0] != "opus" {
+		t.Errorf("claude-cli aliases: %v %v", m, err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("x-api-key") != "sk-ant" || r.Header.Get("anthropic-version") == "" {
+			t.Errorf("headers: %v", r.Header)
+		}
+		fmt.Fprint(w, `{"data":[{"id":"claude-sonnet-5-5"},{"id":"claude-opus-5-5"}]}`)
+	}))
+	defer srv.Close()
+	AnthropicModelsURL = srv.URL
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant")
+	m, err = Models(context.Background(), config.Config{Provider: "anthropic-api"})
+	if err != nil || strings.Join(m, ",") != "claude-opus-5-5,claude-sonnet-5-5" {
+		t.Errorf("anthropic models: %v %v", m, err)
 	}
 }

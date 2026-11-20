@@ -438,6 +438,7 @@ li[data-state="error"] .p-dot { background: var(--danger); border-color: var(--d
 .set-label { font-size: 14px; color: var(--ink); padding-top: 8px; }
 .set-control { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .set-control select { appearance: auto; }
+.set-model { display: flex; flex-direction: column; gap: 6px; }
 .set-control .link { align-self: flex-start; font-size: 13px; font-weight: 500; color: var(--muted); text-decoration: underline; text-underline-offset: 3px; }
 .set-control .link:hover { color: var(--accent); }
 .set-facts, .set-note, .set-foot { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.5; }

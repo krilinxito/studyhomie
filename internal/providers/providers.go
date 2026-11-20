@@ -181,8 +181,26 @@ func Statuses(ctx context.Context, cfg config.Config) []Status {
 	return out
 }
 
+// claudeAliases are the model names Claude Code accepts besides full ids: each points to the latest of its family.
+var claudeAliases = []string{"opus", "sonnet", "haiku"}
+
+// AnthropicModelsURL is the Anthropic API's model list; tests point it elsewhere.
+var AnthropicModelsURL = "https://api.anthropic.com/v1/models?limit=1000"
+
 // Models lists the models a backend offers, when it can tell.
 func Models(ctx context.Context, cfg config.Config) ([]string, error) {
+	switch cfg.Provider {
+	case "", "claude-cli":
+		return claudeAliases, nil
+	case "anthropic-api":
+		headers := map[string]string{"anthropic-version": "2023-06-01"}
+		if k := httpx.Key("ANTHROPIC_API_KEY"); k != "" {
+			headers["x-api-key"] = k
+		} else if t := httpx.Key("ANTHROPIC_AUTH_TOKEN"); t != "" {
+			headers["Authorization"] = "Bearer " + t
+		}
+		return httpx.ListModels(ctx, AnthropicModelsURL, headers)
+	}
 	p, err := New(cfg)
 	if err != nil {
 		return nil, err
