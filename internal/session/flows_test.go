@@ -281,3 +281,36 @@ func TestDailyCompletedTopicIsNotRepeated(t *testing.T) {
 		t.Errorf("output: %s", out.String())
 	}
 }
+
+func TestDailyWithAnotherThemeDrawsAgain(t *testing.T) {
+	first := `{"field":"Historia","topic":"La Biblioteca de Alejandría","hook":"¿Qué se perdió?"}`
+	second := `{"field":"Dinosaurios","topic":"Por qué las aves son dinosaurios","hook":"Un T. rex y una gallina."}`
+	f := &fake{replies: []provider.Response{jsonReply(first), reply(prepReply, 10), jsonReply(second), reply(prepReply, 10)}}
+	s, _ := newSession(t, f, "s\n")
+	s.Now = func() time.Time { return time.Date(2026, 10, 27, 9, 0, 0, 0, time.UTC) }
+	s.Cfg.Interests = []string{"Historia"}
+	s.Pick = func(int) int { return 0 }
+	if err := s.Daily(context.Background(), ""); err != nil {
+		t.Fatal(err)
+	}
+	// the same theme (or none) resumes; another theme draws today's challenge again
+	calls := len(f.reqs)
+	s.In = newReader("")
+	if err := s.Daily(context.Background(), "historia"); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.reqs) != calls {
+		t.Errorf("the same theme must resume, not draw again")
+	}
+	s.In = newReader("s\n")
+	if err := s.Daily(context.Background(), "Dinosaurios"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(f.reqs[calls].Prompt, "Field: Dinosaurios") {
+		t.Errorf("new draw prompt: %q", f.reqs[calls].Prompt)
+	}
+	day, _ := s.V.LoadFrom("daily", "2026-10-27")
+	if day.Meta.Title != "Por qué las aves son dinosaurios" {
+		t.Errorf("today's challenge = %q", day.Meta.Title)
+	}
+}

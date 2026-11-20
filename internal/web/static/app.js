@@ -1171,14 +1171,26 @@ function emptyState() {
     '¿Por qué la desviación estándar divide entre n − 1?',
     'Quiero entender los autovalores desde lo más básico',
   ];
+  // today's challenge: an optional theme; empty draws from your interests
+  const field = h('input', { type: 'text', name: 'field', list: 'daily-fields', autocomplete: 'off', placeholder: 'Cualquier tema, o vacío para sorprenderte', 'aria-label': 'Temática del reto' });
+  const daily = h('form', { class: 'daily-pick', hidden: true, onsubmit: (e) => {
+    e.preventDefault();
+    const f = field.value.trim();
+    chatAction({ action: 'daily', field: f }, f ? `El reto de hoy, sobre ${f}` : 'El reto de hoy');
+  } },
+    h('label', {}, 'Reto de hoy sobre'),
+    field,
+    h('datalist', { id: 'daily-fields' }, (S.info?.interests || []).map((i) => h('option', { value: i }))),
+    h('button', { class: 'btn small primary', type: 'submit' }, 'Sortear'));
   return h('div', { class: 'chat-empty' },
     h('p', { class: 'eyebrow' }, 'StudyHomie'),
     h('h1', {}, '¿Qué quieres entender hoy?'),
     h('p', { class: 'lead' }, 'Pregunta lo que sea o pide una guía. Mapeo todo lo que el tema da por sabido, hasta lo básico; escribo de entrada solo lo que marques en «Escribir ahora», y lo demás queda a un clic.'),
     h('div', { class: 'suggest' },
-      h('button', { class: 'btn small', type: 'button', onclick: () => chatAction({ action: 'daily', field: '' }, 'El reto de hoy') }, icon('sparkles'), 'El reto de hoy'),
-      h('button', { class: 'btn small', type: 'button', onclick: () => $('#attach-input').click() }, icon('paperclip'), 'Subir apuntes'),
-      h('button', { class: 'btn small', type: 'button', onclick: () => askAbout('Quiero aprender toda una materia: ') }, icon('map'), 'Planear una materia')),
+      h('button', { class: 'btn small ghost', type: 'button', onclick: () => { daily.hidden = !daily.hidden; if (!daily.hidden) field.focus(); } }, icon('sparkles'), 'El reto de hoy'),
+      h('button', { class: 'btn small ghost', type: 'button', onclick: () => $('#attach-input').click() }, icon('paperclip'), 'Subir apuntes'),
+      h('button', { class: 'btn small ghost', type: 'button', onclick: () => askAbout('Quiero aprender toda una materia: ') }, icon('map'), 'Planear una materia')),
+    daily,
     h('ul', { class: 'examples' }, ex.map((t) => h('li', {}, h('button', { type: 'button', onclick: () => { $('#reply').value = t; $('#reply').focus(); } }, t)))));
 }
 

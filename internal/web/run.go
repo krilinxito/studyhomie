@@ -395,6 +395,9 @@ func (s *Server) runTitle(req StartReq) string {
 	case "roadmap":
 		return truncate(req.Subject, 160)
 	case "daily":
+		if f := strings.TrimSpace(req.Field); f != "" && f != "*" {
+			return "Reto de hoy: " + truncate(f, 60)
+		}
 		return "Reto de hoy"
 	case "material":
 		return "Material"
