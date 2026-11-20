@@ -13,32 +13,53 @@ La forma más rápida: abre tu agente de programación (Claude Code, Codex, Curs
 
 ```
 Instala StudyHomie (https://github.com/krilinxito/studyhomie) siguiendo la sección
-«Instalación paso a paso» de su README, configúralo con la IA que yo ya tenga lista
-y comprueba que funciona con `studyhomie check --live`.
+«Instalación y puesta en marcha (agentes de IA y consola)» de su README: instala el binario,
+configúralo en una carpeta de estudio con la IA que yo ya tenga lista, comprueba que
+funciona con `studyhomie check --live` y dime el comando exacto para correrlo desde mi consola.
 ```
 
-La sección siguiente está escrita para que un agente (o tú) la siga en orden, solo con la consola.
+La sección siguiente está escrita como un runbook en orden para que cualquier agente (o tú) pueda instalarlo, verificarlo y correrlo únicamente desde la consola.
 
-## Instalación paso a paso
+## Instalación y puesta en marcha (agentes de IA y consola)
 
-> **Para agentes de IA:** sigue los pasos en orden. Cada uno dice cómo comprobar que salió bien.
-> - Nunca pidas, escribas ni guardes claves de API en archivos o en el chat: van en variables de entorno que define la persona.
-> - Los inicios de sesión de los CLI (`claude`, `codex login`, `agy`) son interactivos y los hace la persona: si hacen falta, dile el comando exacto y espera.
-> - El paso 4 termina con `studyhomie check --live`, que sale con código 0 si todo funciona y con 1 si no (y dice por qué).
+> **Para agentes de IA:** sigue los pasos 1 a 5 en orden; cada uno tiene su verificación.
+> - Si `studyhomie version` ya funciona, salta al paso 2.
+> - Nunca pidas, escribas ni guardes claves de API en archivos ni en el chat: van siempre en variables de entorno que define la persona.
+> - Los inicios de sesión de los CLI (`claude`, `codex login`, `agy`) son interactivos y los hace la persona: si hacen falta, dale el comando exacto y espera su confirmación antes de reintentar.
+> - `studyhomie serve` deja un servidor corriendo en primer plano hasta `Ctrl+C`: no lo lances en primer plano si esperas que termine; al acabar el paso 4, entrega a la persona la ruta de la carpeta de estudio, la IA configurada y el comando para correrlo en su consola (o lánzalo en segundo plano con `--no-open` solo si te lo pidió).
 
-### 1. Instala el programa
+### 1. Instala el binario
 
-Elige **una** opción.
+Decide en este orden:
 
-**A. Con Go** (si `go version` muestra 1.24 o más):
+1. Prueba `studyhomie version`. Si imprime la versión, ya está instalado: pasa al paso 2.
+2. Prueba `go version`. Si muestra **1.24 o más**, usa la **opción A**.
+3. Si no hay Go, usa la **opción B** (binario de GitHub Releases). Si falla la descarga o necesitas compilar desde una rama concreta, usa la **opción C**.
+
+**A. Con Go (1.24+):**
 
 ```sh
 go install github.com/krilinxito/studyhomie/cmd/studyhomie@latest
 ```
 
-El binario queda en `$(go env GOPATH)/bin` (en Windows, `%USERPROFILE%\go\bin`). Si `studyhomie` no se encuentra después, agrega esa carpeta al `PATH`.
+El binario queda en `GOPATH/bin`. Si `studyhomie version` no se encuentra después, agrégalo al `PATH`:
 
-**B. Binario listo, sin Go.** Windows (PowerShell):
+```powershell
+# Windows (PowerShell)
+$gobin = "$(go env GOPATH)\bin"
+$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+if ($userPath -notlike "*$gobin*") { [Environment]::SetEnvironmentVariable('Path', "$userPath;$gobin", 'User') }
+$env:Path += ";$gobin"
+```
+
+```sh
+# macOS / Linux (agrégalo también a ~/.bashrc o ~/.zshrc)
+export PATH="$(go env GOPATH)/bin:$PATH"
+```
+
+**B. Binario listo, sin Go.**
+
+Windows (PowerShell):
 
 ```powershell
 $v = (Invoke-RestMethod https://api.github.com/repos/krilinxito/studyhomie/releases/latest).tag_name
@@ -62,60 +83,79 @@ mkdir -p ~/.local/bin && mv "/tmp/studyhomie_${v}_${os}_${arch}/studyhomie" ~/.l
 # si ~/.local/bin no está en el PATH: export PATH="$HOME/.local/bin:$PATH"  (y agrégalo a ~/.bashrc o ~/.zshrc)
 ```
 
-**C. Desde el código** (Go 1.24+):
+**C. Desde el código (Go 1.24+):**
 
 ```sh
 git clone https://github.com/krilinxito/studyhomie
 cd studyhomie
-go build -o studyhomie ./cmd/studyhomie     # en Windows: -o studyhomie.exe
+go install ./cmd/studyhomie
 ```
 
-**Comprueba:** `studyhomie version` imprime la versión.
+Si prefieres no instalarlo globalmente, compila con `go build -o studyhomie ./cmd/studyhomie` (en Windows `-o studyhomie.exe`) y mueve el binario a una carpeta que esté en el `PATH`.
+
+**Comprueba:** `studyhomie version` imprime la versión y sale con código 0.
 
 ### 2. Crea la carpeta de estudio
 
-StudyHomie guarda su configuración (`studyhomie.toml`) y tu vault en la carpeta desde donde lo ejecutas. Crea una y entra en ella:
+StudyHomie busca `studyhomie.toml` y tu `vault/` en la **carpeta actual** desde donde lo ejecutes. Usa una carpeta fija (por ejemplo `~/estudios`) y entra en ella:
 
-```sh
-mkdir estudios
-cd estudios
+```powershell
+# Windows (PowerShell)
+New-Item -ItemType Directory -Force "$HOME\estudios" | Out-Null
+Set-Location "$HOME\estudios"
 ```
 
-### 3. Elige la IA
+```sh
+# macOS / Linux
+mkdir -p ~/estudios
+cd ~/estudios
+```
 
-Mira qué IAs puede usar ya esta computadora:
+> Todo comando posterior de `studyhomie` debe ejecutarse desde esa carpeta.
+
+### 3. Detecta la IA disponible y crea `studyhomie.toml`
+
+Lista qué IAs puede usar ya esta computadora:
 
 ```sh
 studyhomie check
 ```
 
-Lista todas las opciones con su estado (`lista`, `no instalado`, `falta OPENAI_API_KEY`, `no responde`…). Elige la primera que salga **lista**, en este orden de preferencia:
+> **Nota para agentes:** antes de ejecutar `init`, `studyhomie check` puede salir con código **1** si la IA por defecto (`claude-cli`) no está instalada; igualmente imprime la lista completa de IAs disponibles. Lee la salida y no lo trates como un error fatal todavía.
 
-1. `claude-cli`: Claude Code con el plan de Claude. Es la que más se probó.
-2. `codex`: Codex CLI con la cuenta de ChatGPT.
-3. Una API con clave ya definida: `anthropic-api`, `openai`, `gemini`, `openrouter`…
-4. `ollama` o `lmstudio`: un modelo local.
-5. `agy`: Antigravity CLI. Es experimental.
+Elige la primera opción que aparezca como **`lista`**, en este orden de preferencia:
 
-Y crea la configuración con ella (sin preguntas):
+1. `claude-cli` — Claude Code con el plan de Claude (la más probada).
+2. `codex` — Codex CLI con la cuenta de ChatGPT.
+3. Una API con clave ya definida (`anthropic-api`, `openai`, `gemini`, `openrouter`, `groq`, `deepseek`, `mistral`, `xai`, `together`).
+4. `ollama` o `lmstudio` — un modelo local ya corriendo.
+5. `agy` — Antigravity CLI (experimental).
+
+Crea `studyhomie.toml` y el vault en una sola línea, sin preguntas interactivas:
 
 ```sh
+# CLI o anthropic-api (no necesitan --model)
 studyhomie init --provider claude-cli
-```
-
-Más ejemplos:
-
-```sh
 studyhomie init --provider codex
+studyhomie init --provider anthropic-api
+
+# APIs (necesitan --model)
 studyhomie init --provider openai --model gpt-5.2
 studyhomie init --provider gemini --model gemini-3-flash
+studyhomie init --provider openrouter --model google/gemini-3-flash
+
+# Modelo local (en Ollama, revisa antes los descargados con `ollama list`)
 studyhomie init --provider ollama --model qwen3:14b
+
+# Servidor compatible con OpenAI (la clave en OPENAI_COMPAT_API_KEY es opcional)
 studyhomie init --provider openai-compatible --base-url http://localhost:8000/v1 --model mi-modelo
 ```
 
-Salvo los CLI y `anthropic-api`, las IAs necesitan `--model`. Para ver los modelos disponibles, abre Ajustes en la interfaz (paso 5).
+Salvo los CLI (`claude-cli`, `codex`, `agy`) y `anthropic-api`, las demás IAs necesitan `--model`. Si usas `ollama`, ejecuta `ollama list` para elegir un modelo que la persona ya tenga descargado (o descárgalo con `ollama pull qwen3:14b`). También puedes cambiar el modelo luego en **Ajustes** dentro de la interfaz web.
 
-Si **ninguna** está lista, la persona tiene que preparar una. Dale el comando de su caso:
+`init` es idempotente: sobre un `studyhomie.toml` que ya existe, actualiza solo los flags que le pases y conserva el resto.
+
+Si **ninguna** IA sale `lista`, la persona tiene que preparar una. Dale el comando de su caso y espera:
 
 | Quiere usar | Qué hace la persona |
 |---|---|
@@ -124,58 +164,82 @@ Si **ninguna** está lista, la persona tiene que preparar una. Dale el comando d
 | Una API | Define la clave en una variable de entorno (ver [Elegir la IA](#elegir-la-ia)) y abre una terminal nueva |
 | Un modelo local | Instala [Ollama](https://ollama.com), ejecuta `ollama pull qwen3:14b` y deja Ollama abierto |
 
-`init` se puede repetir: sobre un archivo que ya existe, cambia solo los valores que le pases.
+**Comprueba:** `studyhomie check` sale ahora con código **0**.
 
-### 4. Comprueba que funciona
+### 4. Comprueba que la IA responde de verdad
 
 ```sh
 studyhomie check --live
 ```
 
-Le manda un mensaje de prueba a la IA elegida. Si responde, imprime `Funciona: … respondió "listo" en N s` y sale con código 0. Si no, explica qué falta y sale con 1.
+Le manda un mensaje corto de prueba a la IA elegida. Si todo funciona, imprime `Funciona: … respondió "listo" en N s.` y sale con código **0**. Si falla, explica el motivo y sale con **1**.
 
-### 5. Úsalo
+**Si `check --live` falla:**
+
+| Qué pasó | Qué hacer |
+|---|---|
+| CLI instalado (`claude`, `codex`, `agy`), pero falla al autenticar | Pide a la persona que ejecute `claude`, `codex login` o `agy` en su terminal para iniciar sesión y repite `studyhomie check --live` |
+| Dice que falta un modelo o el modelo no existe | Reejecuta `studyhomie init --model <otro-modelo>` (para Ollama, consulta `ollama list`) |
+| `ollama` o `lmstudio` dice `no responde` | Pide a la persona que abra Ollama / LM Studio (o ejecuta `ollama serve`) y verifica que tenga al menos un modelo descargado |
+| Error de clave o saldo en una API | Pide a la persona que verifique su variable de entorno (sin pegarla en el chat) o cambia de proveedor con `studyhomie init --provider ...` |
+
+### 5. Córrelo desde la consola
+
+Siempre dentro de tu carpeta de estudio (`cd ~/estudios`), puedes usarlo de dos maneras:
+
+**A. Abrir la interfaz web local:**
 
 ```sh
 studyhomie
 ```
 
-Abre la interfaz en <http://127.0.0.1:8765>. `Ctrl+C` en la terminal la cierra. Para dejarla corriendo sin abrir el navegador (por ejemplo, si la lanza un agente): `studyhomie serve --no-open`.
+Abre <http://127.0.0.1:8765> en tu navegador (`Ctrl+C` la cierra). Si el puerto está ocupado usa `studyhomie serve --port 8766`, y si no quieres que abra el navegador automáticamente (por ejemplo, si lo lanza un agente en segundo plano) usa `studyhomie serve --no-open`.
+
+**B. Estudiar directo desde la consola (sin navegador):**
+
+```sh
+studyhomie prepare "Teorema de Bayes"                                        # genera la guía sin pedir confirmación
+echo s | studyhomie guide "Transformada de Fourier" --depth 1 --foco "audio" # guía + notas de concepto
+studyhomie doubt teorema-de-bayes "¿qué pasa si el prior es cero?"           # responde una duda y la guarda en la guía
+studyhomie study "Teorema de Bayes"                                          # ciclo interactivo: guía, quiz y Feynman
+studyhomie graph                                                             # muestra tus temas y conexiones
+```
 
 ## Uso desde la consola
 
-Todo lo importante se puede hacer sin la interfaz web. Los comandos trabajan sobre el vault de la carpeta actual.
+Todo lo importante funciona sin abrir el navegador. Los comandos operan sobre el `studyhomie.toml` y el `vault/` de la carpeta actual.
 
-| Comando | Qué hace |
-|---|---|
-| `studyhomie` / `studyhomie serve [--port N] [--no-open]` | La interfaz web local |
-| `studyhomie init [--provider P] [--model M] [--quick-model M] [--base-url URL] [--vault DIR] [--port N]` | Crea o cambia `studyhomie.toml` y el vault |
-| `studyhomie check [--live]` | Configuración, vault y qué IAs están listas; `--live` las prueba |
-| `studyhomie guide "tema" [--depth N] [--foco "..."]` | Guía + notas de concepto. `--depth` (0 a 4) es cuántos niveles de prerrequisitos se escriben ya; lo demás queda mapeado para explicar después |
-| `studyhomie study "tema"` | Ciclo completo: guía, preguntas y explicarlo con tus palabras |
-| `studyhomie prepare "tema"` | Solo la guía |
-| `studyhomie quiz <tema> [n] [dificultad]` | Preguntas de razonamiento sobre una guía |
-| `studyhomie feynman <tema>` | Lo explicas tú y te señala los huecos |
-| `studyhomie doubt <tema> "pregunta"` | Responde una duda y la guarda en la guía |
-| `studyhomie extend <tema>` | Agrega los conceptos base que la guía da por sabidos |
-| `studyhomie interactive <tema>` | Genera una simulación interactiva (HTML) |
-| `studyhomie roadmap "materia"` | Traza el grafo de temas de una materia entera |
-| `studyhomie material apuntes.pdf ...` | Roadmap a partir de tus apuntes (txt, md, pdf, pptx, docx, imágenes) |
-| `studyhomie next <roadmap>` | El siguiente tema cuyos prerrequisitos ya dominas |
-| `studyhomie daily [campo\|todos]` | El reto del día, de tus campos de interés o del que digas |
-| `studyhomie graph` | Temas y conexiones del vault, en texto |
-| `studyhomie help` / `version` | Ayuda y versión |
+| Comando | Modo | Qué hace |
+|---|---|---|
+| `studyhomie` / `studyhomie serve [--port N] [--no-open]` | Servidor | Levanta la interfaz web local hasta `Ctrl+C` |
+| `studyhomie init [--provider P] [--model M] [--quick-model M] [--base-url URL] [--vault DIR] [--port N]` | Directo | Crea o actualiza `studyhomie.toml` y el vault sin preguntar |
+| `studyhomie check [--live]` | Directo | Muestra configuración, vault e IAs listas; `--live` prueba la IA (sale con 0 o 1) |
+| `studyhomie prepare "tema"` | Directo | Escribe solo la guía del tema |
+| `studyhomie guide "tema" [--depth N] [--foco "..."]` | Interactivo (`--depth 0` directo) | Guía + notas de concepto. `--depth` (0 a 4) decide cuántos niveles de prerrequisitos se escriben ya; el resto queda mapeado para explicar después |
+| `studyhomie doubt <tema> "pregunta"` | Directo | Responde una duda sobre una guía y la guarda en ella |
+| `studyhomie extend <tema>` | Directo | Agrega los conceptos base que la guía da por sabidos |
+| `studyhomie interactive <tema>` | Directo | Genera una simulación interactiva (HTML) en `vault/interactive/` |
+| `studyhomie graph` | Directo | Imprime temas y conexiones del vault en texto |
+| `studyhomie study "tema"` | Interactivo | Ciclo completo en terminal: guía, preguntas y explicarlo con tus palabras |
+| `studyhomie quiz <tema> [n] [dificultad]` | Interactivo | Preguntas de razonamiento sobre una guía |
+| `studyhomie feynman <tema>` | Interactivo | Lo explicas tú y te señala los huecos |
+| `studyhomie roadmap "materia"` | Interactivo | Pregunta el alcance y traza el grafo de temas de una materia |
+| `studyhomie material apuntes.pdf ...` | Interactivo | Roadmap a partir de tus apuntes (txt, md, pdf, pptx, docx, imágenes) |
+| `studyhomie next <roadmap>` | Interactivo | El siguiente tema cuyos prerrequisitos ya dominas |
+| `studyhomie daily [campo\|todos]` | Interactivo | Propone el reto del día, de tus campos de interés o del que digas |
+| `studyhomie help` / `version` | Directo | Ayuda y versión |
 
-Los temas se nombran por su slug (`transformada-de-fourier`) o con su título entre comillas.
+Los comandos marcados como **Directo** terminan solos sin esperar entrada por teclado (ideales para scripts o para que los ejecute un agente). Los temas se nombran por su slug (`transformada-de-fourier`) o con su título entre comillas.
 
-Algunos comandos preguntan cosas por la consola: aprobar el plan de conceptos, aceptar el reto del día, responder un quiz. Las respuestas se leen de la entrada estándar, así que también se pueden pasar por tubería:
+Los comandos **Interactivos** leen de la entrada estándar (`stdin`), así que también se pueden automatizar por tubería:
 
 ```sh
 echo s | studyhomie guide "Transformada de Fourier" --depth 1 --foco "audio"   # aprueba el plan tal cual
 echo g | studyhomie guide "Teorema de Bayes"                                   # solo la guía, sin notas
+studyhomie guide "Teorema de Bayes" --depth 0                                  # solo la guía + iceberg mapeado, sin pausa
 ```
 
-En el plan, `s` (o Enter) lo aprueba, `g` escribe solo la guía, `n` cancela, y se puede editar: `-id` quita un concepto, `+Título` agrega uno y `*id` escribe ya uno de los de abajo.
+En el plan de `guide`, `s` (o Enter) lo aprueba, `g` escribe solo la guía, `n` cancela, y se puede editar antes de aprobar: `-id` quita un concepto, `+Título` agrega uno y `*id` escribe ya uno de los de abajo.
 
 ## Qué hace
 
