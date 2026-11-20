@@ -228,6 +228,7 @@ Todo lo importante funciona sin abrir el navegador. Los comandos operan sobre el
 | `studyhomie next <roadmap>` | Interactivo | El siguiente tema cuyos prerrequisitos ya dominas |
 | `studyhomie daily [campo\|todos]` | Interactivo | Propone el reto del día, de tus campos de interés o del que digas |
 | `studyhomie help` / `version` | Directo | Ayuda y versión |
+| `studyhomie update [--check] [-y]` | Interactivo | Busca una versión nueva y pregunta antes de instalarla (`--check` solo avisa; `-y` no pregunta) |
 
 Los comandos marcados como **Directo** terminan solos sin esperar entrada por teclado (ideales para scripts o para que los ejecute un agente). Los temas se nombran por su slug (`transformada-de-fourier`) o con su título entre comillas.
 
@@ -253,16 +254,16 @@ En el plan de `guide`, `s` (o Enter) lo aprueba, `g` escribe solo la guía, `n` 
 
 ## La interfaz web
 
-Minimal, sobre un fondo de puntos, en claro u oscuro. Todo son paneles acoplables: arrastra una pestaña para dividir la pantalla o apilarla, y el layout se recuerda.
+Minimal, sobre un fondo de puntos, en claro u oscuro. Todo son paneles acoplables, y el diseño se recuerda. Para no moverlos por accidente están fijos: en el menú de paneles, **Editar diseño** permite arrastrar una pestaña para dividir la pantalla o apilarla, y **Listo** los vuelve a fijar.
 
-- **Chats y Chat.** Preguntas, pides guías, quizzes, el reto del día (con la temática que quieras) o una nota de concepto. Puedes adjuntar imágenes y archivos a un mensaje y la IA los mira con tu pregunta. Los chats se guardan y se pueden continuar.
+- **Conversaciones y Chat.** Preguntas, pides guías, quizzes, el reto del día (con la temática que quieras) o una nota de concepto. Puedes adjuntar imágenes y archivos a un mensaje y la IA los mira con tu pregunta. Las conversaciones se guardan y se pueden continuar.
 - **El panel de estudio** entra desde la derecha cuando hay algo que mostrar, y se puede ampliar, poner en pantalla completa o cerrar:
   - **Guía**: el artículo con sus visuales.
   - **Conceptos**: el iceberg; lo de abajo se explica con un clic.
-  - **Mapa**: guías y conceptos conectados, de este chat o de todos.
+  - **Mapa**: guías y conceptos conectados, de esta conversación o de todas.
   - **Practicar**.
   - **Apuntes**: tus propias notas por guía o concepto, con imágenes y archivos pegados.
-- **Vault.** Todas las notas, con búsqueda en el texto. Cada una se abre en la app, se edita a mano o se abre en Obsidian. Desde aquí también se crean otros vaults en cualquier carpeta y se cambia entre ellos; cada uno tiene sus guías, chats y mapa.
+- **Vault.** Todas las notas, con búsqueda en el texto. Cada una se abre en la app, se edita a mano o se abre en Obsidian. Desde aquí también se crean otros vaults en cualquier carpeta y se cambia entre ellos; cada uno tiene sus guías, conversaciones y mapa.
 - **Ajustes.** Eliges la IA y el modelo de una lista, y pruebas la conexión.
 
 ![El iceberg de conceptos](docs/img/sesion.png)
@@ -333,6 +334,15 @@ Todo es opcional; sin el archivo se usan estos valores. `studyhomie init` lo cre
 | `iceberg` | `true` | Mapear siempre los conceptos hasta lo básico |
 | `parallel` | `3` | Notas de concepto que se escriben a la vez |
 | `context_window` / `compact_at` | `200000` / `0.6` | Cuándo se resume una conversación larga |
+| `updates` | `"ask"` | Versiones nuevas: `"ask"` avisa y pregunta, `"auto"` las instala solas (se usan al reiniciar), `"never"` no busca |
+
+## Actualizaciones
+
+StudyHomie busca versiones nuevas en GitHub Releases al arrancar y cada pocas horas. Si hay una, la interfaz muestra un aviso con **Ver cambios**, **Actualizar** y **Más tarde**; en el modal de cambios también puedes **omitir esa versión** hasta que salga la siguiente. Se configura en **Ajustes → Actualizaciones** (o con `updates` en `studyhomie.toml`).
+
+Al actualizar, la app descarga el archivo de tu sistema, comprueba su sha256 contra el `checksums.txt` de la release, reemplaza su propio binario y se reinicia sola; la pestaña del navegador se recarga cuando la versión nueva responde. Desde la consola: `studyhomie update`.
+
+Si el binario está en una carpeta sin permiso de escritura (p. ej. una carpeta del sistema), la app te lo dice y puedes descargar la versión a mano desde [Releases](https://github.com/krilinxito/studyhomie/releases/latest). Las compilaciones locales (`go build`, versión `dev`) nunca se actualizan solas.
 
 ## Tu vault
 
@@ -348,7 +358,7 @@ vault/
   roadmaps/      el plan de cada materia
   daily/         un registro por día
   interactive/   simulaciones generadas (HTML)
-  .studyhomie/   estado interno: chats guardados, archivos subidos, resúmenes
+  .studyhomie/   estado interno: conversaciones guardadas, archivos subidos, resúmenes
 ```
 
 ## Privacidad y seguridad
@@ -373,7 +383,19 @@ Estructura:
 - `internal/web`: el servidor y la interfaz, embebida en el binario.
 - `internal/viz`: valida los visuales interactivos.
 
-Para publicar una versión basta con subir una etiqueta (`git tag v0.2.0 && git push --tags`): el workflow compila los binarios de Windows, macOS y Linux y crea la release.
+### Versiones y commits
+
+Las versiones las arma [Release Please](https://github.com/googleapis/release-please) a partir de los mensajes de commit, así que usa [commits convencionales](https://www.conventionalcommits.org/es/):
+
+| Prefijo | Para qué | En la versión |
+|---|---|---|
+| `feat: …` | algo nuevo para quien usa la app | sube la versión menor y sale en «Novedades» |
+| `fix: …` | un arreglo | sube el parche y sale en «Arreglos» |
+| `perf:` / `docs:` / `refactor:` / `test:` / `ci:` / `chore:` | lo demás | no publica nada por sí solo |
+
+Un cambio incompatible lleva `!` (`feat!: …`). Con cada push a `main`, Release Please mantiene abierto un PR «chore(main): release x.y.z» con el `CHANGELOG.md`. **Al mergearlo** se crea la etiqueta y una release en borrador; el workflow corre los tests, compila los binarios de Windows, macOS y Linux, sube `checksums.txt` y recién entonces la publica. Si los tests fallan, la release se queda en borrador y nadie la recibe.
+
+Subir una etiqueta a mano (`git tag v0.3.0 && git push --tags`) sigue funcionando para casos puntuales.
 
 ## Licencia
 

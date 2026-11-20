@@ -28,6 +28,7 @@ import (
 	"github.com/krilinxito/studyhomie/internal/provider"
 	"github.com/krilinxito/studyhomie/internal/roadmap"
 	"github.com/krilinxito/studyhomie/internal/session"
+	"github.com/krilinxito/studyhomie/internal/update"
 	"github.com/krilinxito/studyhomie/internal/vault"
 )
 
@@ -57,6 +58,10 @@ type Server struct {
 	Open       func(kind, target string) error
 	// CheckLinks verifies cited URLs; nil uses the real check. Tests replace it.
 	CheckLinks func(ctx context.Context, urls []string) map[string]bool
+	// Updater finds and installs new versions; nil (or a development build) turns updates off.
+	Updater *update.Updater
+	// Restart starts the app again on the installed version; nil when it cannot (tests).
+	Restart func()
 
 	mu     sync.Mutex
 	runs   map[int]*Run
@@ -118,6 +123,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/settings", s.saveSettings)
 	mux.HandleFunc("POST /api/settings/models", s.listModels)
 	mux.HandleFunc("POST /api/settings/test", s.testSettings)
+	mux.HandleFunc("GET /api/update", s.getUpdate)
+	mux.HandleFunc("POST /api/update", s.installUpdate)
+	mux.HandleFunc("POST /api/update/skip", s.skipUpdate)
+	mux.HandleFunc("POST /api/update/mode", s.setUpdateMode)
+	mux.HandleFunc("POST /api/update/restart", s.restartNow)
 	mux.HandleFunc("GET /api/graph", s.graph)
 	mux.HandleFunc("GET /api/notes/{slug}", s.note)
 	mux.HandleFunc("POST /api/notes/{slug}/extend", s.extend)
@@ -221,6 +231,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		"interests": cfg.Interests,
 		"activeRun": active,
 		"warning":   warning,
+		"version":   s.version(),
 	})
 }
 
