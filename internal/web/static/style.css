@@ -59,13 +59,18 @@ body {
 .banner code { background: rgba(255, 255, 255, .2); padding: 1px 5px; }
 
 /* the three columns: chats, chat, study panel */
+/* named areas: hiding one column never shifts the others into its place */
 .app {
   flex: 1; min-height: 0; display: grid;
+  grid-template-areas: "side chat panel";
   grid-template-columns: 240px minmax(360px, 1fr) minmax(420px, 1.25fr);
 }
+.sidebar { grid-area: side; }
+.chat { grid-area: chat; }
+.panel { grid-area: panel; }
 body[data-layout="chat"] .app { grid-template-columns: 240px minmax(0, 1fr) 0; }
 body[data-layout="chat"] .panel { display: none; }
-body[data-layout="panel"] .app { grid-template-columns: 0 minmax(320px, .6fr) minmax(0, 1.6fr); }
+body[data-layout="panel"] .app { grid-template-columns: 0 minmax(320px, .55fr) minmax(0, 1.6fr); }
 body[data-layout="panel"] .sidebar { display: none; }
 
 /* controls */
@@ -487,7 +492,8 @@ dialog::backdrop { background: rgba(20, 20, 22, .45); }
   .top { padding: 0 12px; gap: 10px; }
   .brand span, .badge { display: none; }
   .panes button[data-pane="panel"] { display: block; }
-  .app, body[data-layout] .app, body[data-pane] .app { grid-template-columns: minmax(0, 1fr); }
+  .app, body[data-layout] .app, body[data-pane] .app { grid-template-areas: "pane"; grid-template-columns: minmax(0, 1fr); }
+  .sidebar, .chat, .panel { grid-area: pane; }
   .sidebar, .chat, .panel { display: none; border-right: 0; }
   body[data-pane="sidebar"] .sidebar, body[data-pane="chat"] .chat, body[data-pane="panel"] .panel { display: flex; }
   #btn-wide, #btn-show-panel { display: none; }
