@@ -325,7 +325,7 @@ func (s *Server) StartRun(req StartReq) (*Run, error) {
 
 	prov, cfg, _ := s.backend()
 	sess := &session.Session{
-		P: prov, V: s.V, Cfg: cfg, CheckLinks: s.CheckLinks,
+		P: prov, V: s.vault(), Cfg: cfg, CheckLinks: s.CheckLinks,
 		In:  bufio.NewReader(run.in),
 		Out: outWriter{run},
 		Ask: func(kind, label, def string) { run.emit(Event{Type: "ask", Kind: kind, Label: label, Def: def}) },
@@ -404,7 +404,7 @@ func (s *Server) runTitle(req StartReq) string {
 	case "next":
 		return req.Roadmap
 	case "quiz", "feynman", "interactive":
-		if n, err := s.V.Load(req.Slug); err == nil && n.Meta.Title != "" {
+		if n, err := s.vault().Load(req.Slug); err == nil && n.Meta.Title != "" {
 			return n.Meta.Title
 		}
 		return req.Slug

@@ -889,3 +889,127 @@ func TestApuntesAndAttachments(t *testing.T) {
 		t.Error("path escape served")
 	}
 }
+
+func TestVaultsSwitchAndManage(t *testing.T) {
+	proposal := "```json\n{\"field\":\"Historia\",\"topic\":\"Tema\",\"hook\":\"h\"}\n```"
+	s, ts := newTestServer(t, &scripted{replies: []string{proposal, proposal, proposal, proposal, proposal}})
+	first := s.V.Root
+	s.ConfigPath = filepath.Join(t.TempDir(), "studyhomie.toml")
+	s.Cfg.Vault = first
+	if err := s.V.Save(vault.Note{Slug: "fourier", Meta: vault.Meta{Title: "Fourier"}, Body: "La fase importa."}); err != nil {
+		t.Fatal(err)
+	}
+	// a chat in the first vault
+	code, id := startRunHTTP(t, ts, map[string]any{"cmd": "daily"})
+	if code != 200 {
+		t.Fatalf("start = %d", code)
+	}
+	readEvents(t, ts, id, 0, func(e []Event) bool { return has(e, "ask") != nil })
+
+	second := filepath.Join(t.TempDir(), "Cálculo")
+	if res, body := do(t, ts, "POST", "/api/vaults", map[string]string{"path": "relativo"}, nil); res.StatusCode != 400 {
+		t.Errorf("relative path = %d %s", res.StatusCode, body)
+	}
+	// busy: the daily run is waiting for a yes/no, not for a chat message
+	if res, _ := do(t, ts, "POST", "/api/vaults", map[string]string{"path": second}, nil); res.StatusCode != 409 {
+		t.Errorf("switch while a flow waits for an answer = %d", res.StatusCode)
+	}
+	do(t, ts, "POST", fmt.Sprintf("/api/runs/%d/cancel", id), map[string]any{}, nil)
+	readEvents(t, ts, id, 0, func(e []Event) bool { return has(e, "done") != nil })
+	if res, body := do(t, ts, "POST", "/api/vaults", map[string]string{"path": second}, nil); res.StatusCode != 200 {
+		t.Fatalf("add = %d %s", res.StatusCode, body)
+	}
+	if _, err := os.Stat(filepath.Join(second, vault.GuidesDir)); err != nil {
+		t.Error("a new vault gets its folders")
+	}
+	_, body := do(t, ts, "GET", "/api/sessions", nil, nil)
+	if string(body) != "[]\n" && string(body) != "[]" {
+		t.Errorf("the new vault has its own chats: %s", body)
+	}
+	_, body = do(t, ts, "GET", "/api/graph", nil, nil)
+	if strings.Contains(string(body), "fourier") {
+		t.Errorf("the new vault must not show the old notes: %s", body)
+	}
+	saved, _ := os.ReadFile(s.ConfigPath)
+	if !strings.Contains(string(saved), "Cálculo") || !strings.Contains(string(saved), "vaults") {
+		t.Errorf("config: %s", saved)
+	}
+	var vl struct {
+		Vaults []struct {
+			Path    string
+			Current bool
+		}
+	}
+	_, body = do(t, ts, "GET", "/api/vaults", nil, nil)
+	json.Unmarshal(body, &vl)
+	if len(vl.Vaults) != 2 || !vl.Vaults[0].Current {
+		t.Fatalf("vault list: %s", body)
+	}
+	if res, _ := do(t, ts, "POST", "/api/vaults/forget", map[string]string{"path": second}, nil); res.StatusCode != 400 {
+		t.Error("the vault in use cannot be forgotten")
+	}
+	// back to the first one: its notes and its chat come back
+	if res, body := do(t, ts, "POST", "/api/vaults/use", map[string]string{"path": first}, nil); res.StatusCode != 200 {
+		t.Fatalf("use = %d %s", res.StatusCode, body)
+	}
+	_, body = do(t, ts, "GET", "/api/sessions", nil, nil)
+	if !strings.Contains(string(body), "daily") {
+		t.Errorf("the first vault's chats must come back: %s", body)
+	}
+	if res, _ := do(t, ts, "POST", "/api/vaults/use", map[string]string{"path": "C:/nunca/agregado"}, nil); res.StatusCode != 404 {
+		t.Error("unknown vault accepted")
+	}
+	if res, _ := do(t, ts, "POST", "/api/vaults/forget", map[string]string{"path": second}, nil); res.StatusCode != 200 {
+		t.Error("forget")
+	}
+	if _, err := os.Stat(second); err != nil {
+		t.Error("forgetting a vault must never delete it")
+	}
+
+	// browse, search, edit
+	_, body = do(t, ts, "GET", "/api/vault/files", nil, nil)
+	if !strings.Contains(string(body), `"slug":"fourier"`) {
+		t.Errorf("files: %s", body)
+	}
+	_, body = do(t, ts, "GET", "/api/vault/search?q=FASE", nil, nil)
+	if !strings.Contains(string(body), "La fase importa") {
+		t.Errorf("search: %s", body)
+	}
+	var raw struct {
+		Text    string
+		Updated time.Time
+	}
+	_, body = do(t, ts, "GET", "/api/vault/raw/guias/fourier", nil, nil)
+	json.Unmarshal(body, &raw)
+	if !strings.Contains(raw.Text, "title: Fourier") {
+		t.Fatalf("raw: %s", body)
+	}
+	edited := strings.Replace(raw.Text, "La fase importa.", "La fase importa mucho.", 1)
+	if res, body := do(t, ts, "PUT", "/api/vault/raw/guias/fourier", map[string]any{"text": edited, "since": raw.Updated}, nil); res.StatusCode != 200 {
+		t.Fatalf("write = %d %s", res.StatusCode, body)
+	}
+	if n, _ := s.vault().Load("fourier"); !strings.Contains(n.Body, "mucho") {
+		t.Errorf("edit not saved: %q", n.Body)
+	}
+	if res, _ := do(t, ts, "PUT", "/api/vault/raw/guias/fourier", map[string]any{"text": edited, "since": raw.Updated.Add(-time.Hour)}, nil); res.StatusCode != 409 {
+		t.Errorf("a stale edit must be refused, got %d", res.StatusCode)
+	}
+
+	// the desktop: the folder picker and opening outside the app
+	s.PickFolder = func(context.Context) (string, error) { return `D:\Uni`, nil }
+	_, body = do(t, ts, "POST", "/api/vaults/pick", map[string]any{}, nil)
+	var picked struct{ Path string }
+	if json.Unmarshal(body, &picked); picked.Path != `D:\Uni` {
+		t.Errorf("pick: %s", body)
+	}
+	var opened []string
+	s.Open = func(kind, target string) error { opened = append(opened, kind+" "+target); return nil }
+	do(t, ts, "POST", "/api/vault/open", map[string]string{"app": "obsidian", "dir": "guias", "slug": "fourier"}, nil)
+	do(t, ts, "POST", "/api/vault/open", map[string]string{"app": "folder"}, nil)
+	if res, _ := do(t, ts, "POST", "/api/vault/open", map[string]string{"app": "folder", "dir": "..", "slug": "x"}, nil); res.StatusCode != 404 {
+		t.Error("open outside the vault accepted")
+	}
+	if len(opened) != 2 || !strings.HasPrefix(opened[0], "url obsidian://open?path=") || !strings.Contains(opened[0], "fourier.md") || !strings.HasPrefix(opened[1], "folder ") {
+		t.Errorf("opened: %q", opened)
+	}
+}

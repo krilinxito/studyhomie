@@ -307,9 +307,9 @@ $('#btn-theme').addEventListener('click', () => {
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (!document.documentElement.dataset.theme) applyTheme(); });
 
 /* ---------- the dock: panels you can drag, split, stack and float ---------- */
-const PANES = { chat: 'Chat', chats: 'Chats', guide: 'Guía', concepts: 'Conceptos', map: 'Mapa', practice: 'Practicar', notes: 'Apuntes', settings: 'Ajustes' };
+const PANES = { chat: 'Chat', chats: 'Chats', guide: 'Guía', concepts: 'Conceptos', map: 'Mapa', practice: 'Practicar', notes: 'Apuntes', vault: 'Vault', settings: 'Ajustes' };
 const STUDY = ['guide', 'concepts', 'map', 'practice', 'notes']; // the study panel: closed until there is something to show
-const NEAR_STUDY = [...STUDY, 'settings']; // panels that open next to the study group
+const NEAR_STUDY = [...STUDY, 'vault', 'settings']; // panels that open next to the study group
 
 function createDock() {
   for (const el of $$('#panes > .pane')) PANE_EL[el.dataset.pane] = el;
@@ -478,6 +478,7 @@ function onShown(id) {
   if (id === 'concepts') renderConcepts();
   if (id === 'practice') renderPractice();
   if (id === 'notes') renderNotes();
+  if (id === 'vault') renderVault();
   if (id === 'settings') renderSettings();
 }
 $('#btn-settings').addEventListener('click', () => show('settings'));
@@ -1125,6 +1126,192 @@ async function attachToNotes(files, editor) {
     scheduleNotesSave();
   } catch (err) { setNotesStatus(err.message); }
 }
+
+/* ---------- Vault: your vaults, and every note in the one in use ---------- */
+const DIRS = { guias: 'Guía', conceptos: 'Concepto', apuntes: 'Apuntes', roadmaps: 'Roadmap', daily: 'Diario' };
+const DIRS_PLURAL = { guias: 'guías', conceptos: 'conceptos', apuntes: 'apuntes', roadmaps: 'roadmaps', daily: 'días' };
+const VLT = { info: null, files: [], hits: null, q: '', dir: '', adding: false, edit: null, timer: 0 };
+
+function fmtBytes(n) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1).replace('.', ',')} MB`;
+}
+
+async function renderVault() {
+  const root = PANE_EL.vault;
+  if (!root) return;
+  if (VLT.edit) { drawEditor(); return; }
+  try {
+    [VLT.info, VLT.files] = await Promise.all([api('/api/vaults'), api('/api/vault/files')]);
+  } catch (err) { root.replaceChildren(h('p', { class: 'hint', style: 'padding:24px' }, err.message)); return; }
+  drawVault();
+}
+
+function openOutside(app, file) {
+  return api('/api/vault/open', { method: 'POST', body: { app, dir: file?.dir || '', slug: file?.slug || '' } })
+    .then(() => toast(app === 'obsidian' ? 'Abriendo en Obsidian…' : 'Abriendo la carpeta…'))
+    .catch((err) => toast(err.message));
+}
+
+// switching vaults reloads the app: chats, guides and map all belong to the vault
+async function useVault(path, add) {
+  await flushNotes();
+  try {
+    await api(add ? '/api/vaults' : '/api/vaults/use', { method: 'POST', body: { path } });
+    store.set('guide', null);
+    location.reload();
+  } catch (err) { toast(err.message); }
+}
+
+function drawVault() {
+  const root = PANE_EL.vault;
+  const { vaults, root: abs, stats, canPick } = VLT.info;
+  const cur = vaults.find((v) => v.current) || { name: abs.split(/[\\/]/).pop() };
+  const ONE = { guias: 'guía', conceptos: 'concepto', apuntes: 'nota de apuntes', roadmaps: 'roadmap', daily: 'día' };
+  const counts = Object.keys(DIRS).filter((d) => stats.notes[d]).map((d) => `${stats.notes[d]} ${stats.notes[d] === 1 ? ONE[d] : DIRS_PLURAL[d]}`);
+
+  // the vaults: one row each, the one in use first
+  const vaultRows = h('ul', { class: 'v-list' }, vaults.map((v) => h('li', { class: v.current ? 'on' : null },
+    h('div', { class: 'v-main' }, h('strong', {}, v.name), h('small', {}, v.abs)),
+    h('span', { class: 'v-meta' }, v.current ? 'en uso' : !v.exists ? 'no se encuentra' : `${v.guides} guías`),
+    v.current ? null : h('div', { class: 'v-actions' },
+      v.exists ? h('button', { class: 'btn small', type: 'button', onclick: () => useVault(v.path) }, 'Usar') : null,
+      h('button', { class: 'btn small ghost', type: 'button', title: 'Quitar de la lista (la carpeta no se borra)', onclick: async () => {
+        try { await api('/api/vaults/forget', { method: 'POST', body: { path: v.path } }); renderVault(); } catch (err) { toast(err.message); }
+      } }, 'Quitar')))));
+
+  const pathIn = h('input', { type: 'text', placeholder: 'D:\\Universidad\\Calculo', 'aria-label': 'Carpeta del vault', spellcheck: 'false' });
+  const addForm = VLT.adding ? h('form', { class: 'v-add', onsubmit: (e) => { e.preventDefault(); if (pathIn.value.trim()) useVault(pathIn.value.trim(), true); } },
+    h('div', { class: 'v-add-row' }, pathIn,
+      canPick ? h('button', { class: 'btn small ghost', type: 'button', onclick: async (e) => {
+        const b = e.currentTarget;
+        b.disabled = true;
+        try { const r = await api('/api/vaults/pick', { method: 'POST', body: {} }); if (r.path) pathIn.value = r.path; } catch (err) { toast(err.message); }
+        b.disabled = false;
+        pathIn.focus();
+      } }, icon('folder-open'), 'Elegir carpeta…') : null,
+      h('button', { class: 'btn small primary', type: 'submit' }, 'Abrir')),
+    h('p', { class: 'hint' }, 'Una carpeta vacía (o nueva) se vuelve un vault con sus carpetas; una que ya tiene notas se abre tal cual. Cada vault tiene sus propios chats.')) : null;
+
+  // the notes: filter by folder, search by title and text
+  const search = h('input', { type: 'search', value: VLT.q, placeholder: 'Buscar en títulos y texto…', 'aria-label': 'Buscar notas' });
+  search.addEventListener('input', () => {
+    VLT.q = search.value;
+    clearTimeout(VLT.timer);
+    VLT.timer = setTimeout(async () => {
+      VLT.hits = VLT.q.trim().length >= 2 ? await api(`/api/vault/search?q=${encodeURIComponent(VLT.q.trim())}`).catch(() => []) : null;
+      drawNoteList();
+    }, 220);
+  });
+  const seg = h('div', { class: 'seg', role: 'group', 'aria-label': 'Carpeta' },
+    [['', 'Todas'], ...Object.entries(DIRS).filter(([d]) => stats.notes[d]).map(([d]) => [d, DIRS_PLURAL[d][0].toUpperCase() + DIRS_PLURAL[d].slice(1)])]
+      .map(([d, label]) => h('button', { type: 'button', 'aria-pressed': String(VLT.dir === d), onclick: () => { VLT.dir = d; drawVault(); } }, label)));
+
+  root.replaceChildren(h('div', { class: 'vault' },
+    h('p', { class: 'eyebrow' }, 'Vault'),
+    h('h2', {}, cur.name),
+    h('p', { class: 'v-path' }, abs),
+    h('p', { class: 'v-stats' }, [...counts, `${fmtBytes(stats.bytes)} en total`].join(' · ')),
+    h('div', { class: 'actions' },
+      h('button', { class: 'btn small', type: 'button', onclick: () => openOutside('folder') }, icon('folder-open'), 'Abrir la carpeta'),
+      h('button', { class: 'btn small', type: 'button', onclick: () => openOutside('obsidian') }, icon('external-link'), 'Abrir en Obsidian')),
+    h('section', { class: 'v-section' },
+      h('h3', {}, 'Tus vaults'),
+      vaultRows,
+      VLT.adding ? addForm : h('button', { class: 'btn small ghost v-add-btn', type: 'button', onclick: () => { VLT.adding = true; drawVault(); PANE_EL.vault.querySelector('.v-add input').focus(); } },
+        icon('folder-plus'), 'Agregar o crear un vault')),
+    h('section', { class: 'v-section' },
+      h('h3', {}, 'Notas'),
+      h('div', { class: 'v-tools' }, search, seg),
+      h('ul', { class: 'v-notes', id: 'v-notes' }))));
+  drawNoteList();
+}
+
+function drawNoteList() {
+  const ul = $('#v-notes');
+  if (!ul) return;
+  const rows = VLT.hits || VLT.files.filter((f) => !VLT.q.trim() || slugify(f.title).includes(slugify(VLT.q)));
+  const list = rows.filter((f) => !VLT.dir || f.dir === VLT.dir);
+  if (!list.length) { ul.replaceChildren(h('li', { class: 'hint' }, VLT.q ? 'Nada coincide.' : 'Aún no hay notas aquí.')); return; }
+  ul.replaceChildren(...list.slice(0, 300).map((f) => h('li', {},
+    h('button', { class: 'v-open', type: 'button', onclick: () => openVaultFile(f) },
+      h('strong', {}, f.title),
+      h('small', {}, `${DIRS[f.dir] || f.dir} · ${when(f.updated)}`),
+      f.snippet ? h('span', { class: 'v-snip' }, f.snippet) : null),
+    h('div', { class: 'v-actions' },
+      h('button', { class: 'icon-btn', type: 'button', title: 'Editar el Markdown', 'aria-label': `Editar ${f.title}`, onclick: () => editVaultFile(f) }, icon('file-pen-line')),
+      h('button', { class: 'icon-btn', type: 'button', title: 'Abrir en Obsidian', 'aria-label': `Abrir ${f.title} en Obsidian`, onclick: () => openOutside('obsidian', f) }, icon('external-link')),
+      h('button', { class: 'icon-btn', type: 'button', title: 'Mostrar en la carpeta', 'aria-label': `Mostrar ${f.title} en la carpeta`, onclick: () => openOutside('folder', f) }, icon('folder-open'))))));
+}
+
+function openVaultFile(f) {
+  if (f.dir === 'guias' || f.dir === 'conceptos') openNote(f.slug);
+  else if (f.dir === 'apuntes') openNotes(f.slug, f.title.replace(/^Apuntes: /, ''));
+  else editVaultFile(f, 'view');
+}
+
+// the Markdown of a note, frontmatter included, edited by hand
+async function editVaultFile(f, mode = 'edit') {
+  try {
+    const r = await api(`/api/vault/raw/${f.dir}/${encodeURIComponent(f.slug)}`);
+    VLT.edit = { ...f, text: r.text, since: r.updated, mode, dirty: false, status: '' };
+    show('vault');
+    drawEditor();
+  } catch (err) { toast(err.message); }
+}
+
+function drawEditor() {
+  const root = PANE_EL.vault;
+  const E = VLT.edit;
+  const status = h('span', { class: 'notes-status', role: 'status' }, E.status);
+  const say = (t) => { E.status = t; status.textContent = t; };
+  const save = async (force = false) => {
+    try {
+      const r = await api(`/api/vault/raw/${E.dir}/${encodeURIComponent(E.slug)}`, { method: 'PUT', body: { text: E.text, since: E.since, force } });
+      Object.assign(E, { since: r.updated, dirty: false });
+      say('Guardado');
+      loadGraph().catch(() => {});
+      if (S.note && S.note.slug === E.slug && E.dir === 'guias') openNote(E.slug, { quiet: true });
+      if (S.concept && S.concept.slug === E.slug && E.dir === 'conceptos') openNote(E.slug, { quiet: true });
+      if (E.dir === 'apuntes' && N.slug === E.slug) N.slug = ''; // reload the notes from the file next time
+    } catch (err) {
+      if (/cambió/.test(err.message) && confirm('La nota cambió desde que la abriste (la app o Obsidian la reescribió). ¿Guardar tu versión encima?')) return save(true);
+      say(err.message);
+    }
+  };
+  const back = () => {
+    if (E.dirty && !confirm('Tienes cambios sin guardar. ¿Salir sin guardarlos?')) return;
+    VLT.edit = null;
+    renderVault();
+  };
+  const mode = (m, label) => h('button', { type: 'button', 'aria-pressed': String(E.mode === m), onclick: () => { E.mode = m; drawEditor(); } }, label);
+  let body;
+  if (E.mode === 'edit') {
+    body = h('textarea', { class: 'v-text', spellcheck: 'false', 'aria-label': `Markdown de ${E.title}` });
+    body.value = E.text;
+    body.addEventListener('input', () => { E.text = body.value; E.dirty = true; say('Sin guardar'); });
+    body.addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); save(); } });
+  } else {
+    const md = E.text.replace(/^---\n[\s\S]*?\n---\n*/, '');
+    body = h('div', { class: 'notes-view' }, E.dir === 'apuntes' ? notesMd(md) : mdBlock(md, { breaks: E.dir !== 'guias' && E.dir !== 'conceptos' }));
+  }
+  root.replaceChildren(h('div', { class: 'vault v-editor' },
+    h('button', { class: 'crumb', type: 'button', onclick: back }, icon('arrow-left'), 'Todas las notas'),
+    h('p', { class: 'eyebrow' }, `${DIRS[E.dir] || E.dir} · ${E.dir}/${E.slug}.md`),
+    h('h2', {}, E.title),
+    h('div', { class: 'notes-bar' },
+      h('div', { class: 'seg', role: 'group', 'aria-label': 'Modo' }, mode('edit', 'Editar'), mode('view', 'Ver')),
+      h('button', { class: 'btn small primary', type: 'button', onclick: () => save() }, icon('save'), 'Guardar'),
+      h('button', { class: 'btn small ghost', type: 'button', onclick: () => openOutside('obsidian', E) }, icon('external-link'), 'Obsidian'),
+      status),
+    body,
+    h('p', { class: 'hint notes-foot' }, E.dir === 'guias' || E.dir === 'conceptos'
+      ? 'Lo de arriba, entre las líneas ---, son las propiedades (YAML) que la app lee: cámbialas con cuidado. Si pides escribir esta nota de nuevo, la app la reemplaza; tus apuntes no se tocan. Ctrl+S guarda.'
+      : 'Ctrl+S guarda.')));
+  if (E.mode === 'edit') body.focus({ preventScroll: true });
+}
+$('#btn-vault').addEventListener('click', () => { VLT.edit = null; show('vault'); });
 
 /* ---------- Practicar ---------- */
 const STEP_RANK = { new: 0, prepared: 1, tested: 2, explained: 3 };
@@ -1986,6 +2173,7 @@ async function boot() {
   newChat();
   try {
     S.info = await api('/api/state');
+    $('#btn-vault').title = `Vault: ${String(S.info.vault || '').split(/[\\/]/).filter(Boolean).pop() || 'vault'} (tus notas y tus vaults)`;
     $('#provider-badge').textContent = S.info.provider;
     if (S.info.warning) { $('#banner').textContent = S.info.warning; $('#banner').hidden = false; }
     await refresh();

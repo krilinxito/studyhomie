@@ -15,13 +15,13 @@ const maxAttachment = 25 << 20
 
 // apunteTitle is the title of the guide or concept a note is about, or "" when there is none.
 func (s *Server) apunteTitle(slug string) string {
-	if n, err := s.V.Load(slug); err == nil {
+	if n, err := s.vault().Load(slug); err == nil {
 		if n.Meta.Title != "" {
 			return n.Meta.Title
 		}
 		return slug
 	}
-	if c, err := s.V.LoadConcept(slug); err == nil {
+	if c, err := s.vault().LoadConcept(slug); err == nil {
 		if c.Meta.Title != "" {
 			return c.Meta.Title
 		}
@@ -32,7 +32,7 @@ func (s *Server) apunteTitle(slug string) string {
 
 func (s *Server) getApunte(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
-	a, err := s.V.LoadApunte(slug)
+	a, err := s.vault().LoadApunte(slug)
 	if err != nil {
 		fail(w, 400, err.Error())
 		return
@@ -55,7 +55,7 @@ func (s *Server) saveApunte(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, "no existe esa guía ni ese concepto")
 		return
 	}
-	a, err := s.V.SaveApunte(slug, title, body.Body)
+	a, err := s.vault().SaveApunte(slug, title, body.Body)
 	if err != nil {
 		fail(w, 400, err.Error())
 		return
@@ -82,7 +82,7 @@ func (s *Server) attach(w http.ResponseWriter, r *http.Request) {
 			fail(w, 500, err.Error())
 			return
 		}
-		name, err := s.V.SaveAttachment(fh.Filename, src, maxAttachment)
+		name, err := s.vault().SaveAttachment(fh.Filename, src, maxAttachment)
 		src.Close()
 		if err != nil {
 			fail(w, 400, err.Error())
@@ -109,7 +109,7 @@ func isImage(name string) bool {
 // it holds can run in the app's origin.
 func (s *Server) attachment(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	path, err := s.V.AttachmentPath(name)
+	path, err := s.vault().AttachmentPath(name)
 	if err != nil {
 		fail(w, 400, err.Error())
 		return

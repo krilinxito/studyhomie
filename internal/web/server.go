@@ -50,6 +50,11 @@ type Server struct {
 	// ConfigPath is where the settings page saves the AI choice; empty keeps it in memory.
 	ConfigPath string
 	pmu        sync.RWMutex // guards P, Cfg and Warning, which the settings page can change
+	vmu        sync.RWMutex // guards V, which changes when you switch vaults
+	// PickFolder and Open reach the desktop (folder dialog, explorer, Obsidian); nil uses the
+	// system's. Tests replace them.
+	PickFolder func(ctx context.Context) (string, error)
+	Open       func(kind, target string) error
 	// CheckLinks verifies cited URLs; nil uses the real check. Tests replace it.
 	CheckLinks func(ctx context.Context, urls []string) map[string]bool
 
@@ -69,8 +74,17 @@ func New(cfg config.Config, v *vault.Vault, p provider.Provider) *Server {
 	return s
 }
 
-func (s *Server) uploadDir() string   { return filepath.Join(s.V.Root, ".studyhomie", "uploads") }
-func (s *Server) sessionsDir() string { return filepath.Join(s.V.Root, ".studyhomie", "sessions") }
+// vault is the vault in use; switching vaults replaces it.
+func (s *Server) vault() *vault.Vault {
+	s.vmu.RLock()
+	defer s.vmu.RUnlock()
+	return s.V
+}
+
+func (s *Server) uploadDir() string { return filepath.Join(s.vault().Root, ".studyhomie", "uploads") }
+func (s *Server) sessionsDir() string {
+	return filepath.Join(s.vault().Root, ".studyhomie", "sessions")
+}
 
 // loadSessions brings back the stored history. One that was still running when the app closed
 // is marked interrupted and given a closing event, so the browser can replay it to the end.
@@ -111,6 +125,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/notes/{slug}/concept", s.concept)
 	mux.HandleFunc("POST /api/notes/{slug}/viz", s.vizPage)
 	mux.HandleFunc("POST /api/notes/{slug}/explain", s.explain)
+	mux.HandleFunc("GET /api/vaults", s.vaults)
+	mux.HandleFunc("POST /api/vaults", s.addVault)
+	mux.HandleFunc("POST /api/vaults/use", s.useVault)
+	mux.HandleFunc("POST /api/vaults/forget", s.forgetVault)
+	mux.HandleFunc("POST /api/vaults/pick", s.pickFolder)
+	mux.HandleFunc("POST /api/vault/open", s.openOutside)
+	mux.HandleFunc("GET /api/vault/files", s.vaultFiles)
+	mux.HandleFunc("GET /api/vault/search", s.vaultSearch)
+	mux.HandleFunc("GET /api/vault/raw/{dir}/{slug}", s.readRaw)
+	mux.HandleFunc("PUT /api/vault/raw/{dir}/{slug}", s.writeRaw)
 	mux.HandleFunc("GET /api/apuntes/{slug}", s.getApunte)
 	mux.HandleFunc("PUT /api/apuntes/{slug}", s.saveApunte)
 	mux.HandleFunc("POST /api/adjuntos", s.attach)
@@ -193,7 +217,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	p, cfg, warning := s.backend()
 	writeJSON(w, 200, map[string]any{
 		"provider":  p.Name(),
-		"vault":     s.V.Root,
+		"vault":     s.vault().Root,
 		"interests": cfg.Interests,
 		"activeRun": active,
 		"warning":   warning,
@@ -208,7 +232,7 @@ const answerTimeout = 3 * time.Minute
 // they take their input from the request and send the result back in the response.
 func (s *Server) shortSession() *session.Session {
 	p, cfg, _ := s.backend()
-	return &session.Session{P: p, V: s.V, Cfg: cfg, CheckLinks: s.CheckLinks}
+	return &session.Session{P: p, V: s.vault(), Cfg: cfg, CheckLinks: s.CheckLinks}
 }
 
 // drain reads what is left of the request body. Go only notices that the browser closed the connection
@@ -301,12 +325,12 @@ func shortStatus(err error) int {
 }
 
 func (s *Server) roadmaps(w http.ResponseWriter, r *http.Request) {
-	rms, err := s.V.ListIn("roadmaps")
+	rms, err := s.vault().ListIn("roadmaps")
 	if err != nil {
 		fail(w, 500, err.Error())
 		return
 	}
-	topics, err := s.V.List()
+	topics, err := s.vault().List()
 	if err != nil {
 		fail(w, 500, err.Error())
 		return
@@ -343,14 +367,14 @@ func (s *Server) roadmaps(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) daily(w http.ResponseWriter, r *http.Request) {
 	date := s.Now().Format("2006-01-02")
-	d, err := s.V.LoadFrom("daily", date)
+	d, err := s.vault().LoadFrom("daily", date)
 	if err != nil {
 		writeJSON(w, 200, map[string]any{"date": date})
 		return
 	}
 	slug := vault.Slugify(d.Meta.Title)
 	res := map[string]any{"date": date, "topic": d.Meta.Title, "slug": slug, "field": d.Meta.Field}
-	if n, err := s.V.Load(slug); err == nil {
+	if n, err := s.vault().Load(slug); err == nil {
 		res["status"], res["mastery"] = n.Meta.Status, n.Meta.Mastery
 	}
 	writeJSON(w, 200, res)
@@ -584,7 +608,7 @@ func (s *Server) interactive(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	html, err := s.V.LoadInteractive(slug)
+	html, err := s.vault().LoadInteractive(slug)
 	if err != nil {
 		http.NotFound(w, r)
 		return

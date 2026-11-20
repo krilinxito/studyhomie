@@ -79,6 +79,7 @@ Al abrir la app solo ves los chats y el chat. El **panel de estudio** (Guía, Co
 - **Conceptos**: el iceberg de la guía. Arriba del agua el tema; abajo, nivel por nivel, lo que necesita: lo blanco tiene nota, lo punteado se explica al pulsarlo.
 - **Mapa**: cada guía con sus conceptos, conectados por lo que requiere cada uno; los pendientes salen en gris. Muestra **este chat** (lo que escribió o abrió) o **todos tus chats**.
 - **Practicar**: preguntas, explicar con tus palabras, tarjetas de repaso y simulación.
+- **Vault** (el botón de libros de la barra superior): todas las notas del vault en uso, con búsqueda por título y texto y filtro por carpeta. Cada nota se abre en la app, se **edita a mano** (su Markdown completo, propiedades incluidas, con vista previa y Ctrl+S) o se abre en **Obsidian** o en su carpeta. Arriba están **tus vaults**: puedes crear o agregar otros en cualquier carpeta («Elegir carpeta…» abre el selector de Windows) y cambiar entre ellos. Cada vault tiene sus propias guías, chats y mapa.
 - **Apuntes**: tus propias notas sobre una guía o un concepto («Tomar apuntes» en su cabecera). Se guardan solas, admiten Markdown, fórmulas y `[[enlaces]]`, y puedes pegar o arrastrar imágenes y archivos: quedan en el vault y se enlazan como en Obsidian (`![[foto.png]]`).
 
 Las guías y notas admiten:
@@ -141,7 +142,8 @@ Todo es opcional; sin el archivo se usan estos valores.
 | `quick_model` | vacío | Modelo para las respuestas cortas (conceptos base y dudas); vacío = `model`. Poner uno más rápido y barato hace que respondan antes |
 | `port` | `8765` | Puerto de la interfaz web |
 | `language` | `"español"` | Idioma de guías, pruebas y tutor |
-| `vault` | `"vault"` | Carpeta de las notas |
+| `vault` | `"vault"` | Carpeta de las notas: el vault en uso |
+| `vaults` | `[]` | Todos los vaults que agregaste, para cambiar entre ellos desde el panel Vault |
 | `interests` | lista amplia | Campos de los que sale el reto diario. "Totalmente aleatorio" suma además los campos por defecto |
 | `context_window` / `compact_at` | `200000` / `0.6` | Cuándo se resume una conversación larga para que no se acumule el contexto |
 | `depth` | `1` | Niveles de conceptos que se escriben de entrada en las guías hechas fuera del chat (roadmap, reto del día, terminal) |
@@ -151,6 +153,8 @@ Todo es opcional; sin el archivo se usan estos valores.
 ## Tu vault
 
 Las notas son archivos Markdown normales con `[[enlaces]]`. **Abre la carpeta `vault/` con [Obsidian](https://obsidian.md)** y verás el grafo de lo que has aprendido. Un vault de una versión anterior (con `topics/`) se pasa solo a `guias/` la primera vez que arranca.
+
+Puedes tener **varios vaults** (por ejemplo uno por materia, o uno en una carpeta sincronizada). Se agregan y se cambian desde el panel Vault; la lista queda en `studyhomie.toml` (`vault` es el que está en uso y `vaults` todos los que agregaste). Quitar un vault de la lista no borra su carpeta. Una carpeta vacía se convierte en vault al agregarla; una que ya tiene notas se abre tal cual.
 
 ```
 vault/

@@ -653,13 +653,48 @@ html.fs .dock { padding: 0; }
 .map-scope { display: inline-flex; gap: 2px; }
 .empty #map-see-all { margin-top: 12px; }
 
+/* Vault: your vaults and every note, as plain lists */
+.vault { width: min(760px, 100%); margin: 0 auto; padding: 22px 28px 56px; }
+.vault h2 { margin: 0; font-size: 26px; letter-spacing: -.025em; line-height: 1.2; }
+.v-path { margin: 4px 0 0; font: 12.5px var(--mono); color: var(--muted); word-break: break-all; }
+.v-stats { margin: 8px 0 14px; font-size: 13.5px; color: var(--muted); }
+.v-section { margin-top: 30px; }
+.v-section h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--muted); padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.v-list, .v-notes { list-style: none; margin: 0; padding: 0; }
+.v-list li { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.v-list li.on strong { color: var(--accent); }
+.v-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.v-main small { font: 12px var(--mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.v-meta { font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+.v-actions { display: flex; gap: 2px; align-items: center; }
+.v-add-btn { margin-top: 10px; margin-left: -11px; }
+.v-add { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.v-add-row { display: flex; gap: 8px; align-items: center; }
+.v-add-row input { flex: 1; min-width: 0; font-family: var(--mono); font-size: 13.5px; }
+.v-tools { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 6px; }
+.v-notes li { display: flex; align-items: flex-start; gap: 8px; border-bottom: 1px solid var(--line); }
+.v-notes li.hint { padding: 12px 0; border: 0; }
+.v-open { flex: 1; min-width: 0; text-align: left; font: inherit; color: var(--ink); background: none; border: 0; padding: 10px 0; cursor: pointer; display: flex; flex-direction: column; gap: 2px; }
+.v-open:hover strong { color: var(--accent); }
+.v-open strong { font-weight: 600; font-size: 14.5px; transition: color .15s; }
+.v-open small { font-size: 12px; color: var(--muted); }
+.v-snip { font-size: 13px; color: var(--muted); line-height: 1.5; margin-top: 2px; }
+.v-notes .v-actions { padding-top: 8px; opacity: .55; transition: opacity .15s; }
+.v-notes li:hover .v-actions, .v-notes li:focus-within .v-actions { opacity: 1; }
+.v-notes .icon-btn { width: 30px; height: 30px; }
+.v-notes .icon-btn .ic { width: 16px; height: 16px; }
+.v-editor { display: flex; flex-direction: column; min-height: 100%; }
+.v-editor h2 { margin-bottom: 12px; }
+.v-text { flex: 1; min-height: 60vh; resize: vertical; font: 13.5px/1.65 var(--mono); border: 0; padding: 4px 0; background: transparent; tab-size: 2; }
+.v-text:focus { box-shadow: none; border: 0; }
+
 /* a phone: one group of tabs */
 @media (max-width: 880px) {
   .top { padding: 8px 10px 0; height: 48px; }
   .brand span, .badge { display: none; }
   body .dockview-theme-light-spaced { --dv-spacing-padding: 6px; }
   .transcript { padding: 6px 12px 16px; }
-  .reader-wrap, .concepts-wrap, .practice { padding: 18px 16px 56px; }
+  .reader-wrap, .concepts-wrap, .practice, .vault, .notes { padding: 18px 16px 56px; }
   .r-next { grid-template-columns: minmax(0, 1fr); }
   .plan-levels > li { grid-template-columns: minmax(0, 1fr); gap: 4px; }
   .plan-added { margin-left: 0; }

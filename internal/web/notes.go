@@ -39,12 +39,12 @@ func guideGroup(n vault.Note) string {
 }
 
 func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
-	notes, err := s.V.List()
+	notes, err := s.vault().List()
 	if err != nil {
 		fail(w, 500, err.Error())
 		return
 	}
-	concepts, err := s.V.ListConcepts()
+	concepts, err := s.vault().ListConcepts()
 	if err != nil {
 		fail(w, 500, err.Error())
 		return
@@ -230,10 +230,10 @@ type conceptRef struct {
 
 // titleOf names a guide or a concept.
 func (s *Server) titleOf(slug string) string {
-	if o, err := s.V.Load(slug); err == nil && o.Meta.Title != "" {
+	if o, err := s.vault().Load(slug); err == nil && o.Meta.Title != "" {
 		return o.Meta.Title
 	}
-	if c, err := s.V.LoadConcept(slug); err == nil && c.Meta.Title != "" {
+	if c, err := s.vault().LoadConcept(slug); err == nil && c.Meta.Title != "" {
 		return c.Meta.Title
 	}
 	return slug
@@ -253,35 +253,35 @@ func (s *Server) note(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "nota inválida")
 		return
 	}
-	back, _ := s.V.Backlinks(slug)
-	if n, err := s.V.Load(slug); err == nil {
+	back, _ := s.vault().Backlinks(slug)
+	if n, err := s.vault().Load(slug); err == nil {
 		notes := []conceptRef{}
 		for _, id := range n.Meta.Concepts {
 			ref := conceptRef{Slug: id, Title: id}
-			if c, err := s.V.LoadConcept(id); err == nil {
+			if c, err := s.vault().LoadConcept(id); err == nil {
 				ref = conceptRef{Slug: id, Title: c.Meta.Title, Summary: c.Meta.Summary, Category: c.Meta.Category, Requires: c.Meta.Requires, Exists: true}
 			}
 			notes = append(notes, ref)
 		}
-		_, simErr := s.V.LoadInteractive(slug)
+		_, simErr := s.vault().LoadInteractive(slug)
 		writeJSON(w, 200, map[string]any{
 			"slug": slug, "kind": "guide", "meta": n.Meta, "body": n.Body,
-			"backlinks": s.refs(back), "requires": s.refs(n.Meta.Requires), "concepts": notes, "hasSimulation": simErr == nil, "apunte": s.V.HasApunte(slug),
+			"backlinks": s.refs(back), "requires": s.refs(n.Meta.Requires), "concepts": notes, "hasSimulation": simErr == nil, "apunte": s.vault().HasApunte(slug),
 		})
 		return
 	}
 	id := slug
-	if !s.V.ConceptExists(id) {
+	if !s.vault().ConceptExists(id) {
 		id = vault.ConceptID(slug) // a link written with accents
 	}
-	c, err := s.V.LoadConcept(id)
+	c, err := s.vault().LoadConcept(id)
 	if err != nil {
 		fail(w, 404, "no existe esa nota")
 		return
 	}
 	writeJSON(w, 200, map[string]any{
 		"slug": id, "kind": "concept", "meta": c.Meta, "body": c.Body,
-		"backlinks": s.refs(back), "requires": s.refs(c.Meta.Requires), "guides": s.refs(c.Meta.Guides), "apunte": s.V.HasApunte(id),
+		"backlinks": s.refs(back), "requires": s.refs(c.Meta.Requires), "guides": s.refs(c.Meta.Guides), "apunte": s.vault().HasApunte(id),
 	})
 }
 
