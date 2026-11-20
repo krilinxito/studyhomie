@@ -304,12 +304,10 @@ func (s *Session) ConceptNote(ctx context.Context, title, summary, guide string)
 	if id == "" {
 		return "", inputErrorf("el concepto necesita un nombre")
 	}
-	gTitle := ""
-	if guide != "" {
-		if n, err := s.V.Load(guide); err == nil {
-			gTitle = n.Meta.Title
-		}
+	if guide != "" && s.V.Exists(guide) {
+		return s.Explain(ctx, guide, title, summary)
 	}
+	gTitle := ""
 	if s.V.ConceptExists(id) {
 		if gTitle != "" {
 			return id, s.linkConcept(id, guide, gTitle)

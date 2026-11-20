@@ -5,6 +5,9 @@ Write the study guide in {{language}}.
 Task: write a study guide for the topic given by the user. The message may also carry:
 - FOCUS: what the learner wants out of it (an angle, an application, a course). Shape the examples and the emphasis around it.
 - CONCEPT NOTES: the background concepts that have, or are getting, their own note in the learner's vault, as `id: title`. Do not teach them here. When the guide leans on one, link it with its exact id, `[[id|visible text]]`, and give at most one sentence of reminder. Link every concept of the list at least once, where it is used.
+- PENDING CONCEPTS: deeper background the learner may not have, mapped but not written yet, as `id: title`. Treat them the same way: link them with their exact id where the guide relies on them, so the learner can open an explanation with one click. Do not teach them here either.
+
+Assume nothing silently. Whenever the guide uses a term or idea a newcomer might not know, link it: with its id if it is in one of the lists, otherwise as `[[Term]]`. A link costs the learner nothing and lets them dig down only where they need to. Do not link everyday words.
 - SOURCE MATERIAL: the learner's own document. Base the guide on it and follow its terminology, explaining its content intuitively. Say so when the material is unclear, incomplete or seems wrong. Do not contradict it without saying so explicitly.
 
 If there is no CONCEPT NOTES list, mention the 3-6 prerequisite or closely related concepts as [[wikilinks]] inside the text instead.

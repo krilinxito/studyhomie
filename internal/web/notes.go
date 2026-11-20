@@ -100,6 +100,30 @@ func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
 		}
 		nodes = append(nodes, gNode{ID: c.Slug, Label: title, Kind: "concept", Status: "concept", Group: g, Category: c.Meta.Category, Summary: c.Meta.Summary})
 	}
+	// the iceberg under each guide: mapped concepts with no note yet
+	type pend struct {
+		id       string
+		requires []string
+	}
+	var pendings []pend
+	for _, n := range notes {
+		for _, p := range n.Meta.Pending {
+			if exists[p.ID] {
+				continue
+			}
+			exists[p.ID] = true
+			group[p.ID] = group[n.Slug]
+			pendings = append(pendings, pend{p.ID, p.Requires})
+			nodes = append(nodes, gNode{ID: p.ID, Label: p.Title, Kind: "pending", Status: "pending", Group: group[n.Slug], Category: p.Category, Summary: p.Summary})
+		}
+	}
+	for _, p := range pendings {
+		for _, req := range p.requires {
+			if exists[req] {
+				add(req, p.id, "requires")
+			}
+		}
+	}
 	for _, n := range notes {
 		for _, req := range n.Meta.Requires {
 			if exists[req] {
@@ -206,6 +230,31 @@ func (s *Server) note(w http.ResponseWriter, r *http.Request) {
 		"slug": id, "kind": "concept", "meta": c.Meta, "body": c.Body,
 		"backlinks": s.refs(back), "requires": s.refs(c.Meta.Requires), "guides": s.refs(c.Meta.Guides),
 	})
+}
+
+// explain writes the note of a concept a guide leaves under water (or any term it links) and answers
+// with the concept's id.
+func (s *Server) explain(w http.ResponseWriter, r *http.Request) {
+	slug, ok := noteSlug(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Ref     string `json:"ref"`
+		Summary string `json:"summary"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	drain(r)
+	ctx, cancel := context.WithTimeout(r.Context(), answerTimeout)
+	defer cancel()
+	id, err := s.shortSession().Explain(ctx, slug, body.Ref, body.Summary)
+	if err != nil {
+		fail(w, shortStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]string{"slug": id})
 }
 
 // vizTimeout bounds building a page for an html widget: a whole document, so longer than a short answer.

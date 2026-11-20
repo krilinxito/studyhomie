@@ -22,6 +22,7 @@ type Config struct {
 	CompactAt     float64  `toml:"compact_at"`     // fraction of the window that triggers compaction
 	Depth         int      `toml:"depth"`          // levels of prerequisite concept notes a guide gets by default (0-4)
 	Parallel      int      `toml:"parallel"`       // concept notes written at the same time
+	Iceberg       bool     `toml:"iceberg"`        // map the prerequisites down to the basics even when writing fewer
 }
 
 // DefaultInterests are the fields the Daily draws from when none are configured.
@@ -42,6 +43,7 @@ func Default() Config {
 		CompactAt:     0.6,
 		Depth:         1,
 		Parallel:      3,
+		Iceberg:       true,
 		Interests:     DefaultInterests(),
 	}
 }

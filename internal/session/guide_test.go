@@ -39,16 +39,33 @@ func ids(p ConceptPlan) map[string]int {
 	return m
 }
 
-func TestPlanCutsAtDepthAndDropsUnreachable(t *testing.T) {
+func pendingIDs(p ConceptPlan) map[string]int {
+	m := map[string]int{}
+	for _, c := range p.Pending {
+		m[c.ID] = c.Level
+	}
+	return m
+}
+
+func TestPlanWritesToDepthAndKeepsTheRestPending(t *testing.T) {
 	p := planFrom(t, fourierPlan, 1, noVault)
 	got := ids(p)
 	if len(got) != 3 || got["numeros-complejos"] != 1 || got["integral"] != 1 || got["funcion-seno"] != 1 {
 		t.Fatalf("depth 1 = %v", got)
 	}
+	// the iceberg: everything below is mapped, down to the basics, but not written
+	pend := pendingIDs(p)
+	if pend["plano-cartesiano"] != 2 || pend["funcion"] != 2 || pend["limite"] != 2 || pend["numeros-reales"] != 3 {
+		t.Errorf("pending at depth 1 = %v", pend)
+	}
+	// a written concept still points at its pending prerequisites, so its links can be explained later
 	for _, c := range p.Concepts {
-		if len(c.Requires) > 0 && c.ID != "funcion-seno" {
-			t.Errorf("%s keeps requires to concepts cut by depth: %v", c.ID, c.Requires)
+		if c.ID == "integral" && strings.Join(c.Requires, ",") != "funcion,limite" {
+			t.Errorf("integral requires = %v", c.Requires)
 		}
+	}
+	if p0 := planFrom(t, fourierPlan, 0, noVault); len(p0.Concepts) != 0 || len(p0.Pending) != 7 {
+		t.Errorf("depth 0 writes nothing and maps everything: %d written, %d pending", len(p0.Concepts), len(p0.Pending))
 	}
 
 	p = planFrom(t, fourierPlan, 2, noVault)
@@ -73,8 +90,26 @@ func TestPlanCutsAtDepthAndDropsUnreachable(t *testing.T) {
 		t.Errorf("category = %q", p.Concepts[0].Category)
 	}
 
-	if got := ids(planFrom(t, fourierPlan, 4, noVault)); got["numeros-reales"] != 3 {
-		t.Errorf("depth 4 should reach the basics: %v", got)
+	if p4 := planFrom(t, fourierPlan, 4, noVault); ids(p4)["numeros-reales"] != 3 || len(p4.Pending) != 0 {
+		t.Errorf("depth 4 should write down to the basics: %v, pending %v", ids(p4), pendingIDs(p4))
+	}
+}
+
+func TestApplyEditPromotesPending(t *testing.T) {
+	p := planFrom(t, fourierPlan, 1, noVault)
+	e := parseEditLine("*limite -numeros-complejos")
+	if len(e.Write) != 1 || e.Write[0] != "limite" {
+		t.Fatalf("parsed edit = %+v", e)
+	}
+	p = applyEdit(p, e, noVault)
+	if ids(p)["limite"] != 2 {
+		t.Errorf("a promoted concept is written now: %v", ids(p))
+	}
+	if _, ok := pendingIDs(p)["plano-cartesiano"]; ok {
+		t.Error("what only the skipped concept needed must leave the iceberg too")
+	}
+	if _, ok := pendingIDs(p)["funcion"]; !ok {
+		t.Errorf("the rest stays pending: %v", pendingIDs(p))
 	}
 }
 
@@ -210,5 +245,39 @@ func TestGuideStopsWhenThePlanIsRejected(t *testing.T) {
 func TestConceptIDFoldsAccents(t *testing.T) {
 	if got := vault.ConceptID("Estandarización (Z-score)"); got != "estandarizacion-z-score" {
 		t.Errorf("got %q", got)
+	}
+}
+
+func TestExplainWritesAPendingConcept(t *testing.T) {
+	f := &fake{replies: []provider.Response{reply("## En una frase\n\nGirar en el plano.", 10), reply("## En una frase\n\nOtra.", 10)}}
+	s, _ := newSession(t, f, "")
+	g := vault.Note{Slug: "fourier", Meta: vault.Meta{Title: "Fourier", Focus: "audio", Concepts: []string{"seno"},
+		Pending: []vault.PendingConcept{{ID: "circulo-unitario", Title: "Círculo unitario", Summary: "Seno y coseno al girar", Requires: []string{"angulo"}, Level: 2}}},
+		Body: "## Guía\n\nTexto.\n"}
+	if err := s.V.Save(g); err != nil {
+		t.Fatal(err)
+	}
+	id, err := s.Explain(context.Background(), "fourier", "circulo-unitario", "")
+	if err != nil || id != "circulo-unitario" {
+		t.Fatalf("explain: %q %v", id, err)
+	}
+	p := f.reqs[0].Prompt
+	if !strings.Contains(p, "title: Círculo unitario") || !strings.Contains(p, "Seno y coseno al girar") || !strings.Contains(p, "focus: audio") {
+		t.Errorf("concept prompt:\n%s", p)
+	}
+	n, _ := s.V.Load("fourier")
+	if len(n.Meta.Pending) != 0 || strings.Join(n.Meta.Concepts, ",") != "seno,circulo-unitario" {
+		t.Errorf("guide after explain: %+v", n.Meta)
+	}
+	c, err := s.V.LoadConcept("circulo-unitario")
+	if err != nil || c.Meta.Title != "Círculo unitario" || c.Meta.Guides[0] != "fourier" {
+		t.Errorf("concept: %v %+v", err, c.Meta)
+	}
+	// a term the guide links without planning it gets a readable title
+	if id, err := s.Explain(context.Background(), "fourier", "transformada-rapida", ""); err != nil || id != "transformada-rapida" {
+		t.Fatalf("explain a free term: %q %v", id, err)
+	}
+	if c, _ := s.V.LoadConcept("transformada-rapida"); c.Meta.Title != "Transformada rapida" {
+		t.Errorf("title from a link = %q", c.Meta.Title)
 	}
 }

@@ -52,7 +52,12 @@ func (s *Session) pick(n int) int {
 	return rand.IntN(n)
 }
 
-func (s *Session) printf(format string, a ...any) { fmt.Fprintf(s.Out, format, a...) }
+// printf writes to the learner; a session without output (a short web request) stays quiet.
+func (s *Session) printf(format string, a ...any) {
+	if s.Out != nil {
+		fmt.Fprintf(s.Out, format, a...)
+	}
+}
 
 func (s *Session) convo(system string, tools ...string) *Convo {
 	return &Convo{

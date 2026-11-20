@@ -40,6 +40,18 @@ type Meta struct {
 	Base     []string `yaml:"base,omitempty" json:"base,omitempty"`         // the ones the topic needs directly
 	Depth    int      `yaml:"depth,omitempty" json:"depth,omitempty"`
 	Focus    string   `yaml:"focus,omitempty" json:"focus,omitempty"`
+	// The part of the iceberg under water: concepts the guide stands on that have no note yet.
+	Pending []PendingConcept `yaml:"pending,omitempty" json:"pending,omitempty"`
+}
+
+// PendingConcept is a concept mapped under a guide but not written yet: one click writes it.
+type PendingConcept struct {
+	ID       string   `yaml:"id" json:"id"`
+	Title    string   `yaml:"title" json:"title"`
+	Summary  string   `yaml:"summary,omitempty" json:"summary,omitempty"`
+	Category string   `yaml:"category,omitempty" json:"category,omitempty"`
+	Requires []string `yaml:"requires,omitempty" json:"requires,omitempty"`
+	Level    int      `yaml:"level,omitempty" json:"level,omitempty"`
 }
 
 type Note struct {

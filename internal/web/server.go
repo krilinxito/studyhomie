@@ -103,6 +103,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/notes/{slug}/doubt", s.doubt)
 	mux.HandleFunc("POST /api/notes/{slug}/concept", s.concept)
 	mux.HandleFunc("POST /api/notes/{slug}/viz", s.vizPage)
+	mux.HandleFunc("POST /api/notes/{slug}/explain", s.explain)
 	mux.HandleFunc("GET /api/roadmaps", s.roadmaps)
 	mux.HandleFunc("GET /api/daily", s.daily)
 	mux.HandleFunc("GET /api/sessions", s.sessions)

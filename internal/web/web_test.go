@@ -52,7 +52,7 @@ func newTestServer(t *testing.T, p provider.Provider) (*Server, *httptest.Server
 		t.Fatal(err)
 	}
 	cfg := config.Default()
-	cfg.Depth = 0 // guides without concept notes, so the scripted replies stay in order
+	cfg.Depth, cfg.Iceberg = 0, false // guides without concept notes, so the scripted replies stay in order
 	s := New(cfg, v, p)
 	s.Now = func() time.Time { return time.Date(2026, 10, 27, 9, 0, 0, 0, time.UTC) }
 	ts := httptest.NewServer(s.Handler())
@@ -761,5 +761,28 @@ func TestNoteEndpointServesConcepts(t *testing.T) {
 	_, body = do(t, ts, "GET", "/api/graph", nil, nil)
 	if !strings.Contains(string(body), `{"from":"probabilidad","to":"bayes","kind":"requires"}`) || !strings.Contains(string(body), `"kind":"concept"`) {
 		t.Errorf("graph: %s", body)
+	}
+}
+
+func TestExplainEndpointAndPendingInTheGraph(t *testing.T) {
+	s, ts := newTestServer(t, &scripted{replies: []string{"## En una frase\n\nAlgo."}})
+	if err := s.V.Save(vault.Note{Slug: "bayes", Meta: vault.Meta{Title: "Bayes",
+		Pending: []vault.PendingConcept{{ID: "fraccion", Title: "Fracción", Level: 2}}}, Body: "## Guía\n\nVer [[fraccion]].\n"}); err != nil {
+		t.Fatal(err)
+	}
+	_, body := do(t, ts, "GET", "/api/graph", nil, nil)
+	if !strings.Contains(string(body), `"id":"fraccion","label":"Fracción","kind":"pending"`) {
+		t.Errorf("graph without the pending concept: %s", body)
+	}
+	res, body := do(t, ts, "POST", "/api/notes/bayes/explain", map[string]string{"ref": "fraccion"}, nil)
+	if res.StatusCode != 200 || !strings.Contains(string(body), `"slug":"fraccion"`) {
+		t.Fatalf("explain: %d %s", res.StatusCode, body)
+	}
+	if !s.V.ConceptExists("fraccion") {
+		t.Error("the concept note was not written")
+	}
+	_, body = do(t, ts, "GET", "/api/graph", nil, nil)
+	if strings.Contains(string(body), `"kind":"pending"`) || !strings.Contains(string(body), `"id":"fraccion","label":"Fracción","kind":"concept"`) {
+		t.Errorf("explained concept should be a concept now: %s", body)
 	}
 }

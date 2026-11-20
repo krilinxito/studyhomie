@@ -24,8 +24,12 @@ type GuideReq struct {
 // MaxDepth bounds how far down the prerequisites a plan goes.
 const MaxDepth = 4
 
-// maxPlanned bounds the concept notes of one guide.
-const maxPlanned = 20
+// maxPlanned bounds the concepts mapped under one guide, written or pending.
+const maxPlanned = 30
+
+// maxMapDepth is how far down the planner maps the prerequisites, whatever the depth written now:
+// the deeper levels are the part of the iceberg under water, explained on demand.
+const maxMapDepth = 6
 
 // PlannedConcept is one concept note of a plan.
 type PlannedConcept struct {
@@ -38,20 +42,46 @@ type PlannedConcept struct {
 	Exists   bool     `json:"exists,omitempty"` // already in the vault: linked, not rewritten
 }
 
-// ConceptPlan is the tree of concept notes under a guide.
+// ConceptPlan is the tree of concepts under a guide: the ones written now (down to Depth, plus
+// those the vault already has) and the pending ones below, mapped but left to explain on demand.
 type ConceptPlan struct {
 	Topic    string           `json:"topic"`
 	Depth    int              `json:"depth"`
 	Base     []string         `json:"base"` // ids the topic needs directly
 	Concepts []PlannedConcept `json:"concepts"`
+	Pending  []PlannedConcept `json:"pending,omitempty"`
+	Promoted []string         `json:"promoted,omitempty"` // pending ids the learner chose to write now
 }
 
 func (p ConceptPlan) byID() map[string]PlannedConcept {
-	m := make(map[string]PlannedConcept, len(p.Concepts))
+	m := make(map[string]PlannedConcept, len(p.Concepts)+len(p.Pending))
+	for _, c := range p.Pending {
+		m[c.ID] = c
+	}
 	for _, c := range p.Concepts {
 		m[c.ID] = c
 	}
 	return m
+}
+
+// splitPlan decides what is written now: the concepts down to p.Depth, the promoted ones and those
+// the vault already has. Everything deeper stays pending.
+func splitPlan(p ConceptPlan) ConceptPlan {
+	promoted := map[string]bool{}
+	for _, id := range p.Promoted {
+		promoted[id] = true
+	}
+	all := append(append([]PlannedConcept(nil), p.Concepts...), p.Pending...)
+	sort.SliceStable(all, func(i, j int) bool { return all[i].Level < all[j].Level })
+	p.Concepts, p.Pending = nil, nil
+	for _, c := range all {
+		if c.Level <= p.Depth || c.Exists || promoted[c.ID] {
+			p.Concepts = append(p.Concepts, c)
+		} else {
+			p.Pending = append(p.Pending, c)
+		}
+	}
+	return p
 }
 
 // rawPlan is what the planner model returns.
@@ -126,9 +156,9 @@ func normalizePlan(raw rawPlan, topic string, depth int, vaultTitle func(id stri
 		c.Requires = clean(c.Requires, id)
 		all[id] = c
 	}
-	plan := levels(all, order, base, depth)
-	plan.Topic = topic
-	return plan
+	plan := levels(all, order, base, maxMapDepth)
+	plan.Topic, plan.Depth = topic, depth
+	return splitPlan(plan)
 }
 
 // levels keeps the concepts reachable from base within depth levels (breadth first, so each gets
@@ -195,15 +225,17 @@ func levels(all map[string]PlannedConcept, order, base []string, depth int) Conc
 	return ConceptPlan{Depth: depth, Base: b, Concepts: kept}
 }
 
-// planEdit is how the learner changes a proposed plan: concepts to leave out and new ones to add.
+// planEdit is how the learner changes a proposed plan: concepts to leave out, new ones to add and
+// pending ones to write now.
 type planEdit struct {
-	Skip []string `json:"skip"`
-	Add  []string `json:"add"`
-	Go   bool     `json:"go"` // generate right after applying the edit
+	Skip  []string `json:"skip"`
+	Add   []string `json:"add"`
+	Write []string `json:"write"`
+	Go    bool     `json:"go"` // generate right after applying the edit
 }
 
-// applyEdit removes the skipped concepts (and whatever only they led to) and adds new ones the
-// topic needs directly.
+// applyEdit removes the skipped concepts (and whatever only they led to, written or pending), adds
+// new ones the topic needs directly, and promotes pending ones to be written now.
 func applyEdit(p ConceptPlan, e planEdit, vaultTitle func(id string) (string, bool)) ConceptPlan {
 	skip := map[string]bool{}
 	for _, id := range e.Skip {
@@ -211,10 +243,16 @@ func applyEdit(p ConceptPlan, e planEdit, vaultTitle func(id string) (string, bo
 	}
 	all := map[string]PlannedConcept{}
 	var order []string
-	for _, c := range p.Concepts {
+	for _, c := range append(append([]PlannedConcept(nil), p.Concepts...), p.Pending...) {
 		if !skip[c.ID] {
 			all[c.ID] = c
 			order = append(order, c.ID)
+		}
+	}
+	promoted := append([]string(nil), p.Promoted...)
+	for _, id := range e.Write {
+		if id = vault.ConceptID(id); id != "" && !skip[id] {
+			promoted = append(promoted, id)
 		}
 	}
 	base := append([]string(nil), p.Base...)
@@ -236,10 +274,11 @@ func applyEdit(p ConceptPlan, e planEdit, vaultTitle func(id string) (string, bo
 			order = append(order, id)
 		}
 		base = append(base, id)
+		promoted = append(promoted, id) // asked for by name: written even with depth 0
 	}
-	out := levels(all, order, base, p.Depth+1) // an added concept must not push the others out
-	out.Topic, out.Depth = p.Topic, p.Depth
-	return out
+	out := levels(all, order, base, maxMapDepth)
+	out.Topic, out.Depth, out.Promoted = p.Topic, p.Depth, promoted
+	return splitPlan(out)
 }
 
 // conceptTitle looks a concept up in the vault for the planner.
@@ -309,8 +348,14 @@ func (s *Session) approvePlan(p ConceptPlan) (ConceptPlan, bool, error) {
 				}
 				s.printf("%s- %s [%s]%s\n", strings.Repeat("  ", c.Level-1), c.Title, c.ID, mark)
 			}
+			if len(p.Pending) > 0 {
+				s.printf("Más abajo, para explicar cuando lo necesites:\n")
+				for _, c := range p.Pending {
+					s.printf("%s· %s [%s]\n", strings.Repeat("  ", c.Level-1), c.Title, c.ID)
+				}
+			}
 			s.printf("Responde s para generarlas, g para solo la guía, n para cancelar,\n" +
-				"o edita: -id quita un concepto, +Título añade uno (ej.: -media +Varianza).\n")
+				"o edita: -id quita un concepto, +Título añade uno, *id escribe ya uno de los de abajo.\n")
 		}
 		a, err := s.readLine("¿Genero la guía con estas notas?", "s")
 		if err != nil {
@@ -321,7 +366,17 @@ func (s *Session) approvePlan(p ConceptPlan) (ConceptPlan, bool, error) {
 		case "", "s", "si", "sí", "y", "ok":
 			return p, true, nil
 		case "g", "guia", "guía":
-			p.Concepts, p.Base = nil, nil
+			// no notes now: everything new stays in the iceberg, to explain on demand
+			var keep []PlannedConcept
+			for _, c := range p.Concepts {
+				if c.Exists {
+					keep = append(keep, c)
+				} else {
+					p.Pending = append(p.Pending, c)
+				}
+			}
+			p.Concepts, p.Promoted = keep, nil
+			sort.SliceStable(p.Pending, func(i, j int) bool { return p.Pending[i].Level < p.Pending[j].Level })
 			return p, true, nil
 		case "n", "no", "cancelar":
 			return p, false, nil
@@ -339,7 +394,7 @@ func (s *Session) approvePlan(p ConceptPlan) (ConceptPlan, bool, error) {
 		if e.Go {
 			return p, true, nil
 		}
-		if len(e.Skip) == 0 && len(e.Add) == 0 {
+		if len(e.Skip) == 0 && len(e.Add) == 0 && len(e.Write) == 0 {
 			s.printf("No entendí la respuesta.\n")
 		}
 	}
@@ -348,13 +403,15 @@ func (s *Session) approvePlan(p ConceptPlan) (ConceptPlan, bool, error) {
 // parseEditLine reads "-id +Some title -other" edits typed in a terminal.
 func parseEditLine(a string) planEdit {
 	var e planEdit
-	for _, chunk := range strings.Split(strings.NewReplacer(" -", "\x00-", " +", "\x00+").Replace(" "+a), "\x00") {
+	for _, chunk := range strings.Split(strings.NewReplacer(" -", "\x00-", " +", "\x00+", " *", "\x00*").Replace(" "+a), "\x00") {
 		chunk = strings.TrimSpace(chunk)
 		switch {
 		case strings.HasPrefix(chunk, "-") && len(chunk) > 1:
 			e.Skip = append(e.Skip, strings.TrimSpace(chunk[1:]))
 		case strings.HasPrefix(chunk, "+") && len(chunk) > 1:
 			e.Add = append(e.Add, strings.TrimSpace(chunk[1:]))
+		case strings.HasPrefix(chunk, "*") && len(chunk) > 1:
+			e.Write = append(e.Write, strings.TrimSpace(chunk[1:]))
 		}
 	}
 	return e
@@ -406,15 +463,17 @@ func (s *Session) Guide(ctx context.Context, req GuideReq) (string, error) {
 
 	s.card(Card{Kind: CardPhase, Phase: "prepare"})
 	plan := ConceptPlan{Topic: req.Topic, Depth: req.Depth}
-	if req.Depth > 0 {
-		s.printf("Planeando los conceptos base de «%s» (profundidad %d)...\n", req.Topic, req.Depth)
+	if req.Depth > 0 || s.Cfg.Iceberg {
+		s.printf("Mapeando lo que «%s» da por sabido...\n", req.Topic)
 		p, err := s.planConcepts(ctx, req, note)
 		switch {
 		case err != nil && ctx.Err() != nil:
 			return "", ctx.Err()
 		case err != nil:
 			s.printf("Aviso: no pude planear los conceptos (%v); escribo solo la guía.\n", err)
-		case len(p.Concepts) > 0:
+		case !hasFresh(p.Concepts):
+			plan = p // nothing to write now: the map goes straight into the guide, to explain later
+		default:
 			var ok bool
 			if plan, ok, err = s.approvePlan(p); err != nil {
 				return "", err
@@ -516,6 +575,16 @@ func (s *Session) Guide(ctx context.Context, req GuideReq) (string, error) {
 	return slug, nil
 }
 
+// hasFresh reports whether a plan has notes to write (not only ones the vault already has).
+func hasFresh(cs []PlannedConcept) bool {
+	for _, c := range cs {
+		if !c.Exists {
+			return true
+		}
+	}
+	return false
+}
+
 func stateOf(err error) string {
 	if err != nil {
 		return "error"
@@ -535,6 +604,12 @@ func (s *Session) writeGuide(ctx context.Context, note *vault.Note, req GuideReq
 	if len(plan.Concepts) > 0 {
 		prompt += "\n\nCONCEPT NOTES:\n"
 		for _, c := range plan.Concepts {
+			prompt += c.ID + ": " + c.Title + "\n"
+		}
+	}
+	if len(plan.Pending) > 0 {
+		prompt += "\n\nPENDING CONCEPTS:\n"
+		for _, c := range plan.Pending {
 			prompt += c.ID + ": " + c.Title + "\n"
 		}
 	}
@@ -585,10 +660,13 @@ func (s *Session) writeGuide(ctx context.Context, note *vault.Note, req GuideReq
 	}
 	note.Meta.Resources = resources
 	note.Meta.Depth, note.Meta.Focus = req.Depth, req.Focus
-	if len(plan.Concepts) > 0 || req.Depth > 0 {
-		note.Meta.Concepts, note.Meta.Base = nil, plan.Base
+	if len(plan.Concepts) > 0 || len(plan.Pending) > 0 || req.Depth > 0 {
+		note.Meta.Concepts, note.Meta.Base, note.Meta.Pending = nil, plan.Base, nil
 		for _, c := range plan.Concepts {
 			note.Meta.Concepts = append(note.Meta.Concepts, c.ID)
+		}
+		for _, c := range plan.Pending {
+			note.Meta.Pending = append(note.Meta.Pending, vault.PendingConcept{ID: c.ID, Title: c.Title, Summary: c.Summary, Category: c.Category, Requires: c.Requires, Level: c.Level})
 		}
 	}
 	note.Body = guideBody(note.Body, guide, resources)
@@ -685,4 +763,73 @@ func (s *Session) linkConcept(id, guide, title string) error {
 		}
 		return nil
 	})
+}
+
+// Explain writes the note of a concept a guide stands on but that has no note yet: one from the
+// part of its iceberg under water, or any term the guide links. The concept moves from pending to
+// written in the guide. A concept the vault already has is only linked. It returns the concept id.
+func (s *Session) Explain(ctx context.Context, guide, ref, summary string) (string, error) {
+	g, err := s.V.Load(guide)
+	if err != nil {
+		return "", inputErrorf("no existe la guía «%s»", guide)
+	}
+	ref = strings.TrimSpace(ref)
+	id := vault.ConceptID(ref)
+	if id == "" {
+		return "", inputErrorf("¿qué concepto explico?")
+	}
+	pc := PlannedConcept{ID: id, Title: titleFromRef(ref), Summary: strings.TrimSpace(summary), Level: 1}
+	for _, p := range g.Meta.Pending {
+		if p.ID == id {
+			pc = PlannedConcept{ID: p.ID, Title: p.Title, Summary: p.Summary, Category: p.Category, Requires: p.Requires, Level: p.Level}
+		}
+	}
+	if s.V.ConceptExists(id) {
+		if err := s.linkConcept(id, guide, g.Meta.Title); err != nil {
+			return "", err
+		}
+	} else {
+		plan := ConceptPlan{Topic: g.Meta.Title}
+		for _, cid := range g.Meta.Concepts {
+			t, _ := s.conceptTitle(cid)
+			if t == "" {
+				t = cid
+			}
+			plan.Concepts = append(plan.Concepts, PlannedConcept{ID: cid, Title: t})
+		}
+		for _, p := range g.Meta.Pending {
+			plan.Pending = append(plan.Pending, PlannedConcept{ID: p.ID, Title: p.Title})
+		}
+		s.printf("Escribiendo la nota «%s»...\n", pc.Title)
+		if err := s.writeConcept(ctx, pc, plan, GuideReq{Topic: g.Meta.Title, Focus: g.Meta.Focus}, guide); err != nil {
+			return "", err
+		}
+	}
+	err = s.V.Update(guide, func(n *vault.Note) error {
+		var rest []vault.PendingConcept
+		for _, p := range n.Meta.Pending {
+			if p.ID != id {
+				rest = append(rest, p)
+			}
+		}
+		n.Meta.Pending = rest
+		for _, x := range n.Meta.Concepts {
+			if x == id {
+				return nil
+			}
+		}
+		n.Meta.Concepts = append(n.Meta.Concepts, id)
+		return nil
+	})
+	return id, err
+}
+
+// titleFromRef turns a link target into a title: "numeros-complejos" reads "Numeros complejos".
+func titleFromRef(ref string) string {
+	if strings.ContainsAny(ref, " ") || !strings.Contains(ref, "-") {
+		return ref
+	}
+	t := strings.ReplaceAll(ref, "-", " ")
+	r := []rune(t)
+	return strings.ToUpper(string(r[:1])) + string(r[1:])
 }
