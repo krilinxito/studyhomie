@@ -84,7 +84,15 @@ body {
 /* header */
 .top { display: flex; align-items: center; gap: 16px; padding: 10px 16px 0; height: 52px; flex: none; }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: -.02em; font-size: 17px; color: var(--ink); text-decoration: none; }
-.logo { width: 28px; height: 28px; display: block; }
+/* the logo: an iceberg, drawn in the accent so it follows the theme; no background */
+.logo { width: 28px; height: 28px; display: block; overflow: visible; }
+.logo-tip { fill: var(--accent); transition: transform .4s var(--ease); transform-origin: 32px 27px; }
+.logo-facet { fill: color-mix(in srgb, var(--accent) 45%, var(--surface)); }
+.logo-wave { fill: none; stroke: var(--accent-2); stroke-width: 3.2; stroke-linecap: round; stroke-linejoin: round; }
+.logo-deep { fill: var(--accent-2); opacity: .3; transition: opacity .3s; }
+.brand:hover .logo-tip, .brand:hover .logo-facet { transform: translateY(-2px); }
+.brand:hover .logo-deep { opacity: .45; }
+.brand .logo-facet { transition: transform .4s var(--ease); transform-origin: 32px 27px; }
 .top-meta { margin-left: auto; display: flex; align-items: center; gap: 6px; }
 .badge { font: 11.5px var(--mono); padding: 3px 9px; border-radius: 99px; background: var(--surface); box-shadow: var(--shadow-sm); color: var(--muted); }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }

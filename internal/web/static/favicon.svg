@@ -1,10 +1,21 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" fill="#2b2620"/>
-  <g stroke="#f2c230" stroke-width="3" stroke-linecap="round">
-    <path d="M32 4v5M9 13l4 4M55 13l-4 4"/>
-  </g>
-  <circle cx="32" cy="28" r="15" fill="#f2c230"/>
-  <path d="M25 41h14v5H25z" fill="#f2c230"/>
-  <path d="M25 48h14v4H25zM28 54h8v4h-8z" fill="#faf5e8"/>
-  <path d="M26 29q3 6 6 0t6 0" fill="none" stroke="#2b2620" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <style>
+    .tip { fill: #4f46e5; }
+    .facet { fill: #818cf8; }
+    .wave { fill: none; stroke: #6366f1; stroke-width: 3.2; stroke-linecap: round; stroke-linejoin: round; }
+    .deep { fill: #6366f1; opacity: .28; }
+    @media (prefers-color-scheme: dark) {
+      .tip { fill: #a5b4fc; }
+      .facet { fill: #e0e7ff; }
+      .wave { stroke: #818cf8; }
+      .deep { fill: #818cf8; opacity: .32; }
+    }
+  </style>
+  <!-- the tip: what you see -->
+  <path class="tip" d="M17 27 L25 15 L30 19 L37 7 L47 27 Z"/>
+  <path class="facet" d="M37 7 L47 27 H39.5 Z"/>
+  <!-- the waterline -->
+  <path class="wave" d="M6 33 q4.5 -4 9 0 t9 0 t9 0 t9 0 t9 0 t7 0"/>
+  <!-- and everything underneath -->
+  <path class="deep" d="M13 38 H51 L58 47 L45 58 L22 60 L7 48 Z"/>
 </svg>
