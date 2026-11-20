@@ -29,6 +29,7 @@ type Config struct {
 	Iceberg       bool     `toml:"iceberg"`        // map the prerequisites down to the basics even when writing fewer
 	Updates       string   `toml:"updates"`        // new versions: "ask" (default), "auto" or "never"
 	PassScore     int      `toml:"pass_score"`     // mastery (0-100) a roadmap topic needs to unlock the next one
+	Timeout       int      `toml:"timeout"`        // minutes one AI call may take before it is cut (three times that when it searches the web); 0 = no limit
 }
 
 // DefaultInterests are the fields the Daily draws from when none are configured.
@@ -52,6 +53,7 @@ func Default() Config {
 		Iceberg:       true,
 		Updates:       "ask",
 		PassScore:     70,
+		Timeout:       5,
 		Interests:     DefaultInterests(),
 	}
 }

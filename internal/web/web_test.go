@@ -1053,6 +1053,16 @@ func TestStudySettings(t *testing.T) {
 	if _, cfg, _ := s.backend(); cfg.PassScore != 0 {
 		t.Errorf("pass score = %d", cfg.PassScore)
 	}
+	// the time limit of an AI call goes alone, and leaves the score as it was
+	if res, _ := do(t, ts, "POST", "/api/settings/study", map[string]any{"timeout": 61}, nil); res.StatusCode != 400 {
+		t.Errorf("61 minutes must be rejected, got %d", res.StatusCode)
+	}
+	if res, body := do(t, ts, "POST", "/api/settings/study", map[string]any{"timeout": 12}, nil); res.StatusCode != 200 || !strings.Contains(string(body), `"timeout":12`) {
+		t.Fatalf("save timeout = %d %s", res.StatusCode, body)
+	}
+	if _, cfg, _ := s.backend(); cfg.Timeout != 12 || cfg.PassScore != 0 {
+		t.Errorf("after saving the timeout: %d, pass score %d", cfg.Timeout, cfg.PassScore)
+	}
 }
 
 func TestLanguageScriptAndSetting(t *testing.T) {

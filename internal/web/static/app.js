@@ -712,7 +712,8 @@ function languageSection(row) {
     row('', result));
 }
 
-// the "Estudio" block of the settings page: the score a roadmap topic needs to unlock the next one
+// the "Estudio" block of the settings page: the score a roadmap topic needs to unlock the next one,
+// and how long one AI answer may take before it is cut
 function studySection(row) {
   const study = SET.data.study || {};
   const result = h('p', { class: 'set-result', role: 'status' });
@@ -728,9 +729,20 @@ function studySection(row) {
       loadGraph().catch(() => {}).then(() => reloadGuide());
     } catch (err) { say('bad', err.message); }
   });
+  const limit = h('input', { type: 'number', min: 0, max: 60, step: 1, value: study.timeout ?? 5, class: 'set-num', 'aria-label': t('Límite de tiempo por respuesta de la IA') });
+  limit.addEventListener('change', async () => {
+    const v = Math.round(Number(limit.value));
+    if (!Number.isFinite(v) || v < 0 || v > 60) { say('bad', t('Pon un número de 0 a 60.')); return; }
+    try {
+      SET.data.study = await api('/api/settings/study', { method: 'POST', body: { timeout: v } });
+      say('ok', t('Guardado.'));
+    } catch (err) { say('bad', err.message); }
+  });
   return h('section', { class: 'set-section' }, h('h3', {}, t('Estudio')),
     row(t('Nota para avanzar'), h('div', { class: 'set-inline' }, input, h('span', {}, '/ 100')),
       h('p', { class: 'set-facts' }, t('En un roadmap, el tema siguiente se desbloquea (y se escribe su guía) cuando sacas esta nota o más en la prueba o explicándolo.'))),
+    row(t('Límite por respuesta'), h('div', { class: 'set-inline' }, limit, h('span', {}, t('minutos'))),
+      h('p', { class: 'set-facts' }, t('Si la IA tarda más que esto en una respuesta, la corto y te aviso, en vez de esperar para siempre. Las guías que buscan en la web tienen el triple. 0 es sin límite.'))),
     row('', result));
 }
 

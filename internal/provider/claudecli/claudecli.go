@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/krilinxito/studyhomie/internal/provider"
 )
@@ -90,6 +91,11 @@ type event struct {
 	} `json:"usage"`
 }
 
+// waitDelay bounds how long a cancelled call waits for the CLI's output to close. Killing a .cmd
+// wrapper (an npm install) leaves the real process holding the pipes; after this they are closed
+// for it, so a call that runs out of time always ends.
+const waitDelay = 5 * time.Second
+
 func (c *CLI) Complete(ctx context.Context, req provider.Request, onText func(string)) (provider.Response, error) {
 	bin := c.Bin
 	if bin == "" {
@@ -98,6 +104,7 @@ func (c *CLI) Complete(ctx context.Context, req provider.Request, onText func(st
 	cmd := exec.CommandContext(ctx, bin, args(req)...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
+	cmd.WaitDelay = waitDelay
 	out, err := cmd.StdoutPipe()
 	if err != nil {
 		return provider.Response{}, err
