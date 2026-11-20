@@ -145,7 +145,14 @@ body .dockview-theme-light-spaced {
   color: var(--ink);
   font-family: var(--font);
 }
-.dockview-theme-light-spaced .dv-groupview { box-shadow: var(--shadow); border: 1px solid var(--line); overflow: hidden; }
+/* only the panels have a surface: whatever holds them stays see-through, so the dots show between them */
+.dockview-theme-light-spaced .dv-dockview,
+.dockview-theme-light-spaced .dv-grid-view,
+.dockview-theme-light-spaced .dv-branch-node,
+.dockview-theme-light-spaced .dv-split-view-container,
+.dockview-theme-light-spaced .dv-view-container,
+.dockview-theme-light-spaced .dv-view { background-color: transparent; }
+.dockview-theme-light-spaced .dv-groupview { box-shadow: var(--shadow); border: 1px solid var(--line); overflow: hidden; background-clip: padding-box; }
 .dockview-theme-light-spaced .dv-tab { font-weight: 550; transition: background-color .15s, color .15s; }
 .dockview-theme-light-spaced .dv-tab .ic { width: 15px; height: 15px; margin-right: 6px; vertical-align: -3px; }
 .dockview-theme-light-spaced .dv-tabs-and-actions-container { border-bottom: 1px solid var(--line); }
