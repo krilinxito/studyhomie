@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/krilinxito/studyhomie/compare/v0.4.0...v0.4.1) (2026-11-20)
+
+
+### Arreglos
+
+* una respuesta de la IA que nunca llega ya no deja el chat esperando para siempre ([#8](https://github.com/krilinxito/studyhomie/issues/8)) ([17f8a67](https://github.com/krilinxito/studyhomie/commit/17f8a67d5186cf77ad59e15055580139c06f0450))
+
 ## [0.4.0](https://github.com/krilinxito/studyhomie/compare/v0.3.0...v0.4.0) (2026-11-20)
 
 
