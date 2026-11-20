@@ -831,3 +831,61 @@ func TestSettingsSwitchTheBackend(t *testing.T) {
 		t.Errorf("unknown provider must be refused, got %d", res.StatusCode)
 	}
 }
+
+func TestApuntesAndAttachments(t *testing.T) {
+	s, ts := newTestServer(t, &scripted{})
+	if err := s.V.Save(vault.Note{Slug: "integral", Meta: vault.Meta{Title: "Integral"}, Body: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if res, _ := do(t, ts, "PUT", "/api/apuntes/no-existe", map[string]string{"body": "hola"}, nil); res.StatusCode != 404 {
+		t.Errorf("notes on a missing note = %d", res.StatusCode)
+	}
+	if res, body := do(t, ts, "PUT", "/api/apuntes/integral", map[string]string{"body": "Mi resumen ![[foto.png]]"}, nil); res.StatusCode != 200 {
+		t.Fatalf("save = %d %s", res.StatusCode, body)
+	}
+	_, body := do(t, ts, "GET", "/api/apuntes/integral", nil, nil)
+	if !strings.Contains(string(body), "Mi resumen") {
+		t.Errorf("load = %s", body)
+	}
+	_, body = do(t, ts, "GET", "/api/notes/integral", nil, nil)
+	if !strings.Contains(string(body), `"apunte":true`) {
+		t.Errorf("the note must say it has notes: %s", body)
+	}
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("files", "pizarra.png")
+	io.WriteString(fw, "\x89PNG fake")
+	fw, _ = mw.CreateFormFile("files", "ejercicios.html")
+	io.WriteString(fw, "<script>alert(1)</script>")
+	mw.Close()
+	req, _ := http.NewRequest("POST", ts.URL+"/api/adjuntos", &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("Origin", ts.URL)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var up struct {
+		Files []struct {
+			Name  string
+			Image bool
+		}
+	}
+	json.NewDecoder(res.Body).Decode(&up)
+	res.Body.Close()
+	if len(up.Files) != 2 || up.Files[0].Name != "pizarra.png" || !up.Files[0].Image || up.Files[1].Image {
+		t.Fatalf("attach = %+v", up)
+	}
+	res, _ = do(t, ts, "GET", "/api/adjuntos/pizarra.png", nil, nil)
+	if res.Header.Get("Content-Type") != "image/png" {
+		t.Errorf("image type = %q", res.Header.Get("Content-Type"))
+	}
+	res, _ = do(t, ts, "GET", "/api/adjuntos/ejercicios.html", nil, nil)
+	if !strings.HasPrefix(res.Header.Get("Content-Disposition"), "attachment") || strings.Contains(res.Header.Get("Content-Type"), "html") {
+		t.Errorf("other files must download: %v", res.Header)
+	}
+	if res, _ := do(t, ts, "GET", "/api/adjuntos/..%2F..%2Fstudyhomie.toml", nil, nil); res.StatusCode == 200 {
+		t.Error("path escape served")
+	}
+}

@@ -608,6 +608,51 @@ dialog::backdrop { background: rgba(10, 10, 14, .45); backdrop-filter: blur(2px)
 @keyframes flip { 0% { transform: rotateX(0); } 50% { transform: rotateX(90deg); } 100% { transform: rotateX(0); } }
 ::view-transition-old(root), ::view-transition-new(root) { animation-duration: .22s; }
 
+/* the study panel: slides in from the right when there is something to show */
+.dv-groupview.slide-in { animation: slide-in .32s var(--ease) both; }
+.dv-groupview.slide-out { animation: slide-out .18s ease-in both; }
+@keyframes slide-in { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: none; } }
+@keyframes slide-out { to { opacity: 0; transform: translateX(40px); } }
+#btn-panel[aria-pressed="true"] { color: var(--accent); }
+.group-actions { display: flex; align-items: center; gap: 2px; height: 100%; padding: 0 6px; }
+.group-actions .icon-btn { width: 28px; height: 28px; border-radius: 8px; }
+.group-actions .ic { width: 15px; height: 15px; }
+/* full screen: the header goes away and the enlarged group takes the whole screen */
+html.fs .top, html.fs .banner { display: none; }
+html.fs .dock { padding: 0; }
+
+/* Apuntes */
+.notes { width: min(760px, 100%); margin: 0 auto; padding: 22px 28px 48px; display: flex; flex-direction: column; min-height: 100%; }
+.notes h2 { margin: 0 0 12px; font-size: 24px; letter-spacing: -.025em; line-height: 1.2; }
+.notes h2 a { color: inherit; text-decoration: none; }
+.notes h2 a:hover { color: var(--accent); }
+.notes-bar { display: flex; align-items: center; gap: 10px; padding-bottom: 12px; margin-bottom: 14px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.notes-status { margin-left: auto; font-size: 12.5px; color: var(--muted); }
+.seg { display: inline-flex; gap: 2px; }
+.seg button, .map-scope button { appearance: none; font: inherit; font-size: 13px; font-weight: 550; border: 0; background: none; color: var(--muted); padding: 4px 9px; border-radius: 7px; cursor: pointer; transition: color .15s, background-color .15s; }
+.seg button:hover, .map-scope button:hover { color: var(--ink); }
+.seg button[aria-pressed="true"], .map-scope button[aria-pressed="true"] { color: var(--ink); background: var(--surface-2); }
+.notes-text { flex: 1; min-height: 50vh; resize: vertical; border: 0; padding: 4px 0; font-size: 15.5px; line-height: 1.7; background: transparent; }
+.notes-text:focus { box-shadow: none; border: 0; }
+.notes-text.drop, .composer-box.drop { outline: 2px dashed var(--accent); outline-offset: 4px; border-radius: 8px; }
+.notes-view { flex: 1; font-size: 15.5px; line-height: 1.7; cursor: text; }
+.notes-view img { max-width: 100%; border-radius: var(--r-sm); display: block; margin: .6em 0; }
+.notes-view a[download]::before { content: "\2193  "; }
+.notes-foot { margin-top: 18px; }
+
+/* attachments waiting to go with the next message */
+.staged { list-style: none; margin: 0; padding: 6px 6px 2px; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.staged li { display: flex; align-items: center; gap: 7px; font-size: 13px; max-width: 100%; }
+.staged li.uploading { opacity: .55; }
+.staged img { width: 32px; height: 32px; object-fit: cover; border-radius: 6px; }
+.staged span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+.staged .icon-btn { width: 22px; height: 22px; }
+.staged .icon-btn .ic, .staged > li > .ic { width: 14px; height: 14px; }
+
+/* the map: this chat or every chat */
+.map-scope { display: inline-flex; gap: 2px; }
+.empty #map-see-all { margin-top: 12px; }
+
 /* a phone: one group of tabs */
 @media (max-width: 880px) {
   .top { padding: 8px 10px 0; height: 48px; }

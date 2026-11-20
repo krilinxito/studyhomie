@@ -103,3 +103,20 @@ func TestChatResumesWithItsHistory(t *testing.T) {
 		t.Errorf("resumed prompt:\n%s", p)
 	}
 }
+
+func TestChatSendsAttachmentsWithTheQuestion(t *testing.T) {
+	f := &fake{replies: []provider.Response{reply("Es una parábola.", 10), reply("Sigo.", 10)}}
+	s, _ := newSession(t, f, `{"text":"¿Qué es esto?","files":["C:/tmp/pizarra.png"]}`+"\n"+`{"text":"¿y ahora?"}`+"\n")
+	if err := s.Chat(context.Background(), ChatOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.reqs) != 2 {
+		t.Fatalf("a question with a photo must be a chat turn, not a study line: %d requests", len(f.reqs))
+	}
+	if len(f.reqs[0].Files) != 1 || !strings.Contains(f.reqs[0].Prompt, "ATTACHED FILES") || !strings.Contains(f.reqs[0].Prompt, "pizarra.png") {
+		t.Errorf("first turn: files %v, prompt %q", f.reqs[0].Files, f.reqs[0].Prompt)
+	}
+	if len(f.reqs[1].Files) != 0 {
+		t.Errorf("the files must go with their own message only: %v", f.reqs[1].Files)
+	}
+}

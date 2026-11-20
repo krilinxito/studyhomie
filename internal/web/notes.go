@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/krilinxito/studyhomie/internal/vault"
@@ -157,7 +158,59 @@ func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if id, err := strconv.Atoi(r.URL.Query().Get("chat")); err == nil {
+		nodes, edges = s.chatGraph(id, notes, concepts, nodes, edges)
+	}
 	writeJSON(w, 200, map[string]any{"nodes": nodes, "edges": edges})
+}
+
+// chatGraph keeps the part of the map a chat touched: the guides and concepts it wrote or
+// opened, each guide with its concepts and what lies under it, and the links between them.
+func (s *Server) chatGraph(id int, notes []vault.Note, concepts []vault.Concept, nodes []gNode, edges []gEdge) ([]gNode, []gEdge) {
+	s.mu.Lock()
+	run := s.runs[id]
+	s.mu.Unlock()
+	keep := map[string]bool{}
+	if run != nil {
+		for _, slug := range run.topics() {
+			keep[slug] = true
+		}
+	}
+	guides := map[string]bool{}
+	for _, n := range notes {
+		if keep[n.Slug] {
+			guides[n.Slug] = true
+			for _, c := range n.Meta.Concepts {
+				keep[c] = true
+			}
+			for _, b := range n.Meta.Base {
+				keep[b] = true
+			}
+			for _, p := range n.Meta.Pending {
+				keep[p.ID] = true
+			}
+		}
+	}
+	for _, c := range concepts {
+		for _, g := range c.Meta.Guides {
+			if guides[g] {
+				keep[c.Slug] = true
+			}
+		}
+	}
+	outN := []gNode{}
+	for _, n := range nodes {
+		if keep[n.ID] {
+			outN = append(outN, n)
+		}
+	}
+	outE := []gEdge{}
+	for _, e := range edges {
+		if keep[e.From] && keep[e.To] {
+			outE = append(outE, e)
+		}
+	}
+	return outN, outE
 }
 
 type linkRef struct {
@@ -213,7 +266,7 @@ func (s *Server) note(w http.ResponseWriter, r *http.Request) {
 		_, simErr := s.V.LoadInteractive(slug)
 		writeJSON(w, 200, map[string]any{
 			"slug": slug, "kind": "guide", "meta": n.Meta, "body": n.Body,
-			"backlinks": s.refs(back), "requires": s.refs(n.Meta.Requires), "concepts": notes, "hasSimulation": simErr == nil,
+			"backlinks": s.refs(back), "requires": s.refs(n.Meta.Requires), "concepts": notes, "hasSimulation": simErr == nil, "apunte": s.V.HasApunte(slug),
 		})
 		return
 	}
@@ -228,7 +281,7 @@ func (s *Server) note(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{
 		"slug": id, "kind": "concept", "meta": c.Meta, "body": c.Body,
-		"backlinks": s.refs(back), "requires": s.refs(c.Meta.Requires), "guides": s.refs(c.Meta.Guides),
+		"backlinks": s.refs(back), "requires": s.refs(c.Meta.Requires), "guides": s.refs(c.Meta.Guides), "apunte": s.V.HasApunte(id),
 	})
 }
 

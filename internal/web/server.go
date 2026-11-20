@@ -111,6 +111,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/notes/{slug}/concept", s.concept)
 	mux.HandleFunc("POST /api/notes/{slug}/viz", s.vizPage)
 	mux.HandleFunc("POST /api/notes/{slug}/explain", s.explain)
+	mux.HandleFunc("GET /api/apuntes/{slug}", s.getApunte)
+	mux.HandleFunc("PUT /api/apuntes/{slug}", s.saveApunte)
+	mux.HandleFunc("POST /api/adjuntos", s.attach)
+	mux.HandleFunc("GET /api/adjuntos/{name}", s.attachment)
 	mux.HandleFunc("GET /api/roadmaps", s.roadmaps)
 	mux.HandleFunc("GET /api/daily", s.daily)
 	mux.HandleFunc("GET /api/sessions", s.sessions)
@@ -151,7 +155,7 @@ func guard(next http.Handler) http.Handler {
 func pageHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
-		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; frame-src 'self' https://www.youtube-nocookie.com; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; frame-src 'self' https://www.youtube-nocookie.com; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Cache-Control", "no-cache")

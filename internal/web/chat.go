@@ -21,6 +21,8 @@ type chatBody struct {
 	Guide  string              `json:"guide"`
 	Action *session.ChatAction `json:"action"`
 	Files  []string            `json:"files"` // upload ids
+	// Material: the files are study material to build a study line from, not part of a question
+	Material bool `json:"material"`
 }
 
 // shown is the learner's message as the transcript shows it.
@@ -28,17 +30,18 @@ func (b chatBody) shown() string {
 	if t := strings.TrimSpace(b.Label); t != "" {
 		return t
 	}
-	if t := strings.TrimSpace(b.Text); t != "" {
-		return t
+	names := make([]string, len(b.Files))
+	for i, id := range b.Files {
+		names[i] = id[strings.Index(id, "/")+1:]
 	}
-	if len(b.Files) > 0 {
-		names := make([]string, len(b.Files))
-		for i, id := range b.Files {
-			names[i] = id[strings.Index(id, "/")+1:]
-		}
+	t := strings.TrimSpace(b.Text)
+	switch {
+	case len(names) == 0:
+		return t
+	case t == "":
 		return "Adjunto: " + strings.Join(names, ", ")
 	}
-	return ""
+	return t + "\n\n*Adjunto: " + strings.Join(names, ", ") + "*"
 }
 
 // empty reports whether the body asks for nothing.
@@ -48,7 +51,7 @@ func (b chatBody) empty() bool {
 
 // message turns the body into the session's message, resolving uploads to local paths.
 func (s *Server) message(b chatBody) (session.ChatMsg, error) {
-	m := session.ChatMsg{Text: b.Text, Depth: b.Depth, Guide: vault.Slugify(b.Guide), Action: b.Action}
+	m := session.ChatMsg{Text: b.Text, Depth: b.Depth, Guide: vault.Slugify(b.Guide), Action: b.Action, Material: b.Material}
 	for _, id := range b.Files {
 		p, err := s.uploadPath(id)
 		if err != nil {
@@ -133,6 +136,22 @@ func (r *Run) history() string {
 		}
 	}
 	return b.String()
+}
+
+// topics are the notes a run is about: its own, and every guide or concept it wrote or opened.
+func (r *Run) topics() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []string
+	if r.Slug != "" {
+		out = append(out, r.Slug)
+	}
+	for _, e := range r.events {
+		if e.Type == "card" && e.Card != nil && e.Card.Slug != "" {
+			out = append(out, e.Card.Slug)
+		}
+	}
+	return out
 }
 
 // carryOver gives a new run the events of the chat it continues, without its closing event,

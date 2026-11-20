@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 
 	"github.com/krilinxito/studyhomie/internal/prompts"
@@ -19,6 +20,8 @@ type ChatMsg struct {
 	Guide  string      `json:"guide,omitempty"`  // slug of the guide open next to the chat
 	Action *ChatAction `json:"action,omitempty"` // a button the learner pressed: run it without asking the model
 	Files  []string    `json:"files,omitempty"`  // local paths of attached files
+	// Material: the files are notes to build a study line from; otherwise they go with the question
+	Material bool `json:"material,omitempty"`
 }
 
 // ChatAction is something the chat starts: from the model's reply, or from a button.
@@ -102,18 +105,32 @@ func (s *Session) Chat(ctx context.Context, o ChatOpts) error {
 		}
 		var err error
 		switch {
-		case len(m.Files) > 0:
+		case m.Material && len(m.Files) > 0:
 			err = s.chatMaterial(ctx, m.Files)
 		case m.Action != nil:
 			guide, err = s.runAction(ctx, *m.Action, guide, depth)
-		case strings.TrimSpace(m.Text) == "":
+		case strings.TrimSpace(m.Text) == "" && len(m.Files) == 0:
 			continue
 		default:
-			prompt := s.chatPrompt(m.Text, guide, &announced, depth, history)
+			text := m.Text
+			if len(m.Files) > 0 {
+				names := make([]string, len(m.Files))
+				for i, f := range m.Files {
+					names[i] = filepath.Base(f)
+				}
+				if strings.TrimSpace(text) == "" {
+					text = "(No message: the learner only sent these files. Say briefly what they show and ask what they want to do with them.)"
+				}
+				text = "ATTACHED FILES (look at them before answering): " + strings.Join(names, ", ") + "\n\n" + text
+			}
+			prompt := s.chatPrompt(text, guide, &announced, depth, history)
 			history = ""
 			var act *ChatAction
 			var answer string
-			if answer, act, err = s.chatTurn(ctx, c, prompt); err == nil && act != nil {
+			c.Files = m.Files
+			answer, act, err = s.chatTurn(ctx, c, prompt)
+			c.Files = nil
+			if err == nil && act != nil {
 				if act.Action == "none" {
 					if act.Save && guide != "" {
 						s.saveDoubt(guide, m.Text, answer)

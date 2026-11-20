@@ -71,12 +71,15 @@ Para parar el programa, `Ctrl+C` en la terminal. Cada carpeta es un vault indepe
 
 Un estilo minimal sobre un fondo de puntos, en modo claro u oscuro (el botón de sol/luna; por defecto sigue al sistema). Todo son **paneles acoplables**: arrastra una pestaña para dividir la pantalla, apilarla con otras o moverla de lugar, y redimensiona arrastrando los bordes. Tu layout se recuerda; el botón de paneles vuelve a abrir uno que cerraste o **restablece el layout**. En el móvil queda todo en un solo grupo de pestañas.
 
+Al abrir la app solo ves los chats y el chat. El **panel de estudio** (Guía, Conceptos, Mapa, Practicar y Apuntes) entra deslizándose desde la derecha cuando hay algo que mostrar: una guía escrita, un concepto, el mapa. Lo abres o cierras con el botón de panel de la barra superior. Cada grupo tiene botones para **ampliar** (ocupa todo el espacio de la app), **pantalla completa** (ocupa toda la pantalla, sin la barra superior; sales con Esc) y **cerrar**.
+
 - **Chats**: tu historial. Los chats se guardan en `vault/.studyhomie/sessions/` y se pueden **continuar**: escribe en uno viejo y sigue donde lo dejaste, con su contexto.
-- **Chat**: donde preguntas y pides guías, quizzes, el reto del día o una nota de concepto.
+- **Chat**: donde preguntas y pides guías, quizzes, el reto del día (con la temática que quieras) o una nota de concepto. Puedes **adjuntar imágenes y archivos** a un mensaje (con el clip, pegándolos o arrastrándolos) y la IA los mira junto con tu pregunta. «Subir apuntes» es distinto: arma una ruta de estudio a partir de tus apuntes.
 - **Guía**: la guía abierta como artículo, con sus visuales, sus enlaces grises por explicar y sus recursos.
 - **Conceptos**: el iceberg de la guía. Arriba del agua el tema; abajo, nivel por nivel, lo que necesita: lo blanco tiene nota, lo punteado se explica al pulsarlo.
-- **Mapa**: cada guía con sus conceptos, conectados por lo que requiere cada uno; los pendientes salen en gris.
+- **Mapa**: cada guía con sus conceptos, conectados por lo que requiere cada uno; los pendientes salen en gris. Muestra **este chat** (lo que escribió o abrió) o **todos tus chats**.
 - **Practicar**: preguntas, explicar con tus palabras, tarjetas de repaso y simulación.
+- **Apuntes**: tus propias notas sobre una guía o un concepto («Tomar apuntes» en su cabecera). Se guardan solas, admiten Markdown, fórmulas y `[[enlaces]]`, y puedes pegar o arrastrar imágenes y archivos: quedan en el vault y se enlazan como en Obsidian (`![[foto.png]]`).
 
 Las guías y notas admiten:
 
@@ -158,6 +161,9 @@ vault/
   roadmaps/      el plan de cada roadmap
   daily/         un registro por día
   interactive/   simulaciones generadas (HTML)
+  apuntes/       tus apuntes, un .md por guía o concepto (enlazan a su nota con «de: [[…]]»);
+                 nunca se tocan al reescribir una guía
+    adjuntos/    las imágenes y archivos que pegaste en ellos
   .studyhomie/   estado interno (resúmenes entre fases, apuntes subidos, sesiones guardadas)
 ```
 

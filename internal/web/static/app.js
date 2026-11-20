@@ -128,6 +128,8 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
   if (/^https?:\/\//i.test(href)) {
     node.setAttribute('target', '_blank');
     node.setAttribute('rel', 'noopener noreferrer');
+  } else if (href.startsWith('/api/adjuntos/')) {
+    node.setAttribute('download', ''); // files from the notes: served as downloads
   } else if (!href.startsWith('#note/') && !href.startsWith('#sim/')) {
     node.removeAttribute('href');
   }
@@ -305,8 +307,8 @@ $('#btn-theme').addEventListener('click', () => {
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (!document.documentElement.dataset.theme) applyTheme(); });
 
 /* ---------- the dock: panels you can drag, split, stack and float ---------- */
-const PANES = { chat: 'Chat', chats: 'Chats', guide: 'Guía', concepts: 'Conceptos', map: 'Mapa', practice: 'Practicar', settings: 'Ajustes' };
-const STUDY = ['guide', 'concepts', 'map', 'practice']; // the default study group
+const PANES = { chat: 'Chat', chats: 'Chats', guide: 'Guía', concepts: 'Conceptos', map: 'Mapa', practice: 'Practicar', notes: 'Apuntes', settings: 'Ajustes' };
+const STUDY = ['guide', 'concepts', 'map', 'practice', 'notes']; // the study panel: closed until there is something to show
 const NEAR_STUDY = [...STUDY, 'settings']; // panels that open next to the study group
 
 function createDock() {
@@ -315,6 +317,7 @@ function createDock() {
   const dock = DV.createDockview($('#dock'), {
     theme: DV.themeLightSpaced,
     createComponent: ({ name }) => ({ element: PANE_EL[name], init() {} }),
+    createRightHeaderActionComponent: (group) => groupActions(group),
   });
   S.dock = dock;
   const saved = !isPhone() && store.get('dock', null);
@@ -323,11 +326,17 @@ function createDock() {
     try { dock.fromJSON(saved); restored = !!dock.getPanel('chat'); } catch { restored = false; }
   }
   if (!restored) defaultLayout();
+  // the study panel starts closed: it slides in when the app has something to show
+  for (const id of NEAR_STUDY) dock.getPanel(id)?.api.close();
   let saveTimer;
   dock.onDidLayoutChange(() => {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => { if (!isPhone()) store.set('dock', dock.toJSON()); }, 300);
+    drawGroupActions();
   });
+  dock.onDidMaximizedGroupChange?.(() => drawGroupActions());
+  dock.onDidRemovePanel?.(() => syncPanelButton());
+  dock.onDidAddPanel?.(() => syncPanelButton());
   dock.onDidActivePanelChange((p) => { if (p) onShown(p.id); });
 }
 
@@ -336,22 +345,30 @@ function defaultLayout() {
   dock.clear();
   dock.addPanel({ id: 'chat', component: 'chat', title: PANES.chat });
   if (isPhone()) {
-    for (const id of [...STUDY, 'chats']) dock.addPanel({ id, component: id, title: PANES[id], position: { referencePanel: 'chat', direction: 'within' }, inactive: true });
+    dock.addPanel({ id: 'chats', component: 'chats', title: PANES.chats, position: { referencePanel: 'chat', direction: 'within' }, inactive: true });
     dock.getPanel('chat').api.setActive();
     return;
   }
-  dock.addPanel({ id: 'guide', component: 'guide', title: PANES.guide, position: { referencePanel: 'chat', direction: 'right' } });
-  for (const id of ['concepts', 'map', 'practice']) dock.addPanel({ id, component: id, title: PANES[id], position: { referencePanel: 'guide', direction: 'within' }, inactive: true });
   dock.addPanel({ id: 'chats', component: 'chats', title: PANES.chats, position: { referencePanel: 'chat', direction: 'left' } });
-  try {
-    dock.getPanel('chats').group.api.setSize({ width: 250 });
-    dock.getPanel('chat').group.api.setSize({ width: Math.round(window.innerWidth * 0.36) });
-  } catch { /* sizes are a nicety */ }
-  dock.getPanel('guide').api.setActive();
   dock.getPanel('chat').api.setActive();
+  // sizes apply once the dock has its own width
+  requestAnimationFrame(() => { try { dock.getPanel('chats')?.group.api.setSize({ width: 250 }); } catch { /* a nicety */ } });
 }
 
-// shows a panel, adding it back if it was closed
+// room for the study panel: about half the dock, with the list of chats kept narrow
+function sizeStudy(group) {
+  const dock = S.dock;
+  const W = $('#dock').clientWidth;
+  try {
+    const chats = dock.getPanel('chats');
+    if (chats && chats.group !== group && !chats.group.panels.some((p) => p.id === 'chat') && chats.api.width > 300) chats.group.api.setSize({ width: 250 });
+    group.api.setSize({ width: Math.round(Math.min(W - 520, Math.max(420, W * 0.48))) });
+  } catch { /* sizes are a nicety */ }
+}
+
+const studyOpen = () => !!S.dock && STUDY.some((id) => S.dock.getPanel(id));
+
+// shows a panel, adding it back if it was closed; the study panel slides in from the right
 function show(id) {
   const dock = S.dock;
   if (!dock) return;
@@ -359,20 +376,108 @@ function show(id) {
   if (!p) {
     const near = NEAR_STUDY.includes(id) ? NEAR_STUDY.map((x) => dock.getPanel(x)).find(Boolean) : null;
     const chat = dock.getPanel('chat');
+    const side = isPhone() ? 'within' : id === 'chats' ? 'left' : 'right';
     const position = near ? { referencePanel: near.id, direction: 'within' }
-      : chat && id !== 'chat' ? { referencePanel: 'chat', direction: id === 'chats' ? 'left' : 'right' } : undefined;
+      : chat && id !== 'chat' ? { referencePanel: 'chat', direction: side } : undefined;
     p = dock.addPanel({ id, component: id, title: PANES[id], position });
+    if (!near && side === 'right') {
+      sizeStudy(p.group);
+      slide(p.group.element, 'slide-in');
+    }
   }
   p.api.setActive();
   onShown(id);
+  syncPanelButton();
 }
 const isShown = (id) => { const p = S.dock && S.dock.getPanel(id); return !!(p && p.api.isVisible); };
 
+function slide(el, cls) {
+  if (!el || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  el.classList.remove('slide-in', 'slide-out');
+  void el.offsetWidth; // restart the animation
+  el.classList.add(cls);
+  el.addEventListener('animationend', () => el.classList.remove(cls), { once: true });
+}
+
+// closes the panels of a group, sliding it out when it is the study panel
+function closeGroup(group) {
+  const panels = [...group.panels];
+  const done = () => { for (const p of panels) p.api.close(); syncPanelButton(); };
+  if (group.api.isMaximized()) group.api.exitMaximized();
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) { done(); return; }
+  slide(group.element, 'slide-out');
+  setTimeout(done, 170);
+}
+function closeStudy() {
+  const groups = new Set(NEAR_STUDY.map((id) => S.dock.getPanel(id)).filter(Boolean).map((p) => p.group));
+  for (const g of groups) if (!g.panels.some((p) => p.id === 'chat' || p.id === 'chats')) closeGroup(g);
+  for (const id of NEAR_STUDY) { const p = S.dock.getPanel(id); if (p && p.group.panels.some((x) => x.id === 'chat' || x.id === 'chats')) p.api.close(); }
+  syncPanelButton();
+}
+function syncPanelButton() {
+  const open = studyOpen();
+  const b = $('#btn-panel');
+  b.setAttribute('aria-pressed', String(open));
+  b.title = open ? 'Cerrar el panel de estudio' : 'Abrir el panel de estudio (guía, conceptos, mapa, apuntes)';
+}
+$('#btn-panel').addEventListener('click', () => (studyOpen() ? closeStudy() : show(S.lastStudy || 'guide')));
+
+// the buttons at the right of every group's tabs: enlarge, full screen, close
+const GROUP_ACTIONS = new Set();
+function groupActions(group) {
+  const element = h('div', { class: 'group-actions' });
+  const r = {
+    element,
+    draw() {
+      if (!S.dock || !group.api) return;
+      let max = false;
+      try { max = group.api.isMaximized(); } catch { return; }
+      const full = !!document.fullscreenElement;
+      const holdsChat = group.panels.some((p) => p.id === 'chat' || p.id === 'chats');
+      if (group.panels.every((p) => p.id === 'chats')) { element.replaceChildren(); return; } // the list of chats needs none
+      const btn = (name, title, onclick) => h('button', { class: 'icon-btn', type: 'button', title, 'aria-label': title, onclick }, icon(name));
+      element.replaceChildren(...[
+        full ? btn('minimize-2', 'Salir de pantalla completa', () => document.exitFullscreen().catch(() => {}))
+          : btn('fullscreen', 'Pantalla completa', () => fullScreen(group)),
+        full ? null : btn(max ? 'minimize-2' : 'maximize-2', max ? 'Volver al tamaño anterior' : 'Ampliar', () => {
+          if (group.api.isMaximized()) group.api.exitMaximized(); else group.api.maximize();
+          drawGroupActions();
+        }),
+        holdsChat || full ? null : btn('x', 'Cerrar el panel', () => closeGroup(group)),
+      ].filter(Boolean));
+    },
+    init() { r.draw(); },
+    dispose() { GROUP_ACTIONS.delete(r); },
+  };
+  GROUP_ACTIONS.add(r);
+  return r;
+}
+function drawGroupActions() { for (const r of GROUP_ACTIONS) r.draw(); }
+
+// full screen: the group fills the dock, and the dock fills the screen (popovers keep working)
+async function fullScreen(group) {
+  if (!group.api.isMaximized()) group.api.maximize();
+  document.documentElement.classList.add('fs');
+  try { await document.documentElement.requestFullscreen(); } catch { document.documentElement.classList.remove('fs'); }
+  drawGroupActions();
+}
+document.addEventListener('fullscreenchange', () => {
+  if (!document.fullscreenElement) {
+    document.documentElement.classList.remove('fs');
+    if (S.dock?.hasMaximizedGroup?.()) S.dock.exitMaximizedGroup();
+  }
+  drawGroupActions();
+  fitMap();
+});
+
 // a panel came on screen: draw what it shows now
 function onShown(id) {
+  if (STUDY.includes(id)) S.lastStudy = id;
   if (id === 'map') fitMap();
   if (id === 'concepts') renderConcepts();
   if (id === 'practice') renderPractice();
+  if (id === 'notes') renderNotes();
   if (id === 'settings') renderSettings();
 }
 $('#btn-settings').addEventListener('click', () => show('settings'));
@@ -718,6 +823,7 @@ function renderReader(n) {
       concepts.length || under ? h('button', { class: 'btn small yellow', type: 'button', onclick: () => show('concepts') },
         icon('mountain-snow'), `${concepts.length} conceptos${under ? ` · ${under} bajo el agua` : ''}`) : null,
       status !== 'new' ? h('button', { class: 'btn small', type: 'button', onclick: () => show('practice') }, icon('target'), 'Practicar') : null,
+      notesButton(n.slug, title, n.apunte),
       h('button', { class: 'btn small ghost', type: 'button', onclick: () => askAbout(`Sobre «${title}»: `) }, icon('message-circle'), 'Preguntar'))));
 
   const article = h('article', { class: 'r-article' });
@@ -873,7 +979,8 @@ function conceptReader(c) {
       h('h1', {}, m.title || c.slug),
       (m.aliases || []).length ? h('div', { class: 'chips' }, m.aliases.map((a) => h('span', { class: 'chip' }, a))) : null,
       (c.requires || []).length ? h('div', { class: 'c-req' }, h('span', { class: 'hint' }, 'Se apoya en'), h('div', { class: 'links' }, c.requires.map((l) => h('button', { type: 'button', onclick: () => (writtenNode(l.slug) ? openNote(l.slug) : explainConcept(l.slug, { title: l.title, guide: owningGuide(l.slug) })) }, l.title)))) : null,
-      h('div', { class: 'actions' }, h('button', { class: 'btn small ghost', type: 'button', onclick: () => askAbout(`Sobre «${m.title}»: `) }, icon('message-circle'), 'Preguntar'))),
+      h('div', { class: 'actions' }, notesButton(c.slug, m.title || c.slug, c.apunte),
+        h('button', { class: 'btn small ghost', type: 'button', onclick: () => askAbout(`Sobre «${m.title}»: `) }, icon('message-circle'), 'Preguntar'))),
     h('article', { class: 'r-article' }, mdBlock(stripSection(body, 'Aparece en'), { viz: vizCtx(c.slug) }),
       (c.guides || []).length ? h('section', { class: 'r-next' }, h('h2', {}, 'Aparece en'),
         c.guides.map((g) => h('button', { class: 'neighbor', type: 'button', onclick: () => openNote(g.slug) }, h('small', {}, 'Guía'), h('strong', {}, g.title)))) : null));
@@ -885,6 +992,138 @@ function askAbout(prefix) {
   ta.value = prefix;
   ta.focus();
   ta.setSelectionRange(ta.value.length, ta.value.length);
+}
+
+/* ---------- Apuntes: the learner's own notes on a guide or a concept ---------- */
+// Kept in apuntes/<slug>.md, apart from what the app writes; pasted files go to apuntes/adjuntos/.
+const N = { slug: '', title: '', body: '', file: '', mode: 'view', status: '', timer: null, saving: null, loading: false };
+
+function notesButton(slug, title, has) {
+  return h('button', { class: 'btn small ghost', type: 'button', onclick: () => openNotes(slug, title) },
+    icon('notebook-pen'), has ? 'Mis apuntes' : 'Tomar apuntes');
+}
+
+async function openNotes(slug, title) {
+  await flushNotes();
+  if (N.slug !== slug) Object.assign(N, { slug, title, body: '', file: '', status: '', loading: true });
+  show('notes');
+  try {
+    const r = await api(`/api/apuntes/${encodeURIComponent(slug)}`);
+    if (N.slug !== slug) return;
+    Object.assign(N, { body: r.body, file: r.file, loading: false, mode: r.body.trim() ? 'view' : 'edit', status: r.updated ? `Guardado el ${r.updated}` : '' });
+  } catch (err) { N.loading = false; N.status = err.message; }
+  renderNotes();
+}
+
+// Obsidian embeds: ![[foto.png]] shows the image, [[archivo.pdf]] links the file
+const ATTACH_URL = (name) => `/api/adjuntos/${encodeURIComponent(name)}`;
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif|bmp)$/i;
+function notesMd(src) {
+  const s = src
+    .replace(/!\[\[([^\]|]+?)(?:\|[^\]]*)?\]\]/g, (_, name) => (IMAGE_EXT.test(name.trim()) ? `![${name.trim()}](${ATTACH_URL(name.trim())})` : `[${name.trim()}](${ATTACH_URL(name.trim())})`))
+    .replace(/\[\[([^\]|]+?\.(?!md\b)[a-z0-9]{1,6})(?:\|([^\]]*))?\]\]/gi, (_, name, label) => `[${(label || name).trim()}](${ATTACH_URL(name.trim())})`);
+  return mdBlock(s, { breaks: true });
+}
+
+function renderNotes() {
+  const root = PANE_EL.notes;
+  if (!root) return;
+  if (!N.slug) {
+    const target = S.concept && isShown('concepts') ? S.concept : S.note;
+    if (target) { openNotes(target.slug, target.meta.title || target.slug); return; }
+    root.replaceChildren(h('div', { class: 'panel-empty' }, h('h3', {}, 'Apuntes'),
+      h('p', {}, 'Abre una guía o un concepto y pulsa «Tomar apuntes»: lo que escribas queda junto a esa nota, en tu vault.')));
+    return;
+  }
+  const status = h('span', { class: 'notes-status', role: 'status' }, N.status);
+  const file = h('input', { type: 'file', multiple: true, hidden: true });
+  file.addEventListener('change', () => { attachToNotes(file.files); file.value = ''; });
+  const mode = (m, label) => h('button', { type: 'button', 'aria-pressed': String(N.mode === m), onclick: () => { N.mode = m; renderNotes(); } }, label);
+  let editor;
+  if (N.loading) editor = h('p', { class: 'hint' }, 'Cargando…');
+  else if (N.mode === 'edit') {
+    editor = h('textarea', { class: 'notes-text', 'aria-label': `Apuntes de ${N.title}`, spellcheck: 'true',
+      placeholder: 'Lo que entendiste, tus dudas, fórmulas con $…$, enlaces a otras notas con [[…]].\nPega o arrastra imágenes y archivos aquí.' });
+    editor.value = N.body;
+    editor.addEventListener('input', () => { N.body = editor.value; scheduleNotesSave(); });
+    editor.addEventListener('blur', () => flushNotes());
+    editor.addEventListener('paste', (e) => { if (e.clipboardData.files.length) { e.preventDefault(); attachToNotes(e.clipboardData.files, editor); } });
+    editor.addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); editor.classList.add('drop'); } });
+    editor.addEventListener('dragleave', () => editor.classList.remove('drop'));
+    editor.addEventListener('drop', (e) => { editor.classList.remove('drop'); if (e.dataTransfer.files.length) { e.preventDefault(); attachToNotes(e.dataTransfer.files, editor); } });
+  } else {
+    editor = N.body.trim() ? h('div', { class: 'notes-view', ondblclick: () => { N.mode = 'edit'; renderNotes(); } }, notesMd(N.body))
+      : h('p', { class: 'hint' }, 'Aún no escribiste nada aquí. Pulsa «Escribir».');
+  }
+  root.replaceChildren(h('div', { class: 'notes' },
+    h('p', { class: 'eyebrow' }, 'Apuntes'),
+    h('h2', {}, h('a', { href: `#note/${N.slug}` }, N.title)),
+    h('div', { class: 'notes-bar' },
+      h('div', { class: 'seg', role: 'group', 'aria-label': 'Modo' }, mode('edit', 'Escribir'), mode('view', 'Ver')),
+      h('button', { class: 'btn small ghost', type: 'button', onclick: () => file.click() }, icon('paperclip'), 'Adjuntar'),
+      file, status),
+    editor,
+    h('p', { class: 'hint notes-foot' }, `Se guardan solos en ${N.file || `apuntes/${N.slug}.md`} de tu vault.`)));
+  if (N.mode === 'edit' && editor.tagName === 'TEXTAREA') editor.focus({ preventScroll: true });
+}
+
+function scheduleNotesSave() {
+  clearTimeout(N.timer);
+  setNotesStatus('Sin guardar…');
+  N.timer = setTimeout(() => flushNotes(), 700);
+}
+function setNotesStatus(text) {
+  N.status = text;
+  const el = PANE_EL.notes && PANE_EL.notes.querySelector('.notes-status');
+  if (el) el.textContent = text;
+}
+async function flushNotes() {
+  if (!N.timer) return N.saving;
+  clearTimeout(N.timer);
+  N.timer = null;
+  const { slug, body } = N;
+  setNotesStatus('Guardando…');
+  N.saving = api(`/api/apuntes/${encodeURIComponent(slug)}`, { method: 'PUT', body: { body } })
+    .then(() => {
+      if (N.slug === slug) setNotesStatus('Guardado');
+      const has = !!body.trim();
+      if (S.note && S.note.slug === slug && !!S.note.apunte !== has) { S.note.apunte = has; renderReader(S.note); }
+      if (S.concept && S.concept.slug === slug && !!S.concept.apunte !== has) { S.concept.apunte = has; renderConcepts(); }
+    })
+    .catch((err) => { if (N.slug === slug) setNotesStatus(`No se guardó: ${err.message}`); });
+  return N.saving;
+}
+// closing the page right after typing: send what is pending, without waiting for the answer
+window.addEventListener('pagehide', () => {
+  if (!N.timer) return;
+  clearTimeout(N.timer);
+  N.timer = null;
+  fetch(`/api/apuntes/${encodeURIComponent(N.slug)}`, { method: 'PUT', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body: N.body }) });
+});
+
+// uploads files into the vault and writes their embeds where the cursor is
+async function attachToNotes(files, editor) {
+  if (!files || !files.length) return;
+  const fd = new FormData();
+  for (const f of files) fd.append('files', f);
+  setNotesStatus('Subiendo…');
+  try {
+    const r = await api('/api/adjuntos', { method: 'POST', body: fd });
+    const text = r.files.map((f) => (f.image ? `![[${f.name}]]` : `[[${f.name}]]`)).join('\n');
+    if (N.mode !== 'edit' || !editor) {
+      N.body = N.body.replace(/\s*$/, N.body.trim() ? '\n\n' : '') + text + '\n';
+      N.mode = 'edit';
+      renderNotes();
+    } else {
+      const at = editor.selectionStart;
+      const before = N.body.slice(0, at);
+      const sep = before && !before.endsWith('\n') ? '\n' : '';
+      N.body = before + sep + text + '\n' + N.body.slice(editor.selectionEnd);
+      editor.value = N.body;
+      editor.selectionStart = editor.selectionEnd = (before + sep + text + '\n').length;
+    }
+    scheduleNotesSave();
+  } catch (err) { setNotesStatus(err.message); }
 }
 
 /* ---------- Practicar ---------- */
@@ -1065,11 +1304,33 @@ const graphSignature = (g) => g.nodes.map((n) => `${n.id}:${n.kind}`).sort().joi
 
 async function loadGraph() {
   const [g, rms] = await Promise.all([api('/api/graph'), api('/api/roadmaps').catch(() => [])]);
-  const same = S.graph && graphSignature(S.graph) === graphSignature(g);
   S.graph = g;
   S.roadmaps = rms;
   S.lines = assignLines(new Set(g.nodes.map((n) => n.group)));
+  await drawMap();
+}
+
+// The map shows the chat that is open, or every chat: S.graph stays the whole vault either way.
+S.mapScope = store.get('mapScope', 'chat');
+async function drawMap() {
+  if (!S.graph) return;
+  const chatID = S.run && S.run.id;
+  let g = S.graph;
+  if (S.mapScope === 'chat') {
+    g = chatID ? await api(`/api/graph?chat=${chatID}`).catch(() => ({ nodes: [], edges: [] })) : { nodes: [], edges: [] };
+    if ((S.run && S.run.id) !== chatID) return; // the chat changed meanwhile
+  }
+  for (const b of $$('#map-scope button')) b.setAttribute('aria-pressed', String(b.dataset.scope === S.mapScope));
+  const emptyChat = S.mapScope === 'chat' && !g.nodes.length;
   $('#map-empty').hidden = g.nodes.length > 0;
+  $('#map-empty-title').textContent = emptyChat ? 'Este chat aún no tiene guías' : 'Tu mapa está vacío';
+  $('#map-empty-text').textContent = emptyChat
+    ? 'Cuando este chat escriba una guía o explique un concepto, aparecerán aquí con lo que hay debajo.'
+    : 'Pide una guía en el chat. Cada guía y sus conceptos aparecerán aquí, conectados.';
+  $('#map-see-all').hidden = !(emptyChat && S.graph.nodes.length);
+  const sig = `${S.mapScope}:${chatID}:${graphSignature(g)}`;
+  const same = S.mapSig === sig;
+  S.mapSig = sig;
   const lineOf = (k) => (S.lines.has(k) ? S.lines.get(k) : -1);
   const lineOfNode = new Map(g.nodes.map((n) => [n.id, lineOf(n.group)]));
   const kindOf = new Map(g.nodes.map((n) => [n.id, n.kind]));
@@ -1096,9 +1357,15 @@ async function loadGraph() {
     S.needsFit = g.nodes.length > 0;
     fitMap();
   }
+  S.mapGroups = new Set(g.nodes.map((n) => n.group));
+  if (S.filter && !S.mapGroups.has(S.filter)) S.filter = '';
   renderChips();
   applyFilters();
 }
+for (const b of $$('#map-scope button')) {
+  b.addEventListener('click', () => { S.mapScope = b.dataset.scope; store.set('mapScope', S.mapScope); drawMap(); });
+}
+$('#map-see-all').addEventListener('click', () => { S.mapScope = 'all'; store.set('mapScope', 'all'); drawMap(); });
 
 // Cytoscape cannot fit a graph into a hidden panel, so a new layout waits until the map is on screen.
 function fitMap() {
@@ -1112,7 +1379,7 @@ function fitMap() {
 function renderChips() {
   const box = $('#filter-rm');
   box.replaceChildren();
-  const keys = [...S.lines.keys()].filter((k) => !k.startsWith('c:'));
+  const keys = [...S.lines.keys()].filter((k) => !k.startsWith('c:') && (!S.mapGroups || S.mapGroups.has(k)));
   if (keys.length < 2) return;
   const chip = (key, label) => h('button', {
     class: `line-chip${key ? '' : ' all'}`, type: 'button', 'aria-pressed': String(S.filter === key),
@@ -1188,7 +1455,7 @@ function emptyState() {
     h('p', { class: 'lead' }, 'Pregunta lo que sea o pide una guía. Mapeo todo lo que el tema da por sabido, hasta lo básico; escribo de entrada solo lo que marques en «Escribir ahora», y lo demás queda a un clic.'),
     h('div', { class: 'suggest' },
       h('button', { class: 'btn small ghost', type: 'button', onclick: () => { daily.hidden = !daily.hidden; if (!daily.hidden) field.focus(); } }, icon('sparkles'), 'El reto de hoy'),
-      h('button', { class: 'btn small ghost', type: 'button', onclick: () => $('#attach-input').click() }, icon('paperclip'), 'Subir apuntes'),
+      h('button', { class: 'btn small ghost', type: 'button', onclick: () => $('#material-input').click() }, icon('paperclip'), 'Subir apuntes'),
       h('button', { class: 'btn small ghost', type: 'button', onclick: () => askAbout('Quiero aprender toda una materia: ') }, icon('map'), 'Planear una materia')),
     daily,
     h('ul', { class: 'examples' }, ex.map((t) => h('li', {}, h('button', { type: 'button', onclick: () => { $('#reply').value = t; $('#reply').focus(); } }, t)))));
@@ -1326,9 +1593,11 @@ $('#composer').addEventListener('submit', async (e) => {
   const text = ta.value;
   if (mode === 'busy') return;
   if (mode === 'chat') {
-    if (!text.trim()) return;
+    if (!text.trim() && !STAGED.length) return;
+    const files = takeStaged();
+    if (!files) return;
     ta.value = '';
-    if (!(await chatSend({ text }))) ta.value = text;
+    if (!(await chatSend(files.length ? { text, files } : { text }))) ta.value = text;
     return;
   }
   if (mode === 'block' && !text.trim()) { toast('Escribe tu explicación antes de enviar.'); return; }
@@ -1346,9 +1615,59 @@ $('#btn-cancel').addEventListener('click', async () => {
   try { await api(`/api/runs/${S.run.id}/cancel`, { method: 'POST', body: {} }); } catch (err) { toast(err.message); }
 });
 
-// attachments: uploaded, then sent to the chat, which builds a study line from them
+// Attachments of a message: picked, pasted or dropped, uploaded at once and sent with the next message.
+const STAGED = []; // { name, id (upload id, once uploaded), image, url (local preview) }
+function drawStaged() {
+  const ul = $('#staged');
+  ul.hidden = !STAGED.length;
+  ul.replaceChildren(...STAGED.map((f) => h('li', { class: f.id ? null : 'uploading' },
+    f.url ? h('img', { src: f.url, alt: '' }) : icon('file'),
+    h('span', {}, f.name),
+    h('button', { type: 'button', class: 'icon-btn', title: `Quitar ${f.name}`, 'aria-label': `Quitar ${f.name}`, onclick: () => {
+      STAGED.splice(STAGED.indexOf(f), 1);
+      if (f.url) URL.revokeObjectURL(f.url);
+      drawStaged();
+    } }, icon('x')))));
+}
+async function stageFiles(files) {
+  const list = [...files];
+  if (!list.length) return;
+  const items = list.map((f) => ({ name: f.name || 'imagen.png', image: f.type.startsWith('image/'), url: f.type.startsWith('image/') ? URL.createObjectURL(f) : '' }));
+  STAGED.push(...items);
+  drawStaged();
+  const fd = new FormData();
+  list.forEach((f, i) => fd.append('files', f, items[i].name));
+  try {
+    const up = await api('/api/upload', { method: 'POST', body: fd });
+    up.files.forEach((id, i) => { items[i].id = id; });
+  } catch (err) {
+    toast(err.message);
+    for (const it of items) STAGED.splice(STAGED.indexOf(it), 1);
+  }
+  drawStaged();
+}
+function takeStaged() {
+  if (STAGED.some((f) => !f.id)) { toast('Espera a que terminen de subir los adjuntos.'); return null; }
+  const ids = STAGED.map((f) => f.id);
+  for (const f of STAGED) if (f.url) URL.revokeObjectURL(f.url);
+  STAGED.length = 0;
+  drawStaged();
+  return ids;
+}
 $('#btn-attach').addEventListener('click', () => $('#attach-input').click());
-$('#attach-input').addEventListener('change', async (e) => {
+$('#attach-input').addEventListener('change', (e) => { stageFiles(e.target.files); e.target.value = ''; });
+$('#reply').addEventListener('paste', (e) => {
+  if (e.clipboardData.files.length && ($('#composer').dataset.kind || 'chat') === 'chat') { e.preventDefault(); stageFiles(e.clipboardData.files); }
+});
+$('#composer').addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); $('.composer-box').classList.add('drop'); } });
+$('#composer').addEventListener('dragleave', (e) => { if (!e.currentTarget.contains(e.relatedTarget)) $('.composer-box').classList.remove('drop'); });
+$('#composer').addEventListener('drop', (e) => {
+  $('.composer-box').classList.remove('drop');
+  if (e.dataTransfer.files.length) { e.preventDefault(); stageFiles(e.dataTransfer.files); }
+});
+
+// "Subir apuntes": the files are study material, and the chat builds a study line from them
+$('#material-input').addEventListener('change', async (e) => {
   const files = e.target.files;
   if (!files.length) return;
   const fd = new FormData();
@@ -1356,7 +1675,7 @@ $('#attach-input').addEventListener('change', async (e) => {
   try {
     setWorking(true, 'Subiendo…');
     const up = await api('/api/upload', { method: 'POST', body: fd });
-    await chatSend({ text: '', files: up.files, label: `Mis apuntes: ${[...files].map((f) => f.name).join(', ')}` });
+    await chatSend({ text: '', files: up.files, material: true, label: `Mis apuntes: ${[...files].map((f) => f.name).join(', ')}` });
   } catch (err) { toast(err.message); setWorking(false); } finally { e.target.value = ''; }
 });
 
@@ -1539,6 +1858,7 @@ function attachRun(id, title, { replay = false } = {}) {
   const run = { id, done: false, replay, waiting: '', title: title || 'Chat', es: new EventSource(`/api/runs/${id}/events?from=0`) };
   S.run = run;
   $('#chat-title').textContent = run.title;
+  if (S.mapScope === 'chat') drawMap();
   setComposer('busy');
   setWorking(!replay, 'Pensando…');
   run.es.onmessage = (ev) => handleEvent(run, JSON.parse(ev.data));
@@ -1641,6 +1961,7 @@ function openChat(r) {
 function newChat() {
   if (S.run && S.run.es) S.run.es.close();
   S.run = null;
+  if (S.mapScope === 'chat') drawMap();
   resetTranscript();
   $('#transcript').append(emptyState());
   $('#chat-title').textContent = 'Nuevo chat';
