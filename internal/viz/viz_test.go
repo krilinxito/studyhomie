@@ -71,3 +71,16 @@ func TestSampleAndTransform(t *testing.T) {
 		t.Error("a parameter cannot shadow a function")
 	}
 }
+
+func TestLatexEscapesAreRepaired(t *testing.T) {
+	b, err := Parse(`{"type":"predict","question":"¿$\frac{1}{2}$ o $\sqrt{x}$?","options":["$\theta$","b\nc"],"answer":0,"explain":"$\begin{bmatrix}1&k\\\\0&1\end{bmatrix}$ y \"comillas\""}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Question != `¿$\frac{1}{2}$ o $\sqrt{x}$?` || b.Options[0] != `$\theta$` || b.Options[1] != "b\nc" {
+		t.Errorf("parsed: %q %q", b.Question, b.Options)
+	}
+	if b.Explain != `$\begin{bmatrix}1&k\\0&1\end{bmatrix}$ y "comillas"` {
+		t.Errorf("explain: %q", b.Explain)
+	}
+}

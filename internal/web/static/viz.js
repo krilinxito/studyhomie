@@ -207,7 +207,9 @@ const Viz = (() => {
         board = makeBoard(JXG, box, [x0, y1, x1, y0], { grid: false });
         (spec.curves || []).forEach((c, i) => {
           const f = compile(c.expr, names);
-          board.create('functiongraph', [(x) => f({ ...env, x })], { strokeColor: colorAt(i), strokeWidth: 3, highlight: false });
+          // a curve with both coordinates as functions: functiongraph would compile its "x" term with
+          // new Function, which the page's content security policy blocks
+          board.create('curve', [(t) => t, (t) => f({ ...env, x: t }), x0, x1], { strokeColor: colorAt(i), strokeWidth: 3, highlight: false, numberPointsHigh: 1600 });
         });
         (spec.points || []).forEach((pt, i) => {
           const fx = compile(pt.x, names), fy = compile(pt.y, names);
@@ -266,7 +268,7 @@ const Viz = (() => {
     } }, 'Aplicar');
     controls.append(h('div', { class: 'viz-row' }, play, tSlider.el),
       h('div', { class: 'viz-readouts' }, h('span', {}, 'Matriz ', matrixView), h('span', {}, 'Determinante (área del cuadrado amarillo) = ', det)),
-      (spec.readouts || []).length ? ro.box : null);
+      ...((spec.readouts || []).length ? [ro.box] : []));
     refresh();
 
     whenVisible(box, async () => {
@@ -481,12 +483,20 @@ const Viz = (() => {
 
   const BUILD = { plot, transform2d, steps, sample, predict, html };
 
+  // A block written straight into a chat answer has not been checked on the server: a LaTeX
+  // command with a single backslash ("\sqrt") would make it invalid JSON, so try once more with it doubled.
+  function parseSpec(text) {
+    try { return JSON.parse(text); } catch (err) {
+      try { return JSON.parse(text.replace(/\\(?!["\\/bfnrtu])/g, '\\\\')); } catch { throw err; }
+    }
+  }
+
   // enhance replaces every ```viz code block under root with its widget.
   function enhance(root, ctx) {
     for (const code of root.querySelectorAll('pre > code.language-viz')) {
       let el;
       try {
-        const spec = JSON.parse(code.textContent);
+        const spec = parseSpec(code.textContent);
         const build = BUILD[spec.type];
         if (!build) throw new Error(`tipo «${spec.type}» desconocido`);
         el = build(spec, ctx);

@@ -670,3 +670,96 @@ func TestCancellingAShortActionStopsTheModelAndSavesNothing(t *testing.T) {
 		t.Errorf("a cancelled action must not change the note:\n%s", n.Body)
 	}
 }
+
+func lastAsk(evs []Event) *Event {
+	for i := len(evs) - 1; i >= 0; i-- {
+		if evs[i].Type == "ask" {
+			return &evs[i]
+		}
+		if evs[i].Type == "in" {
+			return nil
+		}
+	}
+	return nil
+}
+
+func TestChatRunTalksParksAndResumes(t *testing.T) {
+	p := &scripted{replies: []string{"Hola, ¿qué estudiamos?", "La media es el promedio.", "Otro chat.", "Seguimos con lo de antes."}}
+	s, ts := newTestServer(t, p)
+	code, id := startRunHTTP(t, ts, map[string]any{"cmd": "chat", "chat": map[string]any{"text": "hola", "depth": 2}})
+	if code != 200 {
+		t.Fatalf("start chat: %d", code)
+	}
+	waitChat := func(id, n int) []Event {
+		return readEvents(t, ts, id, 0, func(e []Event) bool {
+			a := lastAsk(e)
+			c := 0
+			for _, x := range e {
+				if x.Type == "ask" && x.Kind == "chat" {
+					c++
+				}
+			}
+			return a != nil && a.Kind == "chat" && c >= n
+		})
+	}
+	evs := waitChat(id, 1)
+	if evs[0].Type != "in" || evs[0].Text != "hola" || !strings.Contains(outText(evs), "qué estudiamos") {
+		t.Fatalf("opening exchange: %+v", evs)
+	}
+	if res, body := do(t, ts, "POST", "/api/runs/"+itoa(id)+"/input", map[string]any{"text": "¿qué es la media?"}, nil); res.StatusCode != 200 {
+		t.Fatalf("chat input: %d %s", res.StatusCode, body)
+	}
+	evs = waitChat(id, 2)
+	if !strings.Contains(outText(evs), "promedio") {
+		t.Errorf("second answer missing: %s", outText(evs))
+	}
+
+	// a new chat parks the idle one, which ends without error
+	code, id2 := startRunHTTP(t, ts, map[string]any{"cmd": "chat", "chat": map[string]any{"text": "otra cosa"}})
+	if code != 200 {
+		t.Fatalf("second chat: %d", code)
+	}
+	old := readEvents(t, ts, id, 0, func(e []Event) bool { return has(e, "done") != nil })
+	if d := has(old, "done"); d.Error != "" {
+		t.Errorf("a parked chat must end cleanly: %q", d.Error)
+	}
+	waitChat(id2, 1)
+
+	// continuing the first chat brings its transcript along, under a new id
+	code, id3 := startRunHTTP(t, ts, map[string]any{"cmd": "chat", "resume": id, "chat": map[string]any{"text": "sigamos"}})
+	if code != 200 {
+		t.Fatalf("resume: %d", code)
+	}
+	evs = waitChat(id3, 3)
+	if evs[0].Text != "hola" || !strings.Contains(outText(evs), "Seguimos con lo de antes.") {
+		t.Errorf("resumed transcript: %+v", evs)
+	}
+	s.mu.Lock()
+	_, stillThere := s.runs[id]
+	s.mu.Unlock()
+	if stillThere {
+		t.Error("the continued chat should be replaced by the new one")
+	}
+}
+
+func TestNoteEndpointServesConcepts(t *testing.T) {
+	s, ts := newTestServer(t, &scripted{})
+	if err := s.V.Save(vault.Note{Slug: "bayes", Meta: vault.Meta{Title: "Bayes", Concepts: []string{"probabilidad"}, Base: []string{"probabilidad"}}, Body: "## Guía\n\nVer [[probabilidad]].\n"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.V.SaveConcept(vault.Concept{Slug: "probabilidad", Meta: vault.ConceptMeta{Title: "Probabilidad", Guides: []string{"bayes"}}, Body: "# Probabilidad\n"}); err != nil {
+		t.Fatal(err)
+	}
+	res, body := do(t, ts, "GET", "/api/notes/probabilidad", nil, nil)
+	if res.StatusCode != 200 || !strings.Contains(string(body), `"kind":"concept"`) || !strings.Contains(string(body), `"guides":[{"slug":"bayes","title":"Bayes"}]`) {
+		t.Errorf("concept note: %d %s", res.StatusCode, body)
+	}
+	_, body = do(t, ts, "GET", "/api/notes/bayes", nil, nil)
+	if !strings.Contains(string(body), `"concepts":[{"slug":"probabilidad","title":"Probabilidad","exists":true}]`) {
+		t.Errorf("guide note: %s", body)
+	}
+	_, body = do(t, ts, "GET", "/api/graph", nil, nil)
+	if !strings.Contains(string(body), `{"from":"probabilidad","to":"bayes","kind":"requires"}`) || !strings.Contains(string(body), `"kind":"concept"`) {
+		t.Errorf("graph: %s", body)
+	}
+}

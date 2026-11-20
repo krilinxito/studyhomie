@@ -199,6 +199,7 @@ func levels(all map[string]PlannedConcept, order, base []string, depth int) Conc
 type planEdit struct {
 	Skip []string `json:"skip"`
 	Add  []string `json:"add"`
+	Go   bool     `json:"go"` // generate right after applying the edit
 }
 
 // applyEdit removes the skipped concepts (and whatever only they led to) and adds new ones the
@@ -335,6 +336,9 @@ func (s *Session) approvePlan(p ConceptPlan) (ConceptPlan, bool, error) {
 			e = parseEditLine(a)
 		}
 		p = applyEdit(p, e, s.conceptTitle)
+		if e.Go {
+			return p, true, nil
+		}
 		if len(e.Skip) == 0 && len(e.Add) == 0 {
 			s.printf("No entendí la respuesta.\n")
 		}
@@ -344,9 +348,6 @@ func (s *Session) approvePlan(p ConceptPlan) (ConceptPlan, bool, error) {
 // parseEditLine reads "-id +Some title -other" edits typed in a terminal.
 func parseEditLine(a string) planEdit {
 	var e planEdit
-	for _, part := range strings.Fields(strings.NewReplacer(" -", "\x00-", " +", "\x00+").Replace(" " + a)) {
-		_ = part
-	}
 	for _, chunk := range strings.Split(strings.NewReplacer(" -", "\x00-", " +", "\x00+").Replace(" "+a), "\x00") {
 		chunk = strings.TrimSpace(chunk)
 		switch {
@@ -435,9 +436,12 @@ func (s *Session) Guide(ctx context.Context, req GuideReq) (string, error) {
 		}
 		prog.items = append(prog.items, ProgressItem{ID: c.ID, Title: c.Title, Kind: "concept", State: st})
 	}
-	if len(plan.Concepts) > 0 {
-		s.printf("Escribiendo la guía y %d notas de concepto nuevas (%d ya estaban en tu vault)...\n",
-			len(fresh), len(plan.Concepts)-len(fresh))
+	if linked := len(plan.Concepts) - len(fresh); len(plan.Concepts) > 0 {
+		msg := fmt.Sprintf("Escribiendo la guía y %d notas de concepto", len(fresh))
+		if linked > 0 {
+			msg += fmt.Sprintf(" (%d ya estaban en tu vault y solo se enlazan)", linked)
+		}
+		s.printf("%s...\n", msg)
 	} else {
 		s.printf("Preparando la guía de «%s» (busca material en línea, puede tardar)...\n", req.Topic)
 	}
@@ -598,13 +602,13 @@ func (s *Session) writeGuide(ctx context.Context, note *vault.Note, req GuideReq
 	if err := s.V.SaveHandoff(note.Slug, handoff); err != nil {
 		return err
 	}
-	if !s.card(Card{Kind: CardResources, Resources: resources}) || len(resources) == 0 {
-		// a UI shows the guide in its reading panel; the terminal prints it
-		if s.Card == nil {
-			s.printf("\n%s\n\n", guide)
-		}
+	if len(resources) > 0 {
+		s.card(Card{Kind: CardResources, Resources: resources})
 	}
-	s.printf("Guardado en %s/%s/%s.md\n", s.V.Root, vault.GuidesDir, note.Slug)
+	if s.Card == nil {
+		// a UI shows the guide in its reading panel; the terminal prints it, and where it lives
+		s.printf("\n%s\n\nGuardado en %s/%s/%s.md\n", guide, s.V.Root, vault.GuidesDir, note.Slug)
+	}
 	return nil
 }
 

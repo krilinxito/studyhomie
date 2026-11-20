@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -92,6 +90,7 @@ type Run struct {
 	events    []Event
 	subs      map[chan struct{}]struct{}
 	askKind   string // what the flow is waiting for; "" when it is not waiting
+	parked    bool   // an idle chat closed to make room for another
 	done      bool
 	status    string
 	errMsg    string
@@ -211,6 +210,11 @@ type StartReq struct {
 	N          int      `json:"n"`
 	Difficulty string   `json:"difficulty"`
 	Files      []string `json:"files"`
+
+	// chat: the opening message, the guide open next to it, and the chat it continues
+	Chat   *chatBody `json:"chat"`
+	Guide  string    `json:"guide"`
+	Resume int       `json:"resume"`
 }
 
 var uploadIDRe = regexp.MustCompile(`^[0-9a-f]{16}/[^/\\]+$`)
@@ -251,17 +255,16 @@ func (s *Server) validate(req *StartReq) (paths []string, err error) {
 		return nil, need("el roadmap", req.Roadmap)
 	case "daily":
 		return nil, nil
+	case "chat":
+		return nil, nil
 	case "material":
 		if len(req.Files) == 0 {
 			return nil, errors.New("falta el archivo")
 		}
 		for _, id := range req.Files {
-			if !uploadIDRe.MatchString(id) {
-				return nil, fmt.Errorf("archivo no válido: %q", id)
-			}
-			p := filepath.Join(s.uploadDir(), filepath.FromSlash(id))
-			if _, err := os.Stat(p); err != nil {
-				return nil, fmt.Errorf("no encuentro el archivo subido %q", id)
+			p, err := s.uploadPath(id)
+			if err != nil {
+				return nil, err
 			}
 			paths = append(paths, p)
 		}
@@ -278,10 +281,23 @@ func (s *Server) StartRun(req StartReq) (*Run, error) {
 	if err != nil {
 		return nil, err
 	}
+	var first *session.ChatMsg
+	shown := ""
+	if req.Cmd == "chat" && req.Chat != nil && !req.Chat.empty() {
+		m, err := s.message(*req.Chat)
+		if err != nil {
+			return nil, err
+		}
+		first, shown = &m, req.Chat.shown()
+	}
 	s.mu.Lock()
 	if s.active != nil && !s.active.isDone() {
-		s.mu.Unlock()
-		return nil, errBusy
+		// a chat that is only waiting for a message steps aside; anything working keeps the floor
+		if req.Cmd != "chat" || s.active.waiting() != "chat" {
+			s.mu.Unlock()
+			return nil, errBusy
+		}
+		s.active.park()
 	}
 	s.seq++
 	ctx, cancel := context.WithCancel(context.Background())
@@ -292,18 +308,43 @@ func (s *Server) StartRun(req StartReq) (*Run, error) {
 	s.runs[run.ID] = run
 	s.active = run
 	s.mu.Unlock()
+	opts := session.ChatOpts{First: first, Guide: req.Guide}
+	if req.Cmd == "chat" {
+		if req.Resume > 0 {
+			hist, slug := s.carryOver(run, req.Resume)
+			opts.History = hist
+			if opts.Guide == "" {
+				opts.Guide = slug
+			}
+		}
+		if shown != "" {
+			run.emit(Event{Type: "in", Text: shown})
+		}
+	}
 	run.scheduleSave(false)
 
 	sess := &session.Session{
 		P: s.P, V: s.V, Cfg: s.Cfg, CheckLinks: s.CheckLinks,
-		In:   bufio.NewReader(run.in),
-		Out:  outWriter{run},
-		Ask:  func(kind, label, def string) { run.emit(Event{Type: "ask", Kind: kind, Label: label, Def: def}) },
-		Card: func(c session.Card) { run.emit(Event{Type: "card", Card: &c}) },
+		In:  bufio.NewReader(run.in),
+		Out: outWriter{run},
+		Ask: func(kind, label, def string) { run.emit(Event{Type: "ask", Kind: kind, Label: label, Def: def}) },
+		Card: func(c session.Card) {
+			if c.Kind == session.CardGuide {
+				run.mu.Lock()
+				run.Slug = c.Slug // the history offers to reopen the guide the chat ended on
+				run.mu.Unlock()
+			}
+			run.emit(Event{Type: "card", Card: &c})
+		},
 	}
 	go func() {
 		defer cancel()
-		err := s.dispatch(ctx, sess, req, paths)
+		var err error
+		if req.Cmd == "chat" {
+			err = sess.Chat(ctx, opts)
+		} else {
+			err = s.dispatch(ctx, sess, req, paths)
+		}
 		run.in.Close()
 		done := Event{Type: "done"}
 		if err != nil && !errors.Is(err, context.Canceled) {
@@ -312,6 +353,11 @@ func (s *Server) StartRun(req StartReq) (*Run, error) {
 		if ctx.Err() != nil {
 			done.Error = "cancelado"
 		}
+		run.mu.Lock()
+		if run.parked {
+			done.Error = ""
+		}
+		run.mu.Unlock()
 		run.emit(done)
 	}()
 	return run, nil
@@ -322,6 +368,8 @@ func runSlug(req StartReq) string {
 	switch req.Cmd {
 	case "study", "prepare":
 		return vault.Slugify(req.Topic)
+	case "chat":
+		return vault.Slugify(req.Guide)
 	case "quiz", "feynman", "interactive":
 		return req.Slug
 	case "next":
@@ -336,6 +384,13 @@ func (s *Server) runTitle(req StartReq) string {
 		return truncate(t, 160)
 	}
 	switch req.Cmd {
+	case "chat":
+		if req.Chat != nil {
+			if t := req.Chat.shown(); t != "" {
+				return truncate(strings.Join(strings.Fields(t), " "), 80)
+			}
+		}
+		return "Chat"
 	case "roadmap":
 		return truncate(req.Subject, 160)
 	case "daily":

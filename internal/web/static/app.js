@@ -52,30 +52,46 @@ function slugify(s) {
   }
   return out.replace(/-+$/, '');
 }
+const foldSlug = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '');
+
+// per-browser conveniences (open guide, tab, depth); the app works the same without them
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(`sh.${k}`); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(`sh.${k}`, JSON.stringify(v)); } catch { /* private mode */ } },
+};
 
 const STATUS = { new: 'Por descubrir', prepared: 'Guía lista', tested: 'Comprobado', explained: 'Explicado' };
+const SECTION = { 'Guía': 'La guía', 'Conceptos base': 'Conceptos base', 'Dudas': 'Dudas', 'Prueba': 'Preguntas', 'Feynman': 'Explicación', 'Conexiones': 'Conexiones' };
+const TYPE = { video: 'Video', web: 'Web', book: 'Libro', paper: 'Paper', interactive: 'Interactivo' };
+const DEPTH = ['Solo el tema', 'Lo inmediato', 'Dos niveles', 'Tres niveles', 'Desde lo básico'];
+const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const smoothness = () => (matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth');
+const isPhone = () => matchMedia('(max-width: 880px)').matches;
 
-// Each roadmap is a metro line with its own colour (--l0 … --l7). The colour comes from the slug,
-// probing forward on a clash, so a roadmap keeps its colour as long as the others do not change.
+// Every guide is a metro line with its own colour (--l0 … --l7); a guide inside a roadmap shares the
+// roadmap's line, and its concepts ride on it. The colour comes from the line's key, probing forward
+// on a clash, so a line keeps its colour as long as the others do not change.
 const LINES = 8;
-function assignLines(roadmaps) {
+function assignLines(keys) {
   const taken = new Set(), out = new Map();
-  for (const slug of roadmaps.map((r) => r.slug).sort()) {
+  for (const key of [...keys].sort()) {
     let h32 = 2166136261;
-    for (const ch of slug) h32 = Math.imul(h32 ^ ch.codePointAt(0), 16777619) >>> 0;
+    for (const ch of key) h32 = Math.imul(h32 ^ ch.codePointAt(0), 16777619) >>> 0;
     let i = h32 % LINES;
     for (let tries = 0; tries < LINES && taken.has(i); tries++) i = (i + 1) % LINES;
     taken.add(i);
-    out.set(slug, i);
+    out.set(key, i);
   }
   return out;
 }
-// CSS colour of a roadmap's line, or the neutral grey for a topic that belongs to none
-const lineColor = (slug) => `var(--${S.lines.has(slug) ? `l${S.lines.get(slug)}` : 'l-none'})`;
-const roadmapTitle = (slug) => (S.roadmaps.find((r) => r.slug === slug) || {}).title || slug;
-const SECTION = { 'Guía': 'La guía', 'Conceptos base': 'Conceptos base', 'Dudas': 'Dudas', 'Prueba': 'Preguntas', 'Feynman': 'Explicación', 'Conexiones': 'Conexiones' };
-const TYPE = { video: 'Video', web: 'Web', book: 'Libro', paper: 'Paper', interactive: 'Interactivo' };
-const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const lineColor = (group) => `var(--${S.lines.has(group) ? `l${S.lines.get(group)}` : 'l-none'})`;
+const nodeOf = (slug) => ((S.graph && S.graph.nodes) || []).find((n) => n.id === slug);
+function groupTitle(key) {
+  if (!key) return 'Sueltos';
+  if (key.startsWith('g:')) return (nodeOf(key.slice(2)) || {}).label || key.slice(2);
+  if (key.startsWith('c:')) return key.length > 2 ? `Conceptos de ${key.slice(2)}` : 'Conceptos sueltos';
+  return (S.roadmaps.find((r) => r.slug === key) || {}).title || key;
+}
 
 /* ---------- markdown (+ math, wikilinks) ---------- */
 DOMPurify.addHook('afterSanitizeAttributes', (node) => {
@@ -206,442 +222,122 @@ function drawDiagram(body, src) {
   });
 }
 
-/* ---------- state ---------- */
-const S = {
-  cy: null, graph: null, selected: null, note: null, roadmaps: [], info: null, run: null,
-  lines: new Map(), view: 'home', readerSlug: null, filterRm: '',
-};
-
-/* ---------- views ---------- */
-const VIEWS = ['home', 'map', 'note', 'session'];
-function showView(name) {
-  S.view = name;
-  for (const v of VIEWS) $(`#view-${v}`).hidden = v !== name;
-  // the reading page belongs to the map, so that tab stays lit
-  const tab = name === 'note' ? 'map' : name;
-  for (const b of $$('.tabs button')) b.setAttribute('aria-selected', String(b.dataset.view === tab));
-  if (name === 'map') fitMap();
-  if (name === 'session' && !S.run) showHistory();
+// Drops emojis from older notes. Fenced code is kept as it is.
+function stripEmoji(md) {
+  return md.split(/(```[\s\S]*?```)/g).map((part, i) => (i % 2 ? part : part
+    .replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}\u{20E3}]/gu, '')
+    .replace(/^([ \t]*(?:#+|>|[-*]|\d+\.)) {2,}(?=\S)/gm, '$1 ')
+    .replace(/[ \t]+$/gm, ''))).join('');
 }
-
-// Cytoscape cannot fit a graph into a hidden container, so a new layout waits until the map is on screen.
-function fitMap() {
-  if (!S.cy || S.view !== 'map') return;
-  S.cy.resize();
-  if (S.needsFit) { S.cy.fit(undefined, 50); S.needsFit = false; }
-}
-$$('.tabs button').forEach((b) => b.addEventListener('click', () => {
-  // leaving a finished session open would hide the history behind it
-  if (b.dataset.view === 'session' && S.run && S.run.done && S.view === 'session') leaveSession();
-  showView(b.dataset.view);
-}));
-$('.brand').addEventListener('click', (e) => { e.preventDefault(); showView('home'); });
-
-/* ---------- start dialog ---------- */
-const startDialog = $('#start-dialog');
-function openStart(form = 'topic') {
-  if (S.run && !S.run.done) { toast('Ya hay una sesión en curso. Termínala o cancélala primero.'); showView('session'); return; }
-  pickForm(form);
-  startDialog.showModal();
-  const first = { daily: '#daily-field', roadmap: '#in-subject', material: '#in-files', topic: '#in-topic' }[form];
-  $(first).focus();
-}
-function pickForm(form) {
-  $$('.seg button').forEach((x) => x.setAttribute('aria-selected', String(x.dataset.form === form)));
-  for (const f of ['daily', 'material', 'roadmap', 'topic']) $(`#form-${f}`).hidden = f !== form;
-  if (form === 'daily') $('#form-daily-body').replaceChildren(dailyPicker());
-}
-// The three ways to start live in the top bar. A daily topic already drawn for today is picked up, not drawn again.
-$('#btn-daily').addEventListener('click', () => {
-  const d = S.daily;
-  if (!d || !d.topic) return openStart('daily');
-  if (d.status === 'explained') return openNote(d.slug);
-  if (S.run && !S.run.done) return openStart('daily'); // explains that a session is running
-  startRun({ cmd: 'daily', title: d.topic }, d.topic);
-});
-$('#btn-material').addEventListener('click', () => openStart('material'));
-$('#btn-roadmap').addEventListener('click', () => openStart('roadmap'));
-$('#link-topic').addEventListener('click', () => openStart('topic'));
-$$('.seg button').forEach((b) => b.addEventListener('click', () => pickForm(b.dataset.form)));
-startDialog.addEventListener('click', (e) => { if (e.target === startDialog) startDialog.close(); }); // a click on the backdrop
-
-$('#form-topic').addEventListener('submit', (e) => {
-  e.preventDefault();
-  const topic = $('#in-topic').value.trim();
-  if (!topic) return;
-  startDialog.close();
-  $('#in-topic').value = '';
-  startRun({ cmd: 'study', topic, title: topic }, topic);
-});
-$('#form-roadmap').addEventListener('submit', (e) => {
-  e.preventDefault();
-  const subject = $('#in-subject').value.trim();
-  if (!subject) return;
-  startDialog.close();
-  $('#in-subject').value = '';
-  startRun({ cmd: 'roadmap', subject, title: subject }, `Línea: ${subject}`);
-});
-$('#form-material').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const files = $('#in-files').files;
-  if (!files.length) return;
-  const fd = new FormData();
-  for (const f of files) fd.append('files', f);
-  const btn = $('button[type=submit]', e.target);
-  btn.disabled = true;
-  try {
-    const up = await api('/api/upload', { method: 'POST', body: fd });
-    startDialog.close();
-    $('#in-files').value = '';
-    await startRun({ cmd: 'material', files: up.files, title: `Apuntes: ${files[0].name}` }, `Apuntes: ${files[0].name}`);
-  } catch (err) { toast(err.message); } finally { btn.disabled = false; }
-});
-
-/* ---------- note drawer ---------- */
-const drawer = $('#drawer');
-function setDrawer(open) {
-  drawer.classList.toggle('open', open);
-  drawer.toggleAttribute('inert', !open);
-  drawer.setAttribute('aria-hidden', String(!open));
-  $('#scrim').hidden = !open;
-  $('#btn-notes').setAttribute('aria-expanded', String(open));
-  if (open) { renderDrawer(); $('#drawer-search').focus(); } else $('#btn-notes').focus({ preventScroll: true });
-}
-$('#btn-notes').addEventListener('click', () => setDrawer(!drawer.classList.contains('open')));
-$('#drawer-close').addEventListener('click', () => setDrawer(false));
-$('#scrim').addEventListener('click', () => setDrawer(false));
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && drawer.classList.contains('open') && !startDialog.open) setDrawer(false); });
-$('#drawer-search').addEventListener('input', renderDrawer);
-
-// every note, grouped by the line (roadmap) it belongs to
-function renderDrawer() {
-  const body = $('#drawer-body');
-  body.replaceChildren();
-  const nodes = (S.graph && S.graph.nodes) || [];
-  const q = slugify($('#drawer-search').value);
-  const shown = nodes.filter((n) => !q || slugify(n.label).includes(q) || n.id.includes(q));
-  if (!shown.length) {
-    body.append(h('p', { class: 'drawer-empty' }, nodes.length ? 'Ninguna nota coincide.' : 'Aún no tienes notas. Cada tema que explores quedará guardado aquí.'));
-    return;
-  }
-  const groups = new Map();
-  for (const n of [...shown].sort((a, b) => (a.order || 0) - (b.order || 0) || a.label.localeCompare(b.label))) {
-    const k = n.roadmap || '';
-    if (!groups.has(k)) groups.set(k, []);
-    groups.get(k).push(n);
-  }
-  const keys = [...groups.keys()].filter(Boolean).sort((a, b) => roadmapTitle(a).localeCompare(roadmapTitle(b)));
-  if (groups.has('')) keys.push('');
-  for (const k of keys) {
-    body.append(h('section', { class: 'dg', style: `--lc: ${lineColor(k)}` },
-      h('h3', {}, k ? roadmapTitle(k) : 'Temas sueltos'),
-      h('ul', {}, groups.get(k).map((n) => h('li', {},
-        h('button', { class: `dn${n.id === S.readerSlug && S.view === 'note' ? ' on' : ''}`, type: 'button', onclick: () => { setDrawer(false); openNote(n.id); } },
-          h('i', { class: `st st-${n.status}`, title: STATUS[n.status] || n.status }), n.label))))));
-  }
-}
-
-/* ---------- daily ---------- */
-async function loadDaily() {
-  const d = await api('/api/daily');
-  S.daily = d;
-  const box = $('#daily-body');
-  box.replaceChildren();
-  if (d.topic) {
-    const done = d.status === 'explained';
-    box.append(...[
-      h('h1', { class: 'daily-topic' }, d.topic),
-      h('div', { class: 'daily-meta' },
-        d.field && h('span', { class: 'chip' }, d.field),
-        h('span', { class: 'chip status', style: `--c: var(--s-${d.status || 'new'})` }, STATUS[d.status] || STATUS.new)),
-      h('div', { class: 'actions' },
-        done
-          ? h('button', { class: 'btn primary', type: 'button', onclick: () => openNote(d.slug) }, 'Leer mi nota')
-          : h('button', { class: 'btn green', type: 'button', onclick: () => startRun({ cmd: 'daily', title: d.topic }, d.topic) }, 'Seguir con esto')),
-      done && h('p', { class: 'hint' }, 'Hecho por hoy. Mañana habrá otra cosa por descubrir.'),
-    ].filter(Boolean)); // append() would print a literal "false"
-    return;
-  }
-  box.append(h('div', { class: 'daily-pick' },
-    h('p', { class: 'lead' }, '¿Qué te gustaría descubrir hoy?'),
-    h('p', { class: 'hint' }, 'Un tema al azar para ampliar tu cultura, sin examen ni prisa. Solo porque sí.'),
-    dailyPicker()));
-}
-
-// the field chooser and the draw button, shared by the home page and the Daily dialog
-function dailyPicker() {
-  const OTHER = '\0other'; // cannot collide with a field name typed by the user
-  const sel = h('select', { id: 'daily-field', 'aria-label': 'Campo del reto' },
-    h('option', { value: '' }, 'Cualquiera de mis intereses'),
-    h('option', { value: '*' }, 'Totalmente aleatorio (todos los campos)'),
-    ((S.info && S.info.interests) || []).map((f) => h('option', { value: f }, f)),
-    h('option', { value: OTHER }, 'Otro campo…'));
-  const custom = h('input', { id: 'daily-custom', type: 'text', maxlength: 80, placeholder: 'Ej.: Arquitectura, Astronomía, Música…', 'aria-label': 'Campo del conocimiento' });
-  custom.hidden = true;
-  sel.addEventListener('change', () => {
-    custom.hidden = sel.value !== OTHER;
-    if (!custom.hidden) custom.focus();
-  });
-  const draw = () => {
-    const field = sel.value === OTHER ? custom.value.trim() : sel.value;
-    if (sel.value === OTHER && !field) { toast('Escribe el campo del conocimiento.'); custom.focus(); return; }
-    if (startDialog.open) startDialog.close();
-    startRun({ cmd: 'daily', field, title: 'Lo de hoy' }, 'Lo de hoy');
-  };
-  custom.addEventListener('keydown', (e) => { if (e.key === 'Enter') draw(); });
-  return h('div', { class: 'daily-fields' }, sel, custom, h('button', { class: 'btn green', type: 'button', onclick: draw }, 'Sorpréndeme'));
-}
-
-/* ---------- roadmaps (lines) ---------- */
-async function loadRoadmaps() {
-  S.roadmaps = await api('/api/roadmaps');
-  S.lines = assignLines(S.roadmaps);
-  if (S.filterRm && !S.roadmaps.some((r) => r.slug === S.filterRm)) S.filterRm = '';
-  const ul = $('#roadmaps');
-  ul.replaceChildren();
-  for (const r of S.roadmaps) {
-    const pct = r.total ? Math.round((100 * r.done) / r.total) : 0;
-    ul.append(h('li', { class: 'rm-item', style: `--lc: ${lineColor(r.slug)}` },
-      h('span', { class: 'rm-bullet', 'aria-hidden': 'true' }),
-      h('button', { class: 'rm-title', type: 'button', onclick: () => { S.filterRm = r.slug; renderChips(); applyFilters(); showView('map'); } }, r.title),
-      h('div', { class: 'rm-foot' },
-        h('div', { class: 'bar', role: 'progressbar', 'aria-valuenow': pct, 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-label': `Progreso de ${r.title}` }, h('i', { style: `width:${pct}%` })),
-        h('span', {}, `${r.done} de ${r.total}`)),
-      r.next
-        ? h('button', { class: 'btn small primary', type: 'button', title: r.next.title, onclick: () => startRun({ cmd: 'next', roadmap: r.slug, title: r.next.title }, r.next.title) }, 'Siguiente')
-        : h('span', { class: 'hint' }, r.total ? 'Completa' : '')));
-  }
-  renderChips();
-}
-
-// one chip per line filters the map
-function renderChips() {
-  const box = $('#filter-rm');
-  box.replaceChildren();
-  if (S.roadmaps.length < 1) return;
-  const chip = (slug, label) => h('button', {
-    class: `line-chip${slug ? '' : ' all'}`, type: 'button', 'aria-pressed': String(S.filterRm === slug),
-    style: slug ? `--lc: ${lineColor(slug)}` : null,
-    onclick: () => { S.filterRm = S.filterRm === slug ? '' : slug; renderChips(); applyFilters(); },
-  }, label);
-  box.append(chip('', 'Todas'), ...S.roadmaps.map((r) => chip(r.slug, r.title)));
-}
-
-// topics you started but have not finished: where to go next
-function renderRecent() {
-  const ul = $('#recent');
-  ul.replaceChildren();
-  const next = { new: 'Estudiarlo', prepared: 'Responder preguntas', tested: 'Explicarlo' };
-  const nodes = ((S.graph && S.graph.nodes) || []).filter((n) => n.status === 'prepared' || n.status === 'tested');
-  for (const n of nodes.slice(0, 7)) {
-    ul.append(h('li', {}, h('button', { class: 'recent-item', type: 'button', onclick: () => openNote(n.id) },
-      h('i', { class: `st st-${n.status}` }),
-      h('span', { class: 'recent-title' }, n.label),
-      h('span', { class: 'recent-meta' }, next[n.status]))));
-  }
-}
-
-/* ---------- graph ---------- */
-// A transit map: each roadmap is a thick coloured line, each topic a station on it.
-// A station is an empty ring (to discover), half filled (guide ready), filled (checked), filled with an outer ring (explained).
-function cyStyle() {
-  const ink = cssVar('--ink'), bg = cssVar('--bg'), muted = cssVar('--muted');
-  const lineOf = (i) => cssVar(i < 0 ? '--l-none' : `--l${i}`);
-  const s = [
-    { selector: 'node', style: {
-      'background-color': bg, 'border-width': 4, 'border-color': lineOf(-1), shape: 'ellipse', width: 20, height: 20,
-      label: 'data(label)', color: ink, 'font-size': 13, 'font-weight': 600, 'font-family': cssVar('--font'),
-      'text-valign': 'bottom', 'text-margin-y': 8, 'text-wrap': 'wrap', 'text-max-width': 130,
-      'text-background-color': bg, 'text-background-opacity': .9, 'text-background-padding': 2,
-      'z-index-compare': 'manual', 'z-index': 10, 'overlay-opacity': 0,
-      'transition-property': 'opacity', 'transition-duration': '150ms' } },
-    { selector: 'edge', style: {
-      width: 7, 'line-color': lineOf(-1), 'curve-style': 'taxi', 'taxi-direction': 'horizontal', 'taxi-radius': 26,
-      'line-cap': 'round', 'z-index-compare': 'manual', 'z-index': 1, 'overlay-opacity': 0 } },
-    { selector: 'edge[kind="related"]', style: { 'curve-style': 'bezier', 'line-style': 'dashed', width: 2, opacity: .45, 'line-color': muted } },
-    { selector: 'node.grouplabel', style: {
-      width: 1, height: 1, 'background-opacity': 0, 'border-width': 0, label: 'data(label)', 'font-size': 16, 'font-weight': 700,
-      color: ink, 'text-halign': 'right', 'text-valign': 'center', 'text-margin-x': 6, 'text-wrap': 'none', 'text-background-opacity': 0, events: 'no' } },
-  ];
-  for (let i = -1; i < LINES; i++) {
-    const c = lineOf(i);
-    s.push(
-      { selector: `node[line = ${i}]`, style: { 'border-color': c } },
-      { selector: `node[line = ${i}][status = "prepared"]`, style: { 'pie-size': '100%', 'pie-1-background-color': c, 'pie-1-background-size': 50, 'pie-1-background-opacity': 1 } },
-      { selector: `node[line = ${i}][status = "tested"]`, style: { 'background-color': c } },
-      { selector: `node[line = ${i}][status = "explained"]`, style: { 'background-color': c, 'outline-width': 3, 'outline-color': c, 'outline-offset': 3, 'outline-opacity': 1 } },
-      { selector: `edge[kind = "requires"][line = ${i}]`, style: { 'line-color': c } },
-      { selector: `node.grouplabel[line = ${i}]`, style: { color: c } },
-    );
-  }
-  s.push(
-    { selector: 'node:selected', style: { 'outline-width': 3, 'outline-color': ink, 'outline-offset': 4, 'outline-opacity': 1 } },
-    { selector: 'edge.hl', style: { width: 9 } },
-    { selector: '.dim', style: { opacity: .12 } },
-  );
-  return s;
-}
-
-const GX = 200, GY = 72; // horizontal gap between layers, vertical gap between topics
-
-// Layered layout: each roadmap is a block, prerequisites flow left to right, and
-// topics that belong to no roadmap sit in a grid at the bottom.
-function layeredLayout(g) {
-  const pos = {}, labels = [];
-  const groups = new Map();
-  for (const n of [...g.nodes].sort((a, b) => (a.order || 0) - (b.order || 0))) { // roadmap order breaks ties
-    const k = n.roadmap || '';
-    if (!groups.has(k)) groups.set(k, []);
-    groups.get(k).push(n);
-  }
-  const keys = [...groups.keys()].filter(Boolean).sort((a, b) => groups.get(b).length - groups.get(a).length);
-  if (groups.has('')) keys.push('');
-  const prereqs = new Map();
-  for (const e of g.edges) if (e.kind === 'requires') {
-    if (!prereqs.has(e.to)) prereqs.set(e.to, []);
-    prereqs.get(e.to).push(e.from);
-  }
-  let y0 = 0;
-  for (const key of keys) {
-    const nodes = groups.get(key);
-    labels.push({ id: `g:${key}`, label: key ? roadmapTitle(key) : 'Temas sueltos', roadmap: key, x: 0, y: y0 - 46 });
-    if (!key) {
-      nodes.forEach((n, i) => { pos[n.id] = { x: (i % 5) * GX, y: y0 + Math.floor(i / 5) * GY }; });
-      y0 += Math.ceil(nodes.length / 5) * GY + 120;
-      continue;
-    }
-    const ids = new Set(nodes.map((n) => n.id));
-    const layerOf = new Map(), busy = new Set();
-    const depth = (id) => {
-      if (layerOf.has(id)) return layerOf.get(id);
-      if (busy.has(id)) return 0; // never loops forever on a cycle
-      busy.add(id);
-      let d = 0;
-      for (const p of prereqs.get(id) || []) if (ids.has(p)) d = Math.max(d, depth(p) + 1);
-      busy.delete(id);
-      layerOf.set(id, d);
-      return d;
-    };
-    nodes.forEach((n) => depth(n.id));
-    const layers = [];
-    nodes.forEach((n) => { (layers[layerOf.get(n.id)] = layers[layerOf.get(n.id)] || []).push(n); });
-    const row = new Map();
-    const bary = (n) => {
-      const ps = (prereqs.get(n.id) || []).filter((p) => row.has(p));
-      return ps.length ? ps.reduce((s, p) => s + row.get(p), 0) / ps.length : Infinity;
-    };
-    layers.forEach((l, li) => {
-      l.sort((a, b) => (li ? bary(a) - bary(b) : 0) || 0); // one barycenter pass to cut crossings
-      l.forEach((n, i) => row.set(n.id, i));
-    });
-    const tallest = Math.max(...layers.map((l) => l.length));
-    layers.forEach((l, li) => l.forEach((n, i) => {
-      pos[n.id] = { x: li * GX, y: y0 + ((tallest - l.length) * GY) / 2 + i * GY };
-    }));
-    y0 += tallest * GY + 130;
-  }
-  return { pos, labels };
-}
-
-function graphSignature(g) {
-  return g.nodes.map((n) => n.id).sort().join('|') + '#' + g.edges.map((e) => `${e.from}>${e.to}`).sort().join('|');
-}
-
-async function loadGraph() {
-  const g = await api('/api/graph');
-  const same = S.graph && graphSignature(S.graph) === graphSignature(g);
-  S.graph = g;
-  $('#map-empty').hidden = g.nodes.length > 0;
-  const lineOfRm = (slug) => (S.lines.has(slug) ? S.lines.get(slug) : -1);
-  const lineOfNode = new Map(g.nodes.map((n) => [n.id, lineOfRm(n.roadmap || '')]));
-  if (!S.cy) {
-    S.cy = cytoscape({ container: $('#cy'), elements: [], style: cyStyle(), minZoom: .15, maxZoom: 3 });
-    S.cy.on('tap', 'node', (ev) => selectNode(ev.target.id()));
-    S.cy.on('tap', (ev) => { if (ev.target === S.cy) closePanel(); });
-  }
-  if (same) {
-    for (const n of g.nodes) {
-      const el = S.cy.getElementById(n.id);
-      el.data({ status: n.status, mastery: n.mastery, label: n.label, line: lineOfNode.get(n.id) });
-    }
-    S.cy.edges().forEach((e) => e.data('line', lineOfNode.get(e.target().id())));
-    S.cy.nodes('.grouplabel').forEach((l) => l.data('line', lineOfRm(l.data('roadmap'))));
-  } else {
-    S.cy.elements().remove();
-    const { pos, labels } = layeredLayout(g);
-    S.cy.add([
-      ...g.nodes.map((n) => ({ group: 'nodes', data: { id: n.id, label: n.label, status: n.status, mastery: n.mastery, roadmap: n.roadmap || '', line: lineOfNode.get(n.id) }, position: pos[n.id] })),
-      ...labels.map((l) => ({ group: 'nodes', data: { id: l.id, label: l.label, roadmap: l.roadmap, line: lineOfRm(l.roadmap) }, position: { x: l.x, y: l.y }, classes: 'grouplabel', selectable: false, grabbable: false })),
-      ...g.edges.map((e, i) => ({ group: 'edges', data: { id: `e${i}`, source: e.from, target: e.to, kind: e.kind, line: lineOfNode.get(e.to) } })),
-    ]);
-    S.needsFit = g.nodes.length > 0;
-    fitMap();
-  }
-  applyFilters();
-}
-
-function applyFilters() {
-  if (!S.cy) return;
-  const q = slugify($('#search').value);
-  const rm = S.filterRm;
-  S.cy.batch(() => {
-    S.cy.nodes().not('.grouplabel').forEach((n) => {
-      const okQ = !q || slugify(n.data('label')).includes(q) || n.id().includes(q);
-      const okR = !rm || n.data('roadmap') === rm;
-      n.toggleClass('dim', !(okQ && okR));
-    });
-    S.cy.edges().forEach((e) => e.toggleClass('dim', e.source().hasClass('dim') || e.target().hasClass('dim')));
-  });
-}
-$('#search').addEventListener('input', applyFilters);
-$('#search').addEventListener('keydown', (e) => {
-  if (e.key !== 'Enter' || !S.cy) return;
-  const hit = S.cy.nodes().not('.grouplabel').filter((n) => !n.hasClass('dim'))[0];
-  if (hit) { selectNode(hit.id(), true); }
-});
-
-/* ---------- station card (map) ---------- */
-function closePanel() {
-  $('#note-panel').hidden = true;
-  S.selected = null;
-  if (S.cy) { S.cy.elements().unselect(); S.cy.edges().removeClass('hl'); }
-}
-
-// Selects a station on the map and shows its card.
-async function selectNode(slug, center = false, quiet = false) {
-  if (!quiet) showView('map');
-  try {
-    const n = await api(`/api/notes/${encodeURIComponent(slug)}`);
-    S.selected = slug;
-    S.note = n;
-    renderPanel(n);
-    if (S.cy) {
-      S.cy.elements().unselect();
-      S.cy.edges().removeClass('hl');
-      const el = S.cy.getElementById(slug);
-      if (el.nonempty()) { el.select(); el.connectedEdges().addClass('hl'); if (center) S.cy.animate({ center: { eles: el }, zoom: Math.max(S.cy.zoom(), 1) }, { duration: 250 }); }
-    }
-  } catch (err) { toast(err.message); }
-}
-
-// Opens a note as a reading page.
-// With quiet, the page is redrawn in place (after a session changed the note) instead of scrolled to the top.
-async function openNote(slug, quiet = false) {
-  try {
-    const n = await api(`/api/notes/${encodeURIComponent(slug)}`);
-    const top = $('#view-note').scrollTop;
-    S.note = n;
-    S.readerSlug = slug;
-    renderReader(n);
-    showView('note');
-    $('#view-note').scrollTop = quiet ? top : 0;
-  } catch (err) { toast(err.message); }
-}
-
 function stripSection(body, heading) {
   const re = new RegExp(`(^|\\n)## ${heading}\\n[\\s\\S]*?(?=\\n## |$)`);
   return body.replace(re, '\n');
 }
+// the part of a note under "## heading", without the heading
+function sectionOf(body, heading) {
+  const m = new RegExp(`(?:^|\\n)## ${heading}\\s*\\n([\\s\\S]*?)(?=\\n## |$)`).exec(body || '');
+  return m ? m[1].trim() : '';
+}
+
+/* ---------- state ---------- */
+const S = {
+  info: null, graph: null, roadmaps: [], lines: new Map(),
+  guide: store.get('guide', ''), note: null, concept: null, tab: store.get('tab', 'guide'),
+  run: null, depth: store.get('depth', 1), cy: null, needsFit: false, filter: '', chats: [],
+};
+
+/* ---------- layout: three columns on a desk, one pane at a time on a phone ---------- */
+function setLayout(layout) {
+  document.body.dataset.layout = layout;
+  $('#btn-show-panel').hidden = layout !== 'chat';
+  $('#btn-wide').textContent = layout === 'panel' ? 'Reducir' : 'Ampliar';
+  store.set('layout', layout);
+  fitMap();
+}
+$('#btn-wide').addEventListener('click', () => setLayout(document.body.dataset.layout === 'panel' ? 'both' : 'panel'));
+$('#btn-hide-panel').addEventListener('click', () => { if (isPhone()) setPane('chat'); else setLayout('chat'); });
+$('#btn-show-panel').addEventListener('click', () => setLayout('both'));
+
+function setPane(pane) {
+  document.body.dataset.pane = pane;
+  $$('.panes button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.pane === pane)));
+  fitMap();
+}
+$$('.panes button').forEach((b) => b.addEventListener('click', () => setPane(b.dataset.pane)));
+
+// shows the study panel, wherever it is
+function revealPanel() {
+  if (isPhone()) setPane('panel');
+  else if (document.body.dataset.layout === 'chat') setLayout('both');
+}
+
+function setTab(tab) {
+  S.tab = tab;
+  store.set('tab', tab);
+  $$('.ptabs button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
+  for (const t of ['guide', 'concepts', 'map', 'practice']) $(`#p-${t}`).hidden = t !== tab;
+  if (tab === 'map') fitMap();
+  if (tab === 'concepts') renderConcepts();
+  if (tab === 'practice') renderPractice();
+}
+$$('.ptabs button').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab)));
+
+/* ---------- opening notes ---------- */
+// Opens a guide (Guía tab) or a concept (Conceptos tab) in the panel.
+async function openNote(slug, { quiet = false, reveal = true } = {}) {
+  try {
+    const n = await api(`/api/notes/${encodeURIComponent(slug)}`);
+    if (n.kind === 'concept') {
+      S.concept = n;
+      if (!quiet) setTab('concepts'); else if (S.tab === 'concepts') renderConcepts();
+      $('#p-concepts').scrollTop = 0;
+    } else {
+      setGuide(n);
+      if (!quiet) setTab('guide');
+    }
+    if (reveal && !quiet) revealPanel();
+  } catch (err) { toast(err.message); }
+}
+
+function setGuide(n) {
+  const changed = !S.note || S.note.slug !== n.slug;
+  S.note = n;
+  S.guide = n.slug;
+  store.set('guide', n.slug);
+  if (changed) S.concept = null;
+  const top = $('#p-guide').scrollTop;
+  renderReader(n);
+  $('#p-guide').scrollTop = changed ? 0 : top;
+  if (S.tab === 'concepts') renderConcepts();
+  if (S.tab === 'practice') renderPractice();
+}
+
+async function reloadGuide() {
+  if (!S.guide) return;
+  try { setGuide(await api(`/api/notes/${encodeURIComponent(S.guide)}`)); } catch { closeGuide(); }
+}
+function closeGuide() {
+  S.note = null; S.guide = ''; S.concept = null;
+  store.set('guide', '');
+  renderReader(null);
+  if (S.tab === 'concepts') renderConcepts();
+  if (S.tab === 'practice') renderPractice();
+}
+
+// wikilinks and simulation links rendered anywhere in the app
+document.addEventListener('click', (e) => {
+  const a = e.target.closest('a[href^="#note/"], a[href^="#sim/"]');
+  if (!a) return;
+  e.preventDefault();
+  const href = a.getAttribute('href');
+  if (href.startsWith('#sim/')) { openSim(decodeURIComponent(href.slice(5)), S.note && S.note.meta.title); return; }
+  const slug = decodeURIComponent(href.slice(6));
+  const known = nodeOf(slug) || nodeOf(foldSlug(slug));
+  if (known) { openNote(known.id); return; }
+  // a link to something not in the vault yet is a gap: offer to fill it
+  const title = a.textContent.trim() || slug;
+  if (confirm(`«${title}» aún no está en tu vault. ¿Te preparo una guía?`)) chatAction({ action: 'guide', topic: title, depth: S.depth }, `Guía: ${title}`);
+});
 
 function openSim(slug, title) {
   $('#sim-title').textContent = title || 'Simulación';
@@ -651,317 +347,87 @@ function openSim(slug, title) {
 $('#sim-close').addEventListener('click', () => $('#sim-dialog').close());
 $('#sim-dialog').addEventListener('close', () => { $('#sim-frame').src = 'about:blank'; });
 
-// How a note is studied, in order: study it, answer questions, explain it. Shared by the station card
-// and the reading page. The step to do next is highlighted; finished steps can be done again.
-// Extending into base concepts is not a step: it is an optional extra for anyone who needs more background.
-const STEP_RANK = { new: 0, prepared: 1, tested: 2, explained: 3 };
-function noteControls(n, title, status, compact = false) {
-  const rank = STEP_RANK[status] ?? 0;
-  const nInput = h('input', { type: 'number', min: 1, max: 30, value: 5, 'aria-label': 'Número de preguntas' });
-  const diff = h('select', { 'aria-label': 'Dificultad' },
-    ['básica', 'media', 'avanzada'].map((d) => h('option', { value: d, selected: d === 'media' }, d)));
-  const steps = [
-    { label: 'Estudiar', done: rank >= 1, enabled: true, run: () => {
-      if (rank >= 1 && !confirm('¿Volver a escribir la guía? Reemplaza la que tienes.')) return;
-      startRun(rank >= 1 ? { cmd: 'prepare', topic: title, title } : { cmd: 'study', topic: title, title }, title);
-    } },
-    { label: 'Responder preguntas', done: rank >= 2, enabled: rank >= 1,
-      run: () => startRun({ cmd: 'quiz', slug: n.slug, n: Number(nInput.value) || 5, difficulty: diff.value, title }, `Preguntas: ${title}`) },
-    { label: 'Explicar', done: rank >= 3, enabled: rank >= 1, run: () => startRun({ cmd: 'feynman', slug: n.slug, title }, `Explicar: ${title}`) },
-  ];
-  const current = steps.findIndex((s) => !s.done);
-  const list = h('ol', { class: `sequence${compact ? ' compact' : ''}`, 'aria-label': 'Orden para estudiar este tema' }, steps.map((s, i) => {
-    const state = s.done ? 'done' : i === current ? 'current' : 'todo';
-    return h('li', {}, h('button', {
-      class: `step${state === 'current' ? ' go' : ''}`, type: 'button', 'data-state': state, disabled: !s.enabled,
-      'aria-current': state === 'current' ? 'step' : null,
-      title: s.done ? 'Ya lo hiciste. Pulsa para repetirlo.' : null, onclick: s.run,
-    }, h('span', { class: 'step-n', 'aria-hidden': 'true' }, s.done ? '✓' : String(i + 1)), s.label));
-  }));
-
-  // Extending and doubts work on the article itself, so only the reading page has them
-  const extras = [];
-  if (rank >= 1 && !compact) {
-    const has = /^## Conceptos base\s*$/m.test(n.body || '');
-    extras.push(
-      h('button', {
-        class: 'btn small yellow', type: 'button',
-        title: 'Explica desde cero lo que la guía da por sabido, y lo añade al artículo. Es opcional.',
-        onclick: (e) => extendInline(n, e.currentTarget),
-      }, has ? 'Rehacer los conceptos base' : 'Extender: conceptos base'),
-      h('button', {
-        class: 'btn small blue', type: 'button',
-        title: 'Cuéntame qué no entendiste y lo hablamos. La respuesta queda en el artículo.',
-        onclick: focusDoubts,
-      }, 'Tengo una duda'));
-  }
-  const sim = n.hasSimulation
-    ? h('button', { class: 'btn small', type: 'button', onclick: () => openSim(n.slug, title) }, 'Abrir simulación')
-    : rank >= 1 && h('button', { class: 'btn small', type: 'button', onclick: () => startRun({ cmd: 'interactive', slug: n.slug, title }, `Simulación: ${title}`) }, 'Generar simulación');
-  if (sim) extras.push(sim);
-
-  return h('div', { class: 'controls' },
-    list,
-    rank >= 1 ? h('div', { class: 'quiz-opts' }, 'Preguntas:', nInput, 'en total, dificultad', diff) : null,
-    extras.length ? h('div', { class: 'extras' }, extras) : null);
-}
-
+/* ---------- Guía tab: the guide as an article ---------- */
 const statusChip = (status) => h('span', { class: 'chip status', style: `--c: var(--s-${status})` }, STATUS[status] || status);
 
-function renderPanel(n) {
-  const p = $('#note-panel');
-  const m = n.meta;
-  const status = m.status || 'new';
-  const title = m.title || n.slug;
-  p.replaceChildren();
-  p.hidden = false;
-  p.style.setProperty('--lc', lineColor(m.roadmap || ''));
-  p.append(...[
-    h('div', { class: 'station-line' }),
-    h('div', { class: 'station-head' }, h('h3', {}, title),
-      h('button', { class: 'btn small', type: 'button', 'aria-label': 'Cerrar', onclick: closePanel }, '✕')),
-    h('div', { class: 'chips' },
-      statusChip(status),
-      m.roadmap && h('span', { class: 'chip' }, roadmapTitle(m.roadmap)),
-      m.field && h('span', { class: 'chip' }, m.field)),
-    m.mastery ? h('div', { class: 'mastery' },
-      h('div', { class: 'row' }, h('span', {}, 'Lo que llevas'), h('span', {}, `${m.mastery}/100`)),
-      h('div', { class: 'bar', style: `--lc: ${lineColor(m.roadmap || '')}` }, h('i', { style: `width:${m.mastery}%` }))) : null,
-    status !== 'new' && h('div', { class: 'actions' }, h('button', { class: 'btn small blue', type: 'button', onclick: () => openNote(n.slug) }, 'Leer la guía')),
-    noteControls(n, title, status, true),
-  ].filter(Boolean)); // native append() would print a literal "false"
-  p.scrollTop = 0;
-}
+// widgets in a note can build their own page on demand
+const vizCtx = (slug) => ({
+  generate: async (spec) => (await api(`/api/notes/${encodeURIComponent(slug)}/viz`, { method: 'POST', body: { brief: spec.brief } })).src,
+});
 
-// Drops emojis from a guide. Fenced code is kept as it is.
-function stripEmoji(md) {
-  return md.split(/(```[\s\S]*?```)/g).map((part, i) => (i % 2 ? part : part
-    .replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}\u{20E3}]/gu, '')
-    .replace(/^([ \t]*(?:#+|>|[-*]|\d+\.)) {2,}(?=\S)/gm, '$1 ') // a heading or list item that began with an emoji keeps a single space
-    .replace(/[ \t]+$/gm, ''))).join('');
-}
-
-/* ---------- base concepts and doubts, inside the article ---------- */
-// Where a section of the article ends: the heading that follows it, null when it runs to the end,
-// undefined when the article has no such section.
-function sectionEnd(md, heading) {
-  const h2 = $$('h2', md).find((x) => x.textContent.trim() === heading);
-  if (!h2) return undefined;
-  let el = h2.nextElementSibling;
-  while (el && el.tagName !== 'H2') el = el.nextElementSibling;
-  return el;
-}
-const insertBefore = (md, node, before) => (before ? md.insertBefore(node, before) : md.append(node));
-// A block that says the AI is working, with a button to stop it. Stopping aborts the request, and the server then stops the model.
-const thinkingBlock = (text, onCancel) => h('div', { class: 'thinking', role: 'status' },
-  h('span', { class: 'pulse', 'aria-hidden': 'true' }), text,
-  h('button', { class: 'btn small red', type: 'button', onclick: onCancel }, 'Cancelar'));
-const wasCancelled = (err) => err && err.name === 'AbortError';
-const smoothness = () => (matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth');
-
-// The "Dudas" section always shows in an article that has a guide: its saved questions and, at the end, the box to ask another.
-function placeDoubts(md, n) {
-  let before = sectionEnd(md, 'Dudas');
-  if (before === undefined) {
-    // no doubts yet: the section goes after the base concepts, or else after the guide
-    before = sectionEnd(md, 'Conceptos base');
-    if (before === undefined) before = sectionEnd(md, 'La guía');
-    if (before === undefined) before = null;
-    insertBefore(md, h('h2', {}, 'Dudas'), before);
+// every guide, grouped by roadmap: what the panel offers when no guide is open
+function guideList() {
+  const guides = ((S.graph && S.graph.nodes) || []).filter((n) => n.kind === 'guide');
+  if (!guides.length) return null;
+  const groups = new Map();
+  for (const n of guides) {
+    const k = n.roadmap || '';
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(n);
   }
-  insertBefore(md, doubtsBox(n), before);
+  const keys = [...groups.keys()].sort((a, b) => (!a) - (!b) || groupTitle(a).localeCompare(groupTitle(b)));
+  return h('div', { class: 'guide-list' }, keys.map((k) => h('section', { class: 'dg', style: k ? `--lc: ${lineColor(k)}` : null },
+    h('h3', {}, k ? groupTitle(k) : 'Tus guías'),
+    h('ul', {}, groups.get(k).sort((a, b) => (a.order || 0) - (b.order || 0) || a.label.localeCompare(b.label)).map((n) => h('li', {},
+      h('button', { class: 'dn', type: 'button', style: `--lc: ${lineColor(n.group)}`, onclick: () => openNote(n.id) },
+        h('i', { class: `st st-${n.status}`, title: STATUS[n.status] || n.status }), n.label)))))));
 }
 
-function doubtsBox(n) {
-  const ta = h('textarea', {
-    rows: 3, maxlength: 1500, 'aria-label': 'Tu duda',
-    placeholder: 'Cuéntame qué entiendes y qué no. Por ejemplo: entiendo qué es una probabilidad, pero no por qué se multiplican.',
-  });
-  const send = h('button', { class: 'btn blue', type: 'submit' }, 'Preguntar');
-  const form = h('form', { class: 'doubt-form' }, ta,
-    h('div', { class: 'doubt-row' }, h('span', { class: 'hint' }, 'Pregunta como en un chat. Tu duda y la respuesta se guardan aquí. Ctrl + Enter para enviar.'), send));
-  const box = h('div', { class: 'doubts' }, form);
-  form.addEventListener('submit', (e) => { e.preventDefault(); askDoubt(n, box, ta, send); });
-  ta.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.isComposing) { e.preventDefault(); form.requestSubmit(); }
-  });
-  return box;
-}
-
-function focusDoubts() {
-  const ta = $('#reader .doubts textarea');
-  if (!ta) return;
-  ta.scrollIntoView({ behavior: smoothness(), block: 'center' });
-  ta.focus({ preventScroll: true });
-}
-
-// Sends a doubt and puts the question and its answer into the article, right above the box.
-async function askDoubt(n, box, ta, send) {
-  const question = ta.value.trim();
-  if (!question) { toast('Escribe tu duda.'); ta.focus(); return; }
-  ta.disabled = send.disabled = true;
-  const bubble = h('div', { class: 'chat-q' }, h('small', {}, 'Tú'), question);
-  const stop = new AbortController();
-  const thinking = thinkingBlock('Pensando…', () => stop.abort());
-  box.before(bubble, thinking);
-  thinking.scrollIntoView({ behavior: smoothness(), block: 'nearest' });
-  try {
-    const ans = await api(`/api/notes/${encodeURIComponent(n.slug)}/doubt`, { method: 'POST', body: { question }, signal: stop.signal });
-    const entry = mdBlock(stripEmoji(ans.entry));
-    bubble.replaceWith(entry);
-    thinking.remove();
-    ta.value = '';
-    offerConcepts(n, entry, ans.concepts || []);
-  } catch (err) {
-    bubble.remove();
-    thinking.remove();
-    toast(wasCancelled(err) ? 'Cancelado.' : err.message); // what they wrote stays in the box
-  } finally {
-    ta.disabled = send.disabled = false;
-    ta.focus({ preventScroll: true });
-  }
-}
-
-// When an answer explained something that could stand on its own, offer to add it to the vault as an article.
-function offerConcepts(n, after, concepts) {
-  let anchor = after;
-  for (const c of concepts) {
-    const row = h('div', { class: 'offer' });
-    const draw = (inVault) => row.replaceChildren(
-      h('span', {}, inVault ? `«${c.title}» ya está en tu vault.` : `Aquí se explicó «${c.title}». ¿Lo añado a tu vault como artículo?`),
-      inVault
-        ? h('button', { class: 'btn small', type: 'button', onclick: () => openNote(c.slug) }, 'Abrir artículo')
-        : h('button', { class: 'btn small green', type: 'button', onclick: add }, 'Añadir al vault'));
-    async function add(e) {
-      const btn = e.currentTarget;
-      btn.disabled = true;
-      try {
-        await api(`/api/notes/${encodeURIComponent(n.slug)}/concept`, { method: 'POST', body: { title: c.title, summary: c.summary } });
-        draw(true);
-        toast(`«${c.title}» está en tu vault. Estúdialo cuando quieras desde el mapa o el cajón de notas.`);
-        loadGraph().then(renderRecent).catch(() => {}); // the map and the drawer learn about the new topic
-      } catch (err) { btn.disabled = false; toast(err.message); }
-    }
-    draw(c.exists);
-    anchor.after(row);
-    anchor = row;
-  }
-}
-
-// Writes the base concepts and puts them in the article. Where they will appear shows a "thinking" block meanwhile.
-async function extendInline(n, btn) {
-  btn.disabled = true;
-  const md = $('#reader .r-article > .md');
-  const stop = new AbortController();
-  const thinking = thinkingBlock('Escribiendo los conceptos base…', () => stop.abort());
-  if (md) {
-    let before = sectionEnd(md, 'Conceptos base'); // when redoing them, at the end of the old ones
-    if (before === undefined) before = sectionEnd(md, 'La guía');
-    insertBefore(md, thinking, before === undefined ? null : before);
-    thinking.scrollIntoView({ behavior: smoothness(), block: 'center' });
-  }
-  try {
-    await api(`/api/notes/${encodeURIComponent(n.slug)}/extend`, { method: 'POST', body: {}, signal: stop.signal });
-    await openNote(n.slug, true); // draws the article again, with its index
-    const heading = $$('#reader .r-article h2').find((x) => x.textContent === 'Conceptos base');
-    if (heading) heading.scrollIntoView({ behavior: smoothness(), block: 'start' });
-  } catch (err) {
-    thinking.remove();
-    btn.disabled = false;
-    toast(wasCancelled(err) ? 'Cancelado.' : err.message);
-  }
-}
-
-// The reading page: the guide as an article. The note is a line and each section a station along it.
 function renderReader(n) {
   const root = $('#reader');
+  root.replaceChildren();
+  if (!n) {
+    root.append(h('div', { class: 'panel-empty' },
+      h('h3', {}, 'Aquí aparecerá tu guía'),
+      h('p', {}, 'Pide en el chat lo que quieras entender. La profundidad, junto al cuadro de texto, decide cuántos niveles de conceptos base se escriben como notas aparte.'),
+      guideList() || ''));
+    return;
+  }
   const m = n.meta;
   const status = m.status || 'new';
   const title = m.title || n.slug;
-  root.replaceChildren();
-
-  const wrap = h('div', { class: 'reader-wrap', style: `--line-c: ${lineColor(m.roadmap || '')}` });
-  wrap.append(h('button', { class: 'crumb', type: 'button', onclick: () => { showView('map'); selectNode(n.slug, true); } }, '← Ver en el mapa'));
+  const node = nodeOf(n.slug);
+  const concepts = n.concepts || [];
+  const wrap = h('div', { class: 'reader-wrap', style: `--line-c: ${lineColor(node ? node.group : '')}` });
   wrap.append(h('header', { class: 'r-head' },
-    h('p', { class: 'r-line' }, m.roadmap ? roadmapTitle(m.roadmap) : 'Tema suelto'),
+    h('button', { class: 'crumb', type: 'button', onclick: closeGuide }, '← Todas las guías'),
+    h('p', { class: 'r-line' }, m.roadmap ? groupTitle(m.roadmap) : 'Guía'),
     h('h1', {}, title),
-    h('div', { class: 'chips' }, statusChip(status), m.field && h('span', { class: 'chip' }, m.field), m.source && m.source !== 'adhoc' && h('span', { class: 'chip' }, m.source)),
+    h('div', { class: 'chips' }, statusChip(status),
+      m.depth ? h('span', { class: 'chip' }, `Profundidad ${m.depth}`) : null,
+      m.focus ? h('span', { class: 'chip' }, `Foco: ${m.focus}`) : null,
+      m.field ? h('span', { class: 'chip' }, m.field) : null),
     m.mastery ? h('div', { class: 'mastery' },
       h('div', { class: 'row' }, h('span', {}, 'Lo que llevas'), h('span', {}, `${m.mastery}/100`)),
-      h('div', { class: 'bar', style: 'background: var(--surface-2)' }, h('i', { style: `width:${m.mastery}%; background: var(--line-c)` }))) : null,
-    noteControls(n, title, status)));
+      h('div', { class: 'bar' }, h('i', { style: `width:${m.mastery}%; background: var(--line-c)` }))) : null,
+    h('div', { class: 'actions' },
+      concepts.length ? h('button', { class: 'btn small yellow', type: 'button', onclick: () => setTab('concepts') }, `${concepts.length} conceptos base`) : null,
+      status !== 'new' ? h('button', { class: 'btn small green', type: 'button', onclick: () => setTab('practice') }, 'Practicar') : null,
+      h('button', { class: 'btn small blue', type: 'button', onclick: () => askAbout(`Sobre «${title}»: `) }, 'Preguntar en el chat'))));
 
   const article = h('article', { class: 'r-article' });
-  const toc = [];
-  const addToc = (el, text, sub) => {
-    el.id = `sec-${toc.length}`;
-    toc.push({ id: el.id, text, sub });
-  };
-
   const bodySrc = stripEmoji(stripSection(n.body, 'Recursos')).trim();
   if (bodySrc) {
-    const md = mdBlock(bodySrc);
+    const md = mdBlock(bodySrc, { viz: vizCtx(n.slug) });
     for (const hd of $$('h2', md)) hd.textContent = SECTION[hd.textContent.trim()] || hd.textContent;
-    if (status !== 'new') placeDoubts(md, n);
-    let inDoubts = false; // each doubt is a heading of its own; the index lists the section, not every question
-    for (const hd of $$('h2, h3', md)) {
-      if (hd.tagName === 'H2') inDoubts = hd.textContent === 'Dudas';
-      else if (inDoubts) continue;
-      addToc(hd, hd.textContent, hd.tagName === 'H3');
-    }
     article.append(md);
   } else {
-    article.append(h('p', { class: 'r-empty' }, 'Esta nota aún no tiene guía. Empieza por «Explorarlo» y la prepararé para ti.'));
+    article.append(h('p', { class: 'r-empty' }, 'Esta nota aún no tiene guía. Pídela en el chat.'));
   }
-
   const res = m.resources || [];
   if (res.length) {
-    const sec = h('section', { class: 'r-resources' }, h('h2', {}, 'Para seguir explorando'),
-      h('ul', { class: 'res-list' }, res.map((r) => resourceCard(r, { slug: n.slug, title }))));
-    addToc(sec.firstChild, 'Para seguir explorando', false);
-    article.append(sec);
+    article.append(h('section', { class: 'r-resources' }, h('h2', {}, 'Para seguir explorando'),
+      h('ul', { class: 'res-list' }, res.map((r) => resourceCard(r, { slug: n.slug, title })))));
   }
-
-  // neighbouring stations: what comes before and after on the line, and who links here
-  const nodes = (S.graph && S.graph.nodes) || [];
-  const titleOf = (id) => (nodes.find((x) => x.id === id) || {}).label || id;
-  const after = ((S.graph && S.graph.edges) || []).filter((e) => e.kind === 'requires' && e.from === n.slug).map((e) => ({ slug: e.to, title: titleOf(e.to) }));
+  const back = (n.backlinks || []).filter((b) => !concepts.some((c) => c.slug === b.slug));
   const before = n.requires || [];
-  const back = n.backlinks || [];
-  if (before.length || after.length || back.length) {
+  if (before.length || back.length) {
     const nb = (label, l) => h('button', { class: 'neighbor', type: 'button', onclick: () => openNote(l.slug) }, h('small', {}, label), h('strong', {}, l.title));
-    const sec = h('section', { class: 'r-next' }, h('h2', {}, 'En la línea'),
-      before.map((l) => nb('Antes', l)),
-      after.map((l) => nb('Después', l)),
-      back.length ? h('div', { class: 'r-backlinks' }, h('h4', {}, 'Enlazan aquí'), h('div', { class: 'links' }, back.map((l) => h('button', { type: 'button', onclick: () => openNote(l.slug) }, l.title)))) : null);
-    sec.querySelectorAll('h4').forEach((x) => { x.style.margin = '8px 0 6px'; });
-    addToc(sec.firstChild, 'En la línea', false);
-    article.append(sec);
+    article.append(h('section', { class: 'r-next' }, h('h2', {}, 'En la línea'),
+      before.map((l) => nb('Antes', l)), back.map((l) => nb('Enlaza aquí', l))));
   }
-
-  const nav = h('nav', { class: 'toc', 'aria-label': 'En esta página' }, h('h3', {}, 'En esta página'),
-    h('ol', {}, toc.map((t) => h('li', { class: t.sub ? 'sub' : null }, h('a', { href: `#${t.id}`, onclick: (e) => {
-      e.preventDefault();
-      document.getElementById(t.id).scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
-    } }, t.text)))));
-  wrap.append(h('div', { class: 'r-body' }, toc.length > 1 ? nav : h('div'), article));
+  wrap.append(article);
   root.append(wrap);
-  watchToc(wrap);
-}
-
-// highlights the table-of-contents entry of the section being read
-let tocObserver;
-function watchToc(wrap) {
-  tocObserver?.disconnect();
-  const links = new Map($$('.toc a', wrap).map((a) => [a.getAttribute('href').slice(1), a]));
-  if (!links.size || !('IntersectionObserver' in window)) return;
-  tocObserver = new IntersectionObserver((entries) => {
-    for (const e of entries) if (e.isIntersecting) {
-      links.forEach((a) => a.classList.remove('on'));
-      links.get(e.target.id)?.classList.add('on');
-    }
-  }, { root: $('#view-note'), rootMargin: '0px 0px -70% 0px' });
-  for (const id of links.keys()) tocObserver.observe(document.getElementById(id));
 }
 
 const YOUTUBE = /^https?:\/\/(?:www\.|m\.)?(?:youtube\.com\/watch\?(?:[^#]*&)?v=|youtu\.be\/)([\w-]{11})(?![\w-])/i;
@@ -982,7 +448,7 @@ function videoPlayer(r, id) {
   return frame;
 }
 
-// One recommended resource as a card. ctx.slug/title identify the note it belongs to (for simulations).
+// One recommended resource. ctx.slug/title identify the note it belongs to (for simulations).
 function resourceCard(r, ctx = {}) {
   const external = r.url && /^https?:\/\//i.test(r.url);
   const host = external ? hostOf(r.url) : '';
@@ -990,49 +456,341 @@ function resourceCard(r, ctx = {}) {
     h('div', { class: 'res-main' }, titleEl, h('span', { class: 'res-meta' }, [TYPE[r.type] || r.type, host].filter(Boolean).join(' · '))));
   const why = r.why && h('span', { class: 'why' }, r.why);
   const link = () => h('a', { href: r.url, target: '_blank', rel: 'noopener noreferrer' }, r.title);
-
   const yt = external && youtubeId(r.url);
   if (yt) return h('li', { class: 'res res-video' }, head(link()), videoPlayer(r, yt), why);
   if (external) return h('li', { class: 'res' }, head(link()), why);
-
   const local = r.url && /^interactive\/([^/]+)\.html$/.exec(r.url);
-  if (local) {
-    const slug = ctx.slug || local[1];
-    return h('li', { class: 'res' }, head(h('button', { class: 'link', type: 'button', onclick: () => openSim(slug, ctx.title) }, r.title)), why);
-  }
+  if (local) return h('li', { class: 'res' }, head(h('button', { class: 'link', type: 'button', onclick: () => openSim(local[1], ctx.title) }, r.title)), why);
   if (r.type === 'interactive') {
     return h('li', { class: 'res' }, head(h('strong', {}, `${r.title} (propuesta)`)), why,
-      ctx.slug && h('div', {}, h('button', { class: 'btn small', type: 'button', onclick: () => startRun({ cmd: 'interactive', slug: ctx.slug, brief: r.why || '' }, `Simulación: ${ctx.title}`) }, 'Generar')));
+      ctx.slug && h('div', {}, h('button', { class: 'btn small', type: 'button', onclick: () => chatAction({ action: 'interactive', brief: r.why || '' }, `Simulación: ${ctx.title}`) }, 'Generar')));
   }
   return h('li', { class: 'res' }, head(h('strong', {}, r.title)), why);
 }
 
-// wikilinks and simulation links rendered anywhere in the app
-document.addEventListener('click', (e) => {
-  const a = e.target.closest('a[href^="#note/"], a[href^="#sim/"]');
-  if (!a) return;
-  e.preventDefault();
-  const href = a.getAttribute('href');
-  if (href.startsWith('#note/')) {
-    const slug = decodeURIComponent(href.slice(6));
-    if (S.graph && !S.graph.nodes.some((n) => n.id === slug)) {
-      // a link to a topic that does not exist yet is a gap in the map: offer to fill it
-      const title = a.textContent.trim() || slug;
-      if (confirm(`«${title}» aún no está en tu mapa. ¿Quieres estudiarlo ahora?`)) startRun({ cmd: 'study', topic: title, title }, title);
-      return;
-    }
-    openNote(slug);
-  } else openSim(decodeURIComponent(href.slice(5)), S.note && S.note.meta.title);
-});
-
-/* ---------- sessions ---------- */
-const T = { raw: '', bubble: null, timer: null, auto: true };
-
-function resetTranscript() {
-  $('#transcript').replaceChildren();
-  T.raw = ''; T.bubble = null; T.choiceCard = null;
-  $('#stepper').hidden = true;
+/* ---------- Conceptos tab: the guide's concept notes, level by level ---------- */
+// level 1 is what the topic needs directly, then what those need, and so on
+function conceptLevels(n) {
+  const list = n.concepts || [];
+  const by = new Map(list.map((c) => [c.slug, c]));
+  const level = new Map();
+  let frontier = ((n.meta.base && n.meta.base.length) ? n.meta.base : list.map((c) => c.slug)).filter((s) => by.has(s));
+  frontier.forEach((s) => level.set(s, 1));
+  for (let l = 1; frontier.length; l++) {
+    const next = [];
+    for (const s of frontier) for (const r of by.get(s).requires || []) if (by.has(r) && !level.has(r)) { level.set(r, l + 1); next.push(r); }
+    frontier = next;
+  }
+  for (const c of list) if (!level.has(c.slug)) level.set(c.slug, 1);
+  const out = [];
+  for (const c of list) (out[level.get(c.slug) - 1] ||= []).push(c);
+  return out.filter(Boolean);
 }
+const levelName = (l, last) => (l === 1 ? 'Lo que el tema usa directamente' : last ? 'La base de todo' : `Base de la base (nivel ${l})`);
+
+function renderConcepts() {
+  const root = $('#p-concepts');
+  root.replaceChildren();
+  if (S.concept) { root.append(conceptReader(S.concept)); return; }
+  const n = S.note;
+  const box = h('div', { class: 'concepts-wrap' });
+  if (n && (n.concepts || []).length) {
+    const node = nodeOf(n.slug);
+    const lc = lineColor(node ? node.group : '');
+    const levels = conceptLevels(n);
+    box.append(
+      h('header', { class: 'c-head' },
+        h('p', { class: 'eyebrow' }, 'Conceptos base'),
+        h('h2', {}, n.meta.title),
+        h('p', { class: 'hint' }, 'Cada nivel sostiene al de arriba. Si algo de arriba no se entiende, baja un nivel.')),
+      h('ol', { class: 'levels', style: `--lc: ${lc}` }, levels.map((lv, i) => h('li', { class: 'level' },
+        h('h3', {}, levelName(i + 1, i === levels.length - 1 && i > 0)),
+        h('ul', {}, lv.map((c) => h('li', {}, h('button', { class: `station-btn${c.exists ? '' : ' missing'}`, type: 'button', disabled: !c.exists, onclick: () => openNote(c.slug) },
+          h('i', { class: 'st st-concept', 'aria-hidden': 'true' }),
+          h('span', {}, h('strong', {}, c.title), c.summary ? h('small', {}, c.summary) : null, !c.exists ? h('small', {}, 'No se pudo escribir') : null)))))))));
+  } else if (n) {
+    box.append(h('div', { class: 'panel-empty' }, h('h3', {}, 'Esta guía no tiene notas de concepto'),
+      h('p', {}, 'Pide en el chat una guía con más profundidad, o la nota de un concepto concreto: «hazme una nota sobre la varianza».')));
+  }
+  const all = ((S.graph && S.graph.nodes) || []).filter((x) => x.kind === 'concept');
+  if (all.length) {
+    const byCat = new Map();
+    for (const c of all) { const k = c.category || 'sin categoría'; if (!byCat.has(k)) byCat.set(k, []); byCat.get(k).push(c); }
+    box.append(h('details', { class: 'all-concepts', open: !n || null },
+      h('summary', {}, `Todos tus conceptos (${all.length})`),
+      [...byCat].sort((a, b) => a[0].localeCompare(b[0])).map(([cat, list]) => h('section', { class: 'dg' }, h('h3', {}, cat),
+        h('div', { class: 'links' }, list.sort((a, b) => a.label.localeCompare(b.label)).map((c) => h('button', { type: 'button', onclick: () => openNote(c.id) }, c.label)))))));
+  } else if (!n) {
+    box.append(h('div', { class: 'panel-empty' }, h('h3', {}, 'Aún no hay conceptos'), h('p', {}, 'Las guías con profundidad 1 o más escriben aquí sus conceptos base, cada uno como una nota aparte.')));
+  }
+  root.append(box);
+}
+
+function conceptReader(c) {
+  const m = c.meta;
+  const node = nodeOf(c.slug);
+  const body = stripEmoji(c.body.replace(/^# .*\n+/, '')).trim();
+  return h('div', { class: 'reader-wrap concept', style: `--line-c: ${lineColor(node ? node.group : '')}` },
+    h('header', { class: 'r-head' },
+      h('button', { class: 'crumb', type: 'button', onclick: () => { S.concept = null; renderConcepts(); } }, S.note ? `← Conceptos de ${S.note.meta.title}` : '← Conceptos'),
+      h('p', { class: 'r-line' }, ['Concepto', m.category].filter(Boolean).join(' · ')),
+      h('h1', {}, m.title || c.slug),
+      (m.aliases || []).length ? h('div', { class: 'chips' }, m.aliases.map((a) => h('span', { class: 'chip' }, a))) : null,
+      (c.requires || []).length ? h('div', { class: 'c-req' }, h('span', { class: 'hint' }, 'Se apoya en'), h('div', { class: 'links' }, c.requires.map((l) => h('button', { type: 'button', onclick: () => openNote(l.slug) }, l.title)))) : null,
+      h('div', { class: 'actions' }, h('button', { class: 'btn small blue', type: 'button', onclick: () => askAbout(`Sobre «${m.title}»: `) }, 'Preguntar en el chat'))),
+    h('article', { class: 'r-article' }, mdBlock(stripSection(body, 'Aparece en'), { viz: vizCtx(c.slug) }),
+      (c.guides || []).length ? h('section', { class: 'r-next' }, h('h2', {}, 'Aparece en'),
+        c.guides.map((g) => h('button', { class: 'neighbor', type: 'button', onclick: () => openNote(g.slug) }, h('small', {}, 'Guía'), h('strong', {}, g.title)))) : null));
+}
+
+function askAbout(prefix) {
+  if (isPhone()) setPane('chat');
+  const ta = $('#reply');
+  ta.value = prefix;
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+}
+
+/* ---------- Practicar tab ---------- */
+const STEP_RANK = { new: 0, prepared: 1, tested: 2, explained: 3 };
+function renderPractice() {
+  const root = $('#p-practice');
+  root.replaceChildren();
+  const n = S.note;
+  if (!n) {
+    root.append(h('div', { class: 'panel-empty' }, h('h3', {}, 'Abre una guía para practicar'),
+      h('p', {}, 'Las preguntas, la explicación con tus palabras y el repaso de conceptos trabajan sobre la guía abierta.'), guideList() || ''));
+    return;
+  }
+  const m = n.meta;
+  const rank = STEP_RANK[m.status || 'new'] ?? 0;
+  const title = m.title || n.slug;
+  const nInput = h('input', { type: 'number', min: 1, max: 30, value: 5, 'aria-label': 'Número de preguntas' });
+  const diff = h('select', { 'aria-label': 'Dificultad' }, ['básica', 'media', 'avanzada'].map((d) => h('option', { value: d, selected: d === 'media' }, d)));
+  const steps = [
+    { label: 'Leer la guía', done: rank >= 1 },
+    { label: 'Responder preguntas', done: rank >= 2 },
+    { label: 'Explicarlo con tus palabras', done: rank >= 3 },
+  ];
+  const current = steps.findIndex((s) => !s.done);
+  root.append(h('div', { class: 'practice' },
+    h('header', { class: 'c-head' }, h('p', { class: 'eyebrow' }, 'Practicar'), h('h2', {}, title),
+      m.mastery ? h('div', { class: 'mastery' }, h('div', { class: 'row' }, h('span', {}, 'Lo que llevas'), h('span', {}, `${m.mastery}/100`)), h('div', { class: 'bar' }, h('i', { style: `width:${m.mastery}%` }))) : null),
+    h('ol', { class: 'sequence', 'aria-label': 'Cómo afianzarlo' }, steps.map((s, i) => h('li', {},
+      h('span', { class: `step static${i === current ? ' go' : ''}`, 'data-state': s.done ? 'done' : i === current ? 'current' : 'todo' }, h('span', { class: 'step-n' }, s.done ? '✓' : String(i + 1)), s.label)))),
+    h('section', { class: 'p-card' },
+      h('h3', {}, 'Preguntas'),
+      h('p', { class: 'hint' }, 'Piden razonar o predecir, no memorizar. Se corrigen al final y el resultado queda en la guía.'),
+      h('div', { class: 'quiz-opts' }, nInput, 'preguntas, dificultad', diff,
+        h('button', { class: 'btn green', type: 'button', onclick: () => {
+          const q = Number(nInput.value) || 5;
+          chatAction({ action: 'quiz', n: q, difficulty: diff.value }, `Quiz de «${title}»: ${q} preguntas, ${diff.value}`);
+        } }, 'Empezar'))),
+    h('section', { class: 'p-card' },
+      h('h3', {}, 'Explícamelo tú'),
+      h('p', { class: 'hint' }, 'Me lo explicas como a alguien que no sabe nada. Te señalo los huecos y te pregunto lo que preguntaría un novato.'),
+      h('button', { class: 'btn blue', type: 'button', onclick: () => chatAction({ action: 'feynman' }, `Quiero explicar «${title}»`) }, 'Empezar a explicar')),
+    flashcards(n),
+    h('section', { class: 'p-card' },
+      h('h3', {}, 'Simulación'),
+      h('p', { class: 'hint' }, 'Una página interactiva para jugar con el tema, aparte de los visuales de la guía.'),
+      n.hasSimulation
+        ? h('button', { class: 'btn small', type: 'button', onclick: () => openSim(n.slug, title) }, 'Abrir simulación')
+        : h('button', { class: 'btn small', type: 'button', onclick: () => chatAction({ action: 'interactive', brief: '' }, `Simulación de «${title}»`) }, 'Generar simulación'))));
+}
+
+// Flashcards from the concept notes: the name on the front, "En una frase" on the back. No model call.
+function flashcards(n) {
+  const list = (n.concepts || []).filter((c) => c.exists);
+  const sec = h('section', { class: 'p-card' }, h('h3', {}, 'Repaso de conceptos'));
+  if (!list.length) { sec.append(h('p', { class: 'hint' }, 'Cuando la guía tenga notas de concepto, aquí podrás repasarlas como tarjetas.')); return sec; }
+  let i = 0, known = 0, seen = 0;
+  const deck = [...list].sort(() => Math.random() - 0.5);
+  const cache = new Map();
+  const card = h('div', { class: 'flash' });
+  const score = h('p', { class: 'hint' });
+  function show() {
+    const c = deck[i];
+    card.replaceChildren(h('p', { class: 'eyebrow' }, `Tarjeta ${i + 1} de ${deck.length}`), h('h4', {}, c.title),
+      h('button', { class: 'btn small yellow', type: 'button', onclick: reveal }, 'Dar la vuelta'));
+    score.textContent = seen ? `Sabías ${known} de ${seen}.` : '';
+    async function reveal() {
+      let text = cache.get(c.slug);
+      if (text == null) {
+        try { const full = await api(`/api/notes/${encodeURIComponent(c.slug)}`); text = sectionOf(full.body, 'En una frase') || c.summary || ''; } catch { text = c.summary || ''; }
+        cache.set(c.slug, text);
+      }
+      card.replaceChildren(h('p', { class: 'eyebrow' }, c.title), mdBlock(text || '_Sin resumen._'),
+        h('div', { class: 'actions' },
+          h('button', { class: 'btn small green', type: 'button', onclick: () => next(true) }, 'Lo sabía'),
+          h('button', { class: 'btn small', type: 'button', onclick: () => next(false) }, 'A repasar'),
+          h('button', { class: 'btn small', type: 'button', onclick: () => openNote(c.slug) }, 'Abrir la nota')));
+    }
+  }
+  function next(ok) { seen++; if (ok) known++; i = (i + 1) % deck.length; show(); }
+  sec.append(h('p', { class: 'hint' }, 'Di la idea en una frase antes de dar la vuelta a la tarjeta.'), card, score);
+  show();
+  return sec;
+}
+
+/* ---------- Mapa tab ---------- */
+// A transit map: each guide is a line, its concepts are stations leading into it.
+function cyStyle() {
+  const ink = cssVar('--ink'), bg = cssVar('--bg'), muted = cssVar('--muted');
+  const lineOf = (i) => cssVar(i < 0 ? '--l-none' : `--l${i}`);
+  const s = [
+    { selector: 'node', style: {
+      'background-color': bg, 'border-width': 4, 'border-color': lineOf(-1), shape: 'ellipse', width: 22, height: 22,
+      label: 'data(label)', color: ink, 'font-size': 13, 'font-weight': 700, 'font-family': cssVar('--font'),
+      'text-valign': 'bottom', 'text-margin-y': 8, 'text-wrap': 'wrap', 'text-max-width': 130,
+      'text-background-color': bg, 'text-background-opacity': .9, 'text-background-padding': 2,
+      'z-index-compare': 'manual', 'z-index': 10, 'overlay-opacity': 0 } },
+    { selector: 'node[kind = "concept"]', style: { width: 13, height: 13, 'border-width': 3, 'font-size': 11.5, 'font-weight': 600 } },
+    { selector: 'edge', style: {
+      width: 7, 'line-color': lineOf(-1), 'curve-style': 'taxi', 'taxi-direction': 'horizontal', 'taxi-radius': 26,
+      'line-cap': 'round', 'z-index-compare': 'manual', 'z-index': 1, 'overlay-opacity': 0 } },
+    { selector: 'edge[kind="related"]', style: { 'curve-style': 'bezier', 'line-style': 'dashed', width: 2, opacity: .45, 'line-color': muted } },
+    { selector: 'node.grouplabel', style: {
+      width: 1, height: 1, 'background-opacity': 0, 'border-width': 0, label: 'data(label)', 'font-size': 16, 'font-weight': 700,
+      color: ink, 'text-halign': 'right', 'text-valign': 'center', 'text-margin-x': 6, 'text-wrap': 'none', 'text-background-opacity': 0, events: 'no' } },
+  ];
+  for (let i = -1; i < LINES; i++) {
+    const c = lineOf(i);
+    s.push(
+      { selector: `node[line = ${i}]`, style: { 'border-color': c } },
+      { selector: `node[line = ${i}][kind = "concept"]`, style: { 'background-color': c } },
+      { selector: `node[line = ${i}][status = "prepared"]`, style: { 'pie-size': '100%', 'pie-1-background-color': c, 'pie-1-background-size': 50, 'pie-1-background-opacity': 1 } },
+      { selector: `node[line = ${i}][status = "tested"]`, style: { 'background-color': c } },
+      { selector: `node[line = ${i}][status = "explained"]`, style: { 'background-color': c, 'outline-width': 3, 'outline-color': c, 'outline-offset': 3, 'outline-opacity': 1 } },
+      { selector: `edge[kind = "requires"][line = ${i}]`, style: { 'line-color': c } },
+      { selector: `node.grouplabel[line = ${i}]`, style: { color: c } },
+    );
+  }
+  s.push(
+    { selector: 'node:selected', style: { 'outline-width': 3, 'outline-color': ink, 'outline-offset': 4, 'outline-opacity': 1 } },
+    { selector: '.dim', style: { opacity: .12 } },
+  );
+  return s;
+}
+
+const GX = 190, GY = 66; // gap between layers, gap between stations
+// Layered layout: each line is a block, and prerequisites flow left to right into the guide.
+function layeredLayout(g) {
+  const pos = {}, labels = [];
+  const groups = new Map();
+  for (const n of [...g.nodes].sort((a, b) => (a.order || 0) - (b.order || 0))) {
+    const k = n.group || '';
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(n);
+  }
+  const keys = [...groups.keys()].sort((a, b) => groups.get(b).length - groups.get(a).length);
+  const prereqs = new Map();
+  for (const e of g.edges) if (e.kind === 'requires') {
+    if (!prereqs.has(e.to)) prereqs.set(e.to, []);
+    prereqs.get(e.to).push(e.from);
+  }
+  let y0 = 0;
+  for (const key of keys) {
+    const nodes = groups.get(key);
+    labels.push({ group: key, label: groupTitle(key), x: 0, y: y0 - 46 });
+    const ids = new Set(nodes.map((n) => n.id));
+    const layerOf = new Map(), busy = new Set();
+    const depth = (id) => {
+      if (layerOf.has(id)) return layerOf.get(id);
+      if (busy.has(id)) return 0; // never loops forever on a cycle
+      busy.add(id);
+      let d = 0;
+      for (const p of prereqs.get(id) || []) if (ids.has(p)) d = Math.max(d, depth(p) + 1);
+      busy.delete(id);
+      layerOf.set(id, d);
+      return d;
+    };
+    nodes.forEach((n) => depth(n.id));
+    const layers = [];
+    nodes.forEach((n) => { (layers[layerOf.get(n.id)] ||= []).push(n); });
+    const row = new Map();
+    const bary = (n) => {
+      const ps = (prereqs.get(n.id) || []).filter((p) => row.has(p));
+      return ps.length ? ps.reduce((s, p) => s + row.get(p), 0) / ps.length : Infinity;
+    };
+    layers.forEach((l, li) => { if (!l) return; l.sort((a, b) => (li ? bary(a) - bary(b) : 0) || 0); l.forEach((n, i) => row.set(n.id, i)); });
+    const tallest = Math.max(...layers.filter(Boolean).map((l) => l.length));
+    layers.forEach((l, li) => l && l.forEach((n, i) => { pos[n.id] = { x: li * GX, y: y0 + ((tallest - l.length) * GY) / 2 + i * GY }; }));
+    y0 += tallest * GY + 130;
+  }
+  return { pos, labels };
+}
+
+const graphSignature = (g) => g.nodes.map((n) => n.id).sort().join('|') + '#' + g.edges.map((e) => `${e.from}>${e.to}`).sort().join('|');
+
+async function loadGraph() {
+  const [g, rms] = await Promise.all([api('/api/graph'), api('/api/roadmaps').catch(() => [])]);
+  const same = S.graph && graphSignature(S.graph) === graphSignature(g);
+  S.graph = g;
+  S.roadmaps = rms;
+  S.lines = assignLines(new Set(g.nodes.map((n) => n.group)));
+  $('#map-empty').hidden = g.nodes.length > 0;
+  const lineOf = (k) => (S.lines.has(k) ? S.lines.get(k) : -1);
+  const lineOfNode = new Map(g.nodes.map((n) => [n.id, lineOf(n.group)]));
+  if (!S.cy) {
+    S.cy = cytoscape({ container: $('#cy'), elements: [], style: cyStyle(), minZoom: .15, maxZoom: 3 });
+    S.cy.on('tap', 'node', (ev) => { if (!ev.target.hasClass('grouplabel')) openNote(ev.target.id(), { reveal: false }); });
+  }
+  if (same) {
+    for (const n of g.nodes) S.cy.getElementById(n.id).data({ status: n.status, label: n.label, line: lineOfNode.get(n.id) });
+  } else {
+    S.cy.elements().remove();
+    const { pos, labels } = layeredLayout(g);
+    S.cy.add([
+      ...g.nodes.map((n) => ({ group: 'nodes', data: { id: n.id, label: n.label, status: n.status, kind: n.kind, grp: n.group, line: lineOfNode.get(n.id) }, position: pos[n.id] })),
+      ...labels.map((l) => ({ group: 'nodes', data: { id: `gl:${l.group}`, label: l.label, grp: l.group, line: lineOf(l.group) }, position: { x: l.x, y: l.y }, classes: 'grouplabel', selectable: false, grabbable: false })),
+      ...g.edges.map((e, i) => ({ group: 'edges', data: { id: `e${i}`, source: e.from, target: e.to, kind: e.kind, line: lineOfNode.get(e.to) } })),
+    ]);
+    S.needsFit = g.nodes.length > 0;
+    fitMap();
+  }
+  renderChips();
+  applyFilters();
+}
+
+// Cytoscape cannot fit a graph into a hidden container, so a new layout waits until the map is on screen.
+function fitMap() {
+  if (!S.cy || S.tab !== 'map' || $('#p-map').hidden) return;
+  requestAnimationFrame(() => {
+    S.cy.resize();
+    if (S.needsFit) { S.cy.fit(undefined, 40); S.needsFit = false; }
+  });
+}
+
+function renderChips() {
+  const box = $('#filter-rm');
+  box.replaceChildren();
+  const keys = [...S.lines.keys()].filter((k) => !k.startsWith('c:'));
+  if (keys.length < 2) return;
+  const chip = (key, label) => h('button', {
+    class: `line-chip${key ? '' : ' all'}`, type: 'button', 'aria-pressed': String(S.filter === key),
+    style: key ? `--lc: ${lineColor(key)}` : null,
+    onclick: () => { S.filter = S.filter === key ? '' : key; renderChips(); applyFilters(); },
+  }, label);
+  box.append(chip('', 'Todas'), ...keys.map((k) => chip(k, groupTitle(k))));
+}
+
+function applyFilters() {
+  if (!S.cy) return;
+  const q = slugify($('#search').value);
+  S.cy.batch(() => {
+    S.cy.nodes().not('.grouplabel').forEach((n) => {
+      const okQ = !q || slugify(n.data('label')).includes(q) || n.id().includes(q);
+      const okR = !S.filter || n.data('grp') === S.filter;
+      n.toggleClass('dim', !(okQ && okR));
+    });
+    S.cy.edges().forEach((e) => e.toggleClass('dim', e.source().hasClass('dim') || e.target().hasClass('dim')));
+  });
+}
+$('#search').addEventListener('input', applyFilters);
+
+/* ---------- chat ---------- */
+const T = { raw: '', bubble: null, timer: null, auto: true, progress: null, plan: null, echo: null, choiceCard: null };
 
 function scrollDown() {
   const t = $('#transcript');
@@ -1043,6 +801,29 @@ $('#transcript').addEventListener('scroll', () => {
   T.auto = t.scrollHeight - t.scrollTop - t.clientHeight < 80;
 });
 
+function resetTranscript() {
+  clearTimeout(T.timer);
+  $('#transcript').replaceChildren();
+  Object.assign(T, { raw: '', bubble: null, progress: null, plan: null, choiceCard: null, echo: null, auto: true });
+}
+
+function emptyState() {
+  const ex = [
+    'Explícame la transformada de Fourier, enfocada en audio',
+    '¿Por qué la desviación estándar divide entre n − 1?',
+    'Quiero entender los autovalores desde lo más básico',
+  ];
+  return h('div', { class: 'chat-empty' },
+    h('p', { class: 'eyebrow' }, 'StudyHomie'),
+    h('h1', {}, '¿Qué quieres entender hoy?'),
+    h('p', { class: 'lead' }, 'Pregunta lo que sea o pide una guía. La guía trae sus conceptos base como notas aparte, tan hondo como marque la profundidad, y visuales para mover y probar.'),
+    h('div', { class: 'suggest' },
+      h('button', { class: 'btn small green', type: 'button', onclick: () => chatAction({ action: 'daily', field: '' }, 'El reto de hoy') }, 'El reto de hoy'),
+      h('button', { class: 'btn small blue', type: 'button', onclick: () => $('#attach-input').click() }, 'Subir apuntes'),
+      h('button', { class: 'btn small red', type: 'button', onclick: () => askAbout('Quiero aprender toda una materia: ') }, 'Planear una materia')),
+    h('ul', { class: 'examples' }, ex.map((t) => h('li', {}, h('button', { type: 'button', onclick: () => { $('#reply').value = t; $('#reply').focus(); } }, t)))));
+}
+
 function botText(text) {
   T.raw += text;
   if (!T.bubble) {
@@ -1050,20 +831,24 @@ function botText(text) {
     $('#transcript').append(T.bubble);
   }
   clearTimeout(T.timer);
-  T.timer = setTimeout(flushBot, 60);
+  T.timer = setTimeout(() => flushBot(true), 60);
 }
-
-function flushBot() {
+function flushBot(streaming) {
   clearTimeout(T.timer);
   if (!T.bubble) return;
-  T.bubble.replaceChildren(mdBlock(T.raw, { breaks: true }));
+  T.bubble.replaceChildren(mdBlock(T.raw, { breaks: true, streaming }));
   scrollDown();
 }
-
-function closeBubble() { flushBot(); T.raw = ''; T.bubble = null; }
+// the bubble is complete: drawn once more with its widgets
+function closeBubble() {
+  if (!T.bubble) return;
+  if (T.raw.trim()) flushBot(false); else T.bubble.remove();
+  T.raw = ''; T.bubble = null;
+}
 
 function addMsg(cls, content) {
   closeBubble();
+  $('.chat-empty')?.remove();
   const m = h('div', { class: `msg ${cls}` });
   if (typeof content === 'string') m.textContent = content; else m.append(content);
   $('#transcript').append(m);
@@ -1074,6 +859,8 @@ function addMsg(cls, content) {
 function setWorking(on, text) {
   $('#working').hidden = !on;
   if (text) $('#working-text').textContent = text;
+  $('#btn-cancel').hidden = !on;
+  $('#session-dot').hidden = !on;
 }
 
 // Questions with a closed set of answers are asked with buttons instead of a text box.
@@ -1093,86 +880,251 @@ function quickOptions(e) {
   return null;
 }
 
-function setAsk(e) {
-  closeBubble();
-  setWorking(false);
-  const block = e.kind === 'block';
-  const form = $('#composer');
-  const ta = $('#reply');
+// The composer follows what the run waits for: a chat message, a short answer, an explanation, or nothing.
+function setComposer(mode, e = {}) {
+  const form = $('#composer'), ta = $('#reply');
+  form.dataset.kind = mode;
   const label = (e.label || '').replace(/\s*\(s\/n\)\s*$/i, '').trim();
-
-  // a multiple-choice question is answered with the buttons of its own card
-  if (T.choiceCard && !T.choiceCard.answered && /^respuesta$/i.test(label)) {
-    form.hidden = true;
-    const first = T.choiceCard.buttons[0];
-    if (first) first.focus({ preventScroll: true });
-    scrollDown();
-    return;
-  }
-
-  const opts = quickOptions(e);
-  form.hidden = false;
-  form.dataset.kind = e.kind;
-  $('#composer-label').textContent = label;
-  $('#composer-label').hidden = !label;
+  const opts = mode === 'line' ? quickOptions(e) : null;
+  $('#composer-label').textContent = mode === 'line' ? label : '';
+  $('#composer-label').hidden = mode !== 'line' || !label;
   $('#quick').replaceChildren(...(opts || []).map((o) => h('button', {
-    type: 'button', class: `btn${o.primary ? ' primary' : ''}`, onclick: () => { T.echo = { reply: o.reply, label: o.label }; sendReply(o.reply, false); },
+    type: 'button', class: `btn${o.primary ? ' primary' : ''}`, onclick: () => { T.echo = o; sendReply(o.reply); },
   }, o.label)));
   $('#quick').hidden = !opts;
   $('#freeform').hidden = !!opts;
+  $('#depth').hidden = mode !== 'chat';
+  $('#btn-attach').hidden = mode !== 'chat';
+  $('#btn-finish').hidden = mode !== 'block';
+  ta.disabled = $('#btn-send').disabled = mode === 'busy';
+  ta.rows = mode === 'block' ? 6 : 2;
+  ta.placeholder = {
+    chat: 'Pregunta lo que quieras, o pide una guía: «Explícame la transformada de Fourier, enfocada en audio»',
+    line: e.def ? `Enter para usar «${e.def}»` : 'Escribe tu respuesta',
+    block: 'Explícalo con tus palabras, como si el otro no supiera nada…',
+    busy: 'Espera a que termine, o detenlo.',
+  }[mode];
+  $('#composer-hint').textContent = mode === 'block' ? 'Ctrl + Enter para enviar' : mode === 'chat' ? 'Enter envía · Shift + Enter, nueva línea' : '';
+  if (mode !== 'busy' && !isPhone()) (opts ? $('#quick .primary') : ta)?.focus({ preventScroll: true });
+}
+
+// What the learner sends goes to the live chat, or starts one (continuing the chat on screen, if any).
+async function chatSend(body) {
+  const run = S.run;
+  body = { depth: S.depth, guide: S.guide || '', ...body };
+  if (run && !run.done && run.waiting === 'chat') {
+    run.waiting = '';
+    setComposer('busy');
+    setWorking(true, 'Pensando…');
+    try { await api(`/api/runs/${run.id}/input`, { method: 'POST', body }); return true; } catch (err) {
+      toast(err.message); run.waiting = 'chat'; setComposer('chat'); setWorking(false); return false;
+    }
+  }
+  if (run && !run.done) { toast('Espera a que termine lo que está en curso, o detenlo.'); return false; }
+  try {
+    const req = { cmd: 'chat', chat: body, guide: S.guide || '' };
+    if (run && run.done) req.resume = run.id;
+    setComposer('busy');
+    setWorking(true, 'Pensando…');
+    const { id } = await api('/api/runs', { method: 'POST', body: req });
+    attachRun(id, run && run.done ? run.title : null);
+    loadChats();
+    return true;
+  } catch (err) { toast(err.message); setComposer('chat'); setWorking(false); return false; }
+}
+
+// a button that asks the chat to do something, without going through the model
+function chatAction(action, label) {
+  if (isPhone()) setPane('chat');
+  chatSend({ text: '', action, label });
+}
+
+async function sendReply(text, finish = false) {
+  const run = S.run;
+  if (!run || run.done) return;
+  run.waiting = '';
+  setComposer('busy');
+  setWorking(true, 'Pensando…');
+  try { await api(`/api/runs/${run.id}/input`, { method: 'POST', body: { text, finish } }); } catch (err) { toast(err.message); setWorking(false); }
+}
+
+$('#composer').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const ta = $('#reply');
+  const mode = $('#composer').dataset.kind || 'chat';
+  const text = ta.value;
+  if (mode === 'busy') return;
+  if (mode === 'chat') {
+    if (!text.trim()) return;
+    ta.value = '';
+    if (!(await chatSend({ text }))) ta.value = text;
+    return;
+  }
+  if (mode === 'block' && !text.trim()) { toast('Escribe tu explicación antes de enviar.'); return; }
   ta.value = '';
-  ta.rows = block ? 7 : 1;
-  ta.placeholder = block ? 'Explícalo con tus palabras, como si el otro no supiera nada…' : (e.def ? `Enter para usar «${e.def}»` : 'Escribe tu respuesta');
-  $('#composer-hint').textContent = block ? 'Ctrl + Enter para enviar' : '';
-  $('#btn-finish').hidden = !block;
-  $('#btn-send').disabled = false;
-  if (opts) $('#quick .primary').focus({ preventScroll: true }); else ta.focus();
-  scrollDown();
+  sendReply(text, false);
+});
+$('#reply').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' || e.isComposing) return;
+  const block = $('#composer').dataset.kind === 'block';
+  if (block ? (e.ctrlKey || e.metaKey) : !e.shiftKey) { e.preventDefault(); $('#composer').requestSubmit(); }
+});
+$('#btn-finish').addEventListener('click', () => { const t = $('#reply').value; $('#reply').value = ''; sendReply(t, true); });
+$('#btn-cancel').addEventListener('click', async () => {
+  if (!S.run || S.run.done) return;
+  try { await api(`/api/runs/${S.run.id}/cancel`, { method: 'POST', body: {} }); } catch (err) { toast(err.message); }
+});
+
+// attachments: uploaded, then sent to the chat, which builds a study line from them
+$('#btn-attach').addEventListener('click', () => $('#attach-input').click());
+$('#attach-input').addEventListener('change', async (e) => {
+  const files = e.target.files;
+  if (!files.length) return;
+  const fd = new FormData();
+  for (const f of files) fd.append('files', f);
+  try {
+    setWorking(true, 'Subiendo…');
+    const up = await api('/api/upload', { method: 'POST', body: fd });
+    await chatSend({ text: '', files: up.files, label: `Mis apuntes: ${[...files].map((f) => f.name).join(', ')}` });
+  } catch (err) { toast(err.message); setWorking(false); } finally { e.target.value = ''; }
+});
+
+// depth: five stations on a line, from 0 (the topic alone) to 4 (down to the basics)
+function renderDepth() {
+  $('#depth-stations').replaceChildren(...DEPTH.map((label, d) => h('button', {
+    type: 'button', role: 'radio', 'aria-checked': String(d === S.depth), class: d <= S.depth ? 'on' : null,
+    title: `${d}: ${label}`, 'aria-label': `Profundidad ${d}: ${label}`,
+    onclick: () => { S.depth = d; store.set('depth', d); renderDepth(); },
+  })));
+  $('#depth-text').textContent = DEPTH[S.depth];
 }
 
 /* ---------- cards: structured output drawn as elements ---------- */
-const PHASES = ['prepare', 'quiz', 'feynman'];
-
-function setPhase(phase) {
-  const at = PHASES.indexOf(phase);
-  if (at < 0) return;
-  $('#stepper').hidden = false;
-  $$('#stepper li').forEach((li, i) => {
-    li.dataset.state = i < at ? 'done' : i === at ? 'current' : 'todo';
-    if (i === at) li.setAttribute('aria-current', 'step'); else li.removeAttribute('aria-current');
-  });
-}
-
-// a low score is a starting point, not a failure: it gets a neutral tone, never a red one
 function scoreTone(score) { return score >= 70 ? 'good' : score >= 40 ? 'mid' : 'low'; }
 
-function renderCard(c) {
+function renderCard(c, run) {
   switch (c.kind) {
-    case 'phase': setPhase(c.phase); break;
+    case 'phase': break;
+    case 'plan': T.plan = planCard(c.plan, run); addMsg('card', T.plan.el); break;
+    case 'progress': progressCard(c.items); break;
+    case 'guide':
+      T.progress = null;
+      addMsg('card', h('div', { class: 'rich rich-guide' },
+        h('div', { class: 'rich-eyebrow' }, 'Guía lista'),
+        h('h3', {}, c.topic),
+        h('div', { class: 'actions' },
+          h('button', { class: 'btn small blue', type: 'button', onclick: () => openNote(c.slug) }, 'Leer la guía'),
+          h('button', { class: 'btn small yellow', type: 'button', onclick: async () => { await openNote(c.slug, { quiet: true }); setTab('concepts'); revealPanel(); } }, 'Ver conceptos'))));
+      if (!run.replay) loadGraph().catch(() => {}).then(() => openNote(c.slug));
+      break;
+    case 'concept':
+      addMsg('card', h('div', { class: 'rich' }, h('div', { class: 'rich-eyebrow' }, 'Nota de concepto'), h('h3', {}, c.topic),
+        h('button', { class: 'btn small', type: 'button', onclick: () => openNote(c.slug) }, 'Abrir la nota')));
+      if (!run.replay) loadGraph().catch(() => {});
+      break;
     case 'daily':
       addMsg('card', h('div', { class: 'rich rich-daily' },
         h('div', { class: 'rich-eyebrow' }, 'Para descubrir hoy', c.field && h('span', { class: 'chip' }, c.field)),
-        h('h3', {}, c.topic),
-        c.hook && h('p', {}, c.hook)));
+        h('h3', {}, c.topic), c.hook && h('p', {}, c.hook)));
       break;
-    case 'question': addMsg('card', questionCard(c)); break;
+    case 'question': addMsg('card', questionCard(c, run)); break;
     case 'score': {
       const tone = scoreTone(c.score);
       const verdict = tone === 'good' ? 'Lo entendiste bien' : tone === 'mid' ? 'Vas por buen camino' : 'Buen punto de partida: quedan cosas por aclarar';
       addMsg('card', h('div', { class: `rich rich-score tone-${tone}` },
         h('div', { class: 'score-ring', style: `--p:${Math.max(0, Math.min(100, c.score))}`, role: 'img', 'aria-label': `${c.score} de 100` }, h('span', {}, c.score)),
         h('div', {}, h('strong', {}, `${c.label}: ${verdict}`), c.detail && h('div', { class: 'hint' }, c.detail))));
+      if (!run.replay) reloadGuide();
       break;
     }
     case 'resources':
-      addMsg('card', h('div', { class: 'rich rich-resources' },
-        h('div', { class: 'rich-eyebrow' }, 'Para seguir explorando'),
+      addMsg('card', h('details', { class: 'rich rich-resources' },
+        h('summary', { class: 'rich-eyebrow' }, `Para seguir explorando (${(c.resources || []).length})`),
         h('ul', { class: 'res-list' }, (c.resources || []).map((r) => resourceCard(r)))));
       break;
   }
 }
 
-function questionCard(c) {
+// The plan of concept notes: a tree to prune or extend before anything is written.
+function planCard(p, run) {
+  const levels = [];
+  for (const c of p.concepts || []) (levels[c.level - 1] ||= []).push(c);
+  const boxes = new Map();
+  const added = [];
+  const addList = h('ul', { class: 'plan-added' });
+  const addInput = h('input', { type: 'text', maxlength: 80, placeholder: 'Añadir un concepto…', 'aria-label': 'Añadir un concepto' });
+  const add = () => {
+    const t = addInput.value.trim();
+    if (!t) return;
+    added.push(t);
+    addList.append(h('li', {}, t));
+    addInput.value = '';
+    update();
+  };
+  addInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } });
+  const count = h('p', { class: 'hint' });
+  const go = h('button', { class: 'btn green', type: 'button' });
+  const fresh = (p.concepts || []).filter((c) => !c.exists);
+  function update() {
+    const kept = fresh.filter((c) => boxes.get(c.id).checked).length + added.length;
+    go.textContent = kept ? `Escribir la guía y ${kept} ${kept === 1 ? 'nota' : 'notas'}` : 'Escribir solo la guía';
+    const linked = (p.concepts || []).filter((c) => c.exists && boxes.get(c.id).checked).length;
+    count.textContent = linked ? `${linked} ya ${linked === 1 ? 'está' : 'están'} en tu vault: se enlazan, no se reescriben.` : '';
+  }
+  const el = h('div', { class: 'rich rich-plan' },
+    h('div', { class: 'rich-eyebrow' }, `Plan de conceptos · profundidad ${p.depth}`),
+    h('h3', {}, p.topic),
+    h('p', { class: 'hint' }, 'Desmarca lo que ya sabes o no te interesa: lo que dependía solo de eso también se va.'),
+    h('ol', { class: 'plan-levels' }, levels.map((lv, i) => lv && h('li', {},
+      h('span', { class: 'plan-level' }, i === 0 ? 'Directo' : `Nivel ${i + 1}`),
+      h('ul', {}, lv.map((c) => {
+        const cb = h('input', { type: 'checkbox', checked: true });
+        cb.addEventListener('change', update);
+        boxes.set(c.id, cb);
+        return h('li', {}, h('label', { class: `plan-item${c.exists ? ' exists' : ''}` }, cb,
+          h('span', {}, h('strong', {}, c.title), c.exists ? h('em', {}, ' · ya en tu vault') : null, c.summary ? h('small', {}, c.summary) : null)));
+      }))))),
+    addList,
+    h('div', { class: 'plan-add' }, addInput, h('button', { class: 'btn small', type: 'button', onclick: add }, 'Añadir')),
+    h('div', { class: 'actions' }, go,
+      h('button', { class: 'btn', type: 'button', onclick: () => answer('g', 'Solo la guía') }, 'Solo la guía'),
+      h('button', { class: 'btn small', type: 'button', onclick: () => answer('n', 'Cancelar') }, 'Cancelar')),
+    count);
+  const state = { el, live: false, answered: false };
+  function answer(reply, label) {
+    if (state.answered || S.run !== run || run.done || !state.live) return;
+    state.answered = true;
+    $$('button, input', el).forEach((x) => { x.disabled = true; });
+    T.echo = { reply, label };
+    sendReply(reply);
+  }
+  go.addEventListener('click', () => {
+    const skip = [...boxes].filter(([, cb]) => !cb.checked).map(([id]) => id);
+    if (!skip.length && !added.length) { answer('s', go.textContent); return; }
+    answer(JSON.stringify({ skip, add: added, go: true }), go.textContent);
+  });
+  update();
+  if (run.replay) $$('button, input', el).forEach((x) => { x.disabled = true; });
+  return state;
+}
+
+// One card per guide being written, redrawn in place as each note finishes.
+function progressCard(items) {
+  const state = { pending: 'en cola', working: 'escribiendo…', done: 'lista', linked: 'ya estaba', error: 'falló' };
+  const done = items.filter((i) => i.state !== 'pending' && i.state !== 'working').length;
+  const body = [
+    h('div', { class: 'rich-eyebrow' }, `Escribiendo · ${done} de ${items.length}`),
+    h('div', { class: 'bar' }, h('i', { style: `width:${Math.round((100 * done) / items.length)}%` })),
+    h('ul', { class: 'progress-list' }, items.map((it) => h('li', { 'data-state': it.state, class: it.kind },
+      h('span', { class: 'p-dot', 'aria-hidden': 'true' }),
+      h('span', { class: 'p-title' }, it.title, it.kind === 'guide' ? h('small', {}, ' · guía') : null),
+      h('small', { class: 'p-state' }, state[it.state] || it.state))))];
+  if (T.progress && T.progress.isConnected) { T.progress.replaceChildren(...body); return; }
+  T.progress = h('div', { class: 'rich rich-progress' }, ...body);
+  addMsg('card', T.progress);
+}
+
+function questionCard(c, run) {
   const card = h('div', { class: 'rich rich-question' },
     h('div', { class: 'rich-eyebrow' }, c.total ? `Pregunta ${c.n} de ${c.total}` : 'Pregunta'),
     h('p', { class: 'q-text' }, c.question));
@@ -1180,12 +1132,12 @@ function questionCard(c) {
   const state = { answered: false, buttons: [] };
   const list = h('div', { class: 'choices', role: 'group', 'aria-label': 'Opciones' });
   for (const choice of c.choices) {
-    const b = h('button', { type: 'button', class: 'choice', onclick: () => {
-      if (state.answered || !S.run || S.run.done) return;
+    const b = h('button', { type: 'button', class: 'choice', disabled: run.replay || null, onclick: () => {
+      if (state.answered || S.run !== run || run.done) return;
       state.answered = true;
       b.classList.add('picked');
       state.buttons.forEach((x) => { x.disabled = true; });
-      sendReply(choice, false);
+      sendReply(choice);
     } }, choice);
     state.buttons.push(b);
     list.append(b);
@@ -1195,202 +1147,162 @@ function questionCard(c) {
   return card;
 }
 
-// once the learner has answered, or the run is over, an earlier question's buttons are no longer live
+// once the learner has answered, or the run is over, earlier buttons are no longer live
 function closeChoices() {
-  if (!T.choiceCard) return;
-  T.choiceCard.answered = true;
-  T.choiceCard.buttons.forEach((x) => { x.disabled = true; });
+  if (T.choiceCard) { T.choiceCard.answered = true; T.choiceCard.buttons.forEach((x) => { x.disabled = true; }); }
+  if (T.plan && !T.plan.answered) { T.plan.answered = true; $$('button, input', T.plan.el).forEach((x) => { x.disabled = true; }); }
 }
 
-async function sendReply(text, finish = false) {
-  if (!S.run || S.run.done) return;
-  $('#composer').hidden = true;
-  setWorking(true, 'Pensando…');
-  try {
-    await api(`/api/runs/${S.run.id}/input`, { method: 'POST', body: { text, finish } });
-  } catch (err) {
-    toast(err.message);
-    $('#composer').hidden = false;
-    setWorking(false);
-  }
-}
-
-$('#composer').addEventListener('submit', (e) => {
-  e.preventDefault();
-  const ta = $('#reply');
-  const block = $('#composer').dataset.kind === 'block';
-  if (block && !ta.value.trim()) { toast('Escribe tu explicación antes de enviar.'); return; }
-  sendReply(ta.value, false);
-});
-$('#reply').addEventListener('keydown', (e) => {
-  const block = $('#composer').dataset.kind === 'block';
-  if (e.key !== 'Enter' || e.isComposing) return;
-  if (block ? (e.ctrlKey || e.metaKey) : !e.shiftKey) { e.preventDefault(); $('#composer').requestSubmit(); }
-});
-$('#btn-finish').addEventListener('click', () => sendReply($('#reply').value, true));
-
-$('#btn-cancel').addEventListener('click', async () => {
-  if (!S.run || S.run.done) return;
-  try { await api(`/api/runs/${S.run.id}/cancel`, { method: 'POST', body: {} }); } catch (err) { toast(err.message); }
-});
-$('#btn-working-cancel').addEventListener('click', () => $('#btn-cancel').click());
-$('#btn-back').addEventListener('click', leaveSession);
-$('#btn-open-note').addEventListener('click', () => { if (S.run && S.run.slug) openNote(S.run.slug); });
-$('#btn-resume').addEventListener('click', () => { if (S.run) resumeFrom(S.run.slug); });
-
-// closes a finished session and goes back to the list
-function leaveSession() {
-  if (S.run && S.run.es) S.run.es.close();
-  S.run = null;
-  showHistory();
-}
-
-async function startRun(body, title) {
-  try {
-    const { id } = await api('/api/runs', { method: 'POST', body });
-    attachRun(id, title);
-  } catch (err) { toast(err.message); }
-}
-
-// Sessions run one phase at a time, so a stored one is picked up by phase: the next step depends on how far the note got.
-const RESUME = {
-  new: { label: 'Continuar: estudiarlo', run: (n) => ({ cmd: 'study', topic: n.label, title: n.label }) },
-  prepared: { label: 'Continuar: responder preguntas', run: (n) => ({ cmd: 'quiz', slug: n.id, n: 5, difficulty: 'media', title: n.label }) },
-  tested: { label: 'Continuar: explicarlo', run: (n) => ({ cmd: 'feynman', slug: n.id, title: n.label }) },
-};
-const RESUMABLE = new Set(['study', 'prepare', 'quiz', 'feynman', 'interactive']);
-const sessionNode = (run) => run && run.slug && S.graph && S.graph.nodes.find((n) => n.id === run.slug);
-
-function resumeFrom(slug) {
-  const n = S.graph && S.graph.nodes.find((x) => x.id === slug);
-  const step = n && RESUME[n.status];
-  if (step) startRun(step.run(n), n.label);
-}
-
-// the buttons in the session header depend on whether it is running, over, and what its note looks like now
-function updateSessionActions() {
-  const run = S.run;
-  if (!run) return;
-  const node = sessionNode(run);
-  const step = run.done && node && RESUMABLE.has(run.cmd) && RESUME[node.status];
-  $('#btn-cancel').hidden = run.done;
-  $('#btn-back').hidden = !run.done;
-  $('#btn-open-note').hidden = !(run.done && node);
-  $('#btn-resume').hidden = !step;
-  if (step) $('#btn-resume').textContent = step.label;
-}
-
-/* ---------- session history ---------- */
-const RUN_STATUS = { running: 'En curso', done: 'Terminada', error: 'Con error', cancelled: 'Cancelada', interrupted: 'Interrumpida' };
-const RUN_COLOR = { running: 'var(--l0)', done: 'var(--s-explained)', error: 'var(--danger)', cancelled: 'var(--l-none)', interrupted: 'var(--l-none)' };
-const when = (iso) => new Date(iso).toLocaleString('es', { dateStyle: 'medium', timeStyle: 'short' });
-
-async function showHistory() {
-  $('#history').hidden = false;
-  $('#live').hidden = true;
-  try { renderHistory(await api('/api/sessions')); } catch (err) { toast(err.message); }
-}
-
-function renderHistory(list) {
-  const ul = $('#history-list');
-  ul.replaceChildren();
-  for (const r of list) {
-    const open = () => attachRun(r.id, r.title, { replay: r.status !== 'running' });
-    ul.append(h('li', { class: 'history-item', style: `--c: ${RUN_COLOR[r.status] || 'var(--l-none)'}` },
-      h('span', { class: 'hi-bar', 'aria-hidden': 'true' }),
-      h('button', { class: 'hi-title', type: 'button', onclick: open }, r.title || 'Sesión'),
-      h('div', { class: 'hi-meta' }, `${when(r.started)} · ${RUN_STATUS[r.status] || r.status}`),
-      h('div', { class: 'hi-actions' },
-        h('button', { class: 'btn small', type: 'button', onclick: open }, r.status === 'running' ? 'Volver' : 'Ver'),
-        r.status !== 'running' && h('button', { class: 'btn small', type: 'button', 'aria-label': `Eliminar la sesión «${r.title}»`, onclick: async () => {
-          if (!confirm(`¿Eliminar la sesión «${r.title}»? Tus notas se conservan.`)) return;
-          try { await api(`/api/sessions/${r.id}`, { method: 'DELETE' }); showHistory(); } catch (err) { toast(err.message); }
-        } }, 'Eliminar'))));
-  }
-}
-
-// Shows a session: a live one streams in, a stored one replays from its first event.
+/* ---------- runs ---------- */
+// Shows a chat: a live one streams in, a stored one replays from its first event.
 function attachRun(id, title, { replay = false } = {}) {
   if (S.run && S.run.es) S.run.es.close();
   resetTranscript();
-  $('#session-title').textContent = title || 'Sesión';
-  $('#history').hidden = true;
-  $('#live').hidden = false;
-  $('#composer').hidden = true;
-  if (!replay) $('#session-dot').hidden = false;
-  setWorking(!replay, 'Pensando…');
-
-  const run = { id, done: false, replay, cmd: '', slug: '', es: new EventSource(`/api/runs/${id}/events?from=0`) };
+  const run = { id, done: false, replay, waiting: '', title: title || 'Chat', es: new EventSource(`/api/runs/${id}/events?from=0`) };
   S.run = run;
-  updateSessionActions();
-  showView('session');
+  $('#chat-title').textContent = run.title;
+  setComposer('busy');
+  setWorking(!replay, 'Pensando…');
   run.es.onmessage = (ev) => handleEvent(run, JSON.parse(ev.data));
   run.es.onerror = () => { if (run.done) run.es.close(); }; // otherwise the browser reconnects with Last-Event-ID
-  // which topic the session worked on, so it can offer to open or continue it
-  api('/api/sessions').then((list) => {
-    const me = list.find((r) => r.id === id);
-    if (me && S.run === run) { run.cmd = me.cmd; run.slug = me.slug || ''; updateSessionActions(); }
-  }).catch(() => {});
+  markActiveChat();
 }
 
 function handleEvent(run, e) {
   if (run !== S.run) return;
   switch (e.type) {
-    case 'out': botText(e.text); break;
+    case 'out': $('.chat-empty')?.remove(); botText(e.text); break;
     case 'in': {
       closeChoices();
       // a button answers with a short code ("s", "media"); show what the learner actually clicked
       const known = (T.echo && T.echo.reply === e.text && T.echo) || ((run.lastAsk && quickOptions(run.lastAsk)) || []).find((o) => o.reply === e.text);
       T.echo = null;
-      addMsg('user', mdBlock(known ? known.label : e.text, { breaks: true }));
+      const shown = known ? known.label : /^\{.*"go":true/.test(e.text) ? 'Escribir con estos cambios' : e.text;
+      addMsg('user', mdBlock(shown, { breaks: true }));
+      if (!run.replay) setWorking(true, 'Pensando…');
       break;
     }
-    case 'card': closeBubble(); renderCard(e.card); break;
+    case 'card': closeBubble(); renderCard(e.card, run); break;
     case 'ask':
+      closeBubble();
       run.lastAsk = e;
-      if (!run.replay) setAsk(e);
+      run.waiting = e.kind;
+      if (run.replay) break;
+      setWorking(false);
+      if (e.kind === 'line' && T.plan && !T.plan.answered && /genero la guía/i.test(e.label || '')) {
+        T.plan.live = true;
+        setComposer('busy');
+        $('#reply').placeholder = 'Elige en el plan de arriba.';
+        T.plan.el.scrollIntoView({ behavior: smoothness(), block: 'nearest' });
+        break;
+      }
+      if (e.kind === 'line' && T.choiceCard && !T.choiceCard.answered && /^respuesta$/i.test(e.label || '')) {
+        setComposer('busy');
+        $('#reply').placeholder = 'Elige una opción de la pregunta.';
+        break;
+      }
+      setComposer(e.kind, e);
       break;
     case 'done': finishRun(run, e); break;
   }
 }
 
-async function finishRun(run, e) {
+function finishRun(run, e) {
   run.done = true;
+  run.waiting = '';
   run.es.close();
   closeBubble();
   closeChoices();
-  const current = $('#stepper li[aria-current]');
-  if (current && !e.error) current.dataset.state = 'done';
   setWorking(false);
-  $('#composer').hidden = true;
-  if (!run.replay) $('#session-dot').hidden = true;
   if (e.error) addMsg('bot error', e.error);
-  else if (!run.replay) addMsg('note', 'Sesión terminada. Tus notas están guardadas.');
-  updateSessionActions();
-  if (!run.replay) { await refreshAll(); updateSessionActions(); }
+  if (!$('#transcript').children.length) $('#transcript').append(emptyState());
+  setComposer('chat'); // writing again continues this chat
+  if (!run.replay) { loadChats(); refresh(); }
 }
 
+/* ---------- chat history ---------- */
+const when = (iso) => {
+  const d = new Date(iso), now = new Date();
+  return d.toDateString() === now.toDateString() ? d.toLocaleTimeString('es', { timeStyle: 'short' }) : d.toLocaleDateString('es', { day: 'numeric', month: 'short' });
+};
+async function loadChats() {
+  try { S.chats = await api('/api/sessions'); } catch { S.chats = []; }
+  renderChats();
+}
+function renderChats() {
+  const ul = $('#chat-list');
+  const q = slugify($('#chat-search').value);
+  ul.replaceChildren();
+  const list = S.chats.filter((r) => !q || slugify(r.title || '').includes(q));
+  if (!list.length) { ul.append(h('li', { class: 'hint' }, S.chats.length ? 'Ningún chat coincide.' : 'Tus chats aparecerán aquí.')); return; }
+  for (const r of list) {
+    const node = r.slug && nodeOf(r.slug);
+    ul.append(h('li', { class: `chat-item${S.run && S.run.id === r.id ? ' on' : ''}`, 'data-id': r.id, style: `--lc: ${node ? lineColor(node.group) : 'var(--line)'}` },
+      h('button', { class: 'ci-open', type: 'button', onclick: () => openChat(r) },
+        h('span', { class: 'ci-title' }, r.title || 'Chat'),
+        h('span', { class: 'ci-meta' }, r.status === 'running' ? 'En curso' : when(r.started), node ? ` · ${node.label}` : '')),
+      r.status !== 'running' && h('button', { class: 'ci-del', type: 'button', 'aria-label': `Eliminar «${r.title}»`, title: 'Eliminar', onclick: async () => {
+        if (!confirm(`¿Eliminar el chat «${r.title}»? Tus notas se conservan.`)) return;
+        try {
+          await api(`/api/sessions/${r.id}`, { method: 'DELETE' });
+          if (S.run && S.run.id === r.id) newChat();
+          loadChats();
+        } catch (err) { toast(err.message); }
+      } }, '✕')));
+  }
+}
+$('#chat-search').addEventListener('input', renderChats);
+function markActiveChat() { $$('.chat-item').forEach((li) => li.classList.toggle('on', !!S.run && String(S.run.id) === li.dataset.id)); }
+
+function openChat(r) {
+  attachRun(r.id, r.title, { replay: r.status !== 'running' });
+  if (r.slug && r.slug !== S.guide && nodeOf(r.slug)) openNote(r.slug, { reveal: false });
+  if (isPhone()) setPane('chat');
+}
+
+function newChat() {
+  if (S.run && S.run.es) S.run.es.close();
+  S.run = null;
+  resetTranscript();
+  $('#transcript').append(emptyState());
+  $('#chat-title').textContent = 'Nuevo chat';
+  setWorking(false);
+  setComposer('chat');
+  markActiveChat();
+  if (isPhone()) setPane('chat');
+}
+$('#btn-new').addEventListener('click', newChat);
+$('#brand').addEventListener('click', (e) => { e.preventDefault(); newChat(); });
+
 /* ---------- boot ---------- */
-async function refreshAll() {
-  await Promise.allSettled([loadRoadmaps(), loadDaily()]); // roadmap titles and colours label the lines in the graph
+async function refresh() {
   await loadGraph().catch((err) => toast(err.message));
-  renderRecent();
-  if (drawer.classList.contains('open')) renderDrawer();
-  // refresh what is on screen without pulling the learner away from where they are
-  if (S.view === 'map' && S.selected && !$('#note-panel').hidden) selectNode(S.selected, false, true);
-  if (S.view === 'note' && S.readerSlug) openNote(S.readerSlug, true);
+  if (S.guide) await reloadGuide(); else renderReader(null);
+  if (S.tab === 'concepts') renderConcepts();
+  if (S.tab === 'practice') renderPractice();
+  renderChats();
 }
 
 async function boot() {
+  renderDepth();
+  setLayout(store.get('layout', 'both'));
+  setTab(S.tab);
+  newChat();
   try {
     S.info = await api('/api/state');
     $('#provider-badge').textContent = S.info.provider;
     if (S.info.warning) { $('#banner').textContent = S.info.warning; $('#banner').hidden = false; }
-    await refreshAll();
+    await refresh();
+    await loadChats();
     if (S.info.activeRun) {
-      const list = await api('/api/sessions').catch(() => []);
-      const me = list.find((r) => r.id === S.info.activeRun);
-      attachRun(S.info.activeRun, me ? me.title : 'Sesión en curso');
+      const me = S.chats.find((r) => r.id === S.info.activeRun);
+      attachRun(S.info.activeRun, me ? me.title : 'Chat');
+    }
+    // a link straight to a note: #open/<slug>[/<tab>]
+    const m = /^#open\/([^/]+)(?:\/(guide|concepts|map|practice))?$/.exec(location.hash);
+    if (m) {
+      await openNote(decodeURIComponent(m[1]), { quiet: !!m[2] });
+      if (m[2]) setTab(m[2]);
     }
   } catch (err) { toast(err.message); }
 }

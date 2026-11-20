@@ -7,24 +7,15 @@ Un asistente de estudio con IA que corre en tu computadora, con una interfaz web
 
 ## Qué hace
 
-Puedes empezar de tres maneras, y todas llevan al mismo ciclo de estudio:
+Todo empieza en un **chat**. Pregunta lo que quieras y te responde ahí mismo; pide que te explique un tema a fondo y escribe una **guía de estudio** con sus **notas de concepto** aparte.
 
-| Entrada | Qué hace |
-|---|---|
-| **Roadmap** | Te pregunta tu objetivo y nivel, y traza un grafo de temas con prerrequisitos y conexiones, al estilo Obsidian. |
-| **Material** | Estudias desde tus propios apuntes: txt, md, pdf, pptx, docx o imágenes. |
-| **Daily** | Un tema aleatorio de los campos que elijas (filosofía, historia, historia del arte, física, medicina, informática…), para aprenderlo en un día. Puedes sortear entre tus intereses, entre todos los campos, o escribir un campo nuevo. |
+- **Profundidad.** Junto al cuadro de texto eliges de 0 a 4 cuántos niveles de prerrequisitos se escriben como notas propias. Con 0 sale solo la guía. Con 1, lo que el tema usa directamente. Con 4 baja hasta lo básico. También puedes decirlo con tus palabras: «desde lo más básico», «enfocado en audio».
+- **Plan editable.** Antes de escribir nada te muestra el árbol de conceptos por niveles. Desmarcas lo que ya sabes (y se va con ello lo que solo dependía de eso), añades lo que falte, y decides: guía y notas, solo la guía, o cancelar. Los conceptos que ya están en tu vault se enlazan, no se reescriben.
+- **Intuición sin plantillas.** Nada de «imagina que tienes…». Las guías arrancan con un problema concreto con números, te hacen reinventar la idea (el intento ingenuo, por qué falla y el arreglo), la empujan a los casos extremos, la miran desde otro ángulo y cuentan qué problema tenía quien la inventó. La fórmula llega al final, como conclusión.
+- **Visuales para mover, al estilo 3Blue1Brown.** Dentro de la guía hay widgets en vivo: funciones con sliders, una matriz que deforma el plano (con î, ĵ y el determinante como área), procesos paso a paso, experimentos aleatorios que se repiten mil veces y preguntas de «predice antes de seguir leyendo». Si ninguno sirve, la guía propone una página interactiva que se construye cuando la pides.
+- **Practicar.** Preguntas que piden razonar y no memorizar, explicar el tema con tus palabras (método Feynman) y tarjetas de repaso hechas con tus notas de concepto.
 
-Cada tema pasa por **tres fases**:
-
-1. **Estudiar.** La IA busca material en línea y escribe una guía imparcial que construye intuición. Los recursos externos (videos de YouTube, webs, libros, papers) van **siempre con su enlace**, y los enlaces se comprueban antes de guardarlos. Si el tema lo pide, genera una simulación interactiva.
-2. **Responder preguntas.** Un test de la longitud y dificultad que elijas.
-3. **Explicar** (método Feynman). Le explicas el tema a la IA como si no supiera nada, y te señala los huecos, errores y saltos que encuentra.
-
-Y hay dos extras opcionales, que se hacen dentro del propio artículo y no cambian tu avance:
-
-- **Extender, conceptos base.** Si la guía da por sabido algo que no dominas (la paradoja del cumpleaños pide algo de probabilidad), el botón añade al artículo una sección que lo explica desde cero, en pocas líneas y con ejemplos pequeños. No se genera por defecto.
-- **Dudas.** Un apartado al final de la guía donde preguntas como en un chat (por ejemplo, «entiendo qué es una probabilidad, pero no por qué se multiplican»). La respuesta tiene en cuenta lo que ya preguntaste, y tu duda con su respuesta se guardan en el artículo. Si en la respuesta se explica un concepto que da para un tema propio, te ofrece añadirlo al vault como artículo, ya conectado con el original.
+Desde el chat también puedes pedir el **reto del día** (un tema al azar de tus campos de interés), **planear una materia entera** (un roadmap con prerrequisitos) o **adjuntar tus apuntes** (txt, md, pdf, pptx, docx o imágenes). Los recursos externos (videos, webs, libros, papers) van siempre con su enlace, y los enlaces se comprueban antes de guardarlos.
 
 ![Nota de un tema](docs/img/nota.png)
 
@@ -68,7 +59,7 @@ go build -o studyhomie ./cmd/studyhomie
    studyhomie
    ```
 
-3. **Empieza a estudiar desde el navegador:** con «Nuevo estudio» escribe un tema, traza un roadmap o sube tus apuntes, o sortea el reto del día en Inicio. Las sesiones corren en vivo; solo tienes que ir respondiendo.
+3. **Escribe en el chat** lo que quieras entender, elige la profundidad y envía. La guía aparece en el panel de la derecha.
 
 Para parar el programa, `Ctrl+C` en la terminal. Cada carpeta es un vault independiente: puedes tener una por materia, o una sola para todo.
 
@@ -76,12 +67,14 @@ Para parar el programa, `Ctrl+C` en la terminal. Cada carpeta es un vault indepe
 
 ## Interfaz
 
-Todo se navega desde la barra superior: **Inicio** (el reto de hoy, tus líneas y lo que dejaste a medias), **Mapa** y **Sesiones**. **Nuevo estudio** abre un cuadro para empezar con un tema, una materia o tus apuntes, y **Notas** abre un cajón con todas tus notas agrupadas por línea.
+Tres columnas: tus **chats** a la izquierda, el **chat** en el centro y el **panel de estudio** a la derecha, con cuatro pestañas:
 
-- **El mapa es un plano de metro.** Cada roadmap es una línea de color y cada tema una estación: vacía si aún no lo exploras, medio llena con la guía lista, llena si ya lo comprobaste y con anillo cuando lo explicaste.
-- **Cada nota es una página de lectura**, con índice lateral, la guía como artículo, los recursos al final y los temas que vienen antes y después en la línea. Arriba tiene los tres pasos en orden (Estudiar, Responder preguntas, Explicar): el siguiente aparece resaltado y los ya hechos se pueden repetir. Junto a ellos están «Extender: conceptos base», «Tengo una duda» y la simulación.
-- **La sesión no es solo texto:** el reto del día aparece como tarjeta, las preguntas con opciones clicables, un indicador de fases (Estudiar → Responder preguntas → Explicar) y el puntaje como medidor. La idea es aprender porque sí: comprobar y explicar sirven para ver lo que ya entiendes, no para aprobar nada.
-- **Las sesiones se guardan** en `vault/.studyhomie/sessions/` (un JSON por sesión). En **Sesiones** puedes releerlas, eliminarlas o continuar un tema por su siguiente fase (comprobar, explicar). Una sesión no se reanuda a mitad de un turno: si cierras la aplicación mientras corre, queda marcada como interrumpida, y desde ahí se continúa por fase.
+- **Guía**: la guía abierta como artículo, con sus visuales y recursos.
+- **Conceptos**: las notas de concepto de la guía, por niveles, como líneas de metro. Si algo de arriba no se entiende, baja un nivel.
+- **Mapa**: un plano de metro. Cada guía es una línea de color y sus conceptos son estaciones que desembocan en ella. Una guía está vacía si aún no la exploras, medio llena con la guía lista, llena si ya la comprobaste y con anillo cuando la explicaste.
+- **Practicar**: preguntas, explicar con tus palabras, tarjetas de repaso y simulación.
+
+El panel se puede ampliar u ocultar; en el móvil se ve una columna a la vez. Los chats se guardan en `vault/.studyhomie/sessions/` y se pueden **continuar**: escribe en un chat viejo y sigue donde lo dejaste, con su contexto.
 
 Las guías y notas admiten:
 
@@ -127,14 +120,19 @@ Todo es opcional; sin el archivo se usan estos valores.
 | `vault` | `"vault"` | Carpeta de las notas |
 | `interests` | lista amplia | Campos de los que sale el reto diario. "Totalmente aleatorio" suma además los campos por defecto |
 | `context_window` / `compact_at` | `200000` / `0.6` | Cuándo se resume una conversación larga para que no se acumule el contexto |
+| `depth` | `1` | Profundidad de las guías que se escriben fuera del chat (roadmap, reto del día, terminal) |
+| `parallel` | `3` | Notas de concepto que se escriben a la vez |
 
 ## Tu vault
 
-Las notas son archivos Markdown normales con `[[enlaces]]`. **Abre la carpeta `vault/` con [Obsidian](https://obsidian.md)** y verás el grafo de lo que has aprendido.
+Las notas son archivos Markdown normales con `[[enlaces]]`. **Abre la carpeta `vault/` con [Obsidian](https://obsidian.md)** y verás el grafo de lo que has aprendido. Un vault de una versión anterior (con `topics/`) se pasa solo a `guias/` la primera vez que arranca.
 
 ```
 vault/
-  topics/        un .md por tema: guía, recursos, prueba y Feynman, con enlaces entre temas
+  guias/         un .md por tema: guía, recursos, dudas, prueba y Feynman
+  conceptos/     un .md por concepto: En una frase, Intuición, Cómo funciona, Ejemplo,
+                 Errores comunes, Relacionado y Aparece en; «requiere:» separa los
+                 prerrequisitos de los simples enlaces
   roadmaps/      el plan de cada roadmap
   daily/         un registro por día
   interactive/   simulaciones generadas (HTML)
@@ -151,6 +149,7 @@ studyhomie material apuntes.pdf           # roadmap desde tus apuntes
 studyhomie next teoría-de-juegos          # siguiente tema cuyos prerrequisitos ya dominas
 studyhomie daily                          # reto del día (o: daily Física, daily todos)
 studyhomie study "Teorema de Bayes"       # preparación → prueba → Feynman
+studyhomie guide "Transformada de Fourier" --depth 2 --foco "audio"
 studyhomie prepare | quiz | feynman | extend | interactive <tema>
 studyhomie doubt <tema> "tu pregunta"     # responde una duda y la guarda en el artículo
 studyhomie graph                          # temas y conexiones

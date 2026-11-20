@@ -2,12 +2,15 @@ package session
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"regexp"
 	"strings"
 
 	"github.com/krilinxito/studyhomie/internal/prompts"
 	"github.com/krilinxito/studyhomie/internal/vault"
+	"github.com/krilinxito/studyhomie/internal/viz"
 )
 
 const maxInteractiveBytes = 120 << 10
@@ -64,23 +67,10 @@ func (s *Session) Interactive(ctx context.Context, slug, brief string) error {
 	if brief != "" {
 		prompt += "\nBuild this: " + brief
 	}
-	c := s.convo(prompts.Get("interactive", s.Cfg.Language))
 	s.printf("Generando la simulación interactiva (puede tardar)...\n")
-
-	var html string
-	for attempt := 0; attempt < 2; attempt++ {
-		resp, err := c.Say(ctx, prompt, nil)
-		if err != nil {
-			return err
-		}
-		html = extractHTML(resp.Text)
-		if err = validateInteractive(html); err == nil {
-			break
-		}
-		if attempt == 1 {
-			return fmt.Errorf("no logré una simulación válida: %w", err)
-		}
-		prompt = "That page was rejected: " + err.Error() + ". Fix it and output the complete document again."
+	html, err := s.buildHTML(ctx, prompt)
+	if err != nil {
+		return err
 	}
 	if err := s.V.SaveInteractive(slug, html); err != nil {
 		return err
@@ -105,4 +95,69 @@ func (s *Session) Interactive(ctx context.Context, slug, brief string) error {
 	}
 	s.printf("Simulación guardada en %s/%s\n", s.V.Root, rel)
 	return nil
+}
+
+// buildHTML asks for a self-contained page and checks it, giving the model one chance to fix it.
+func (s *Session) buildHTML(ctx context.Context, prompt string) (string, error) {
+	c := s.convo(prompts.Get("interactive", s.Cfg.Language))
+	for attempt := 0; ; attempt++ {
+		resp, err := c.Say(ctx, prompt, nil)
+		if err != nil {
+			return "", err
+		}
+		html := extractHTML(resp.Text)
+		err = validateInteractive(html)
+		if err == nil {
+			return html, nil
+		}
+		if attempt == 1 {
+			return "", fmt.Errorf("no logré una simulación válida: %w", err)
+		}
+		prompt = "That page was rejected: " + err.Error() + ". Fix it and output the complete document again."
+	}
+}
+
+// VizPage builds the page an html widget of a guide or concept describes, saves it and records
+// it in the widget, so it is built once. It returns the page's vault-relative path.
+func (s *Session) VizPage(ctx context.Context, slug, brief string) (string, error) {
+	brief = strings.TrimSpace(brief)
+	if brief == "" {
+		return "", inputErrorf("falta la descripción del visual")
+	}
+	var title, body, context string
+	isGuide := s.V.Exists(slug)
+	if isGuide {
+		n, err := s.V.Load(slug)
+		if err != nil {
+			return "", err
+		}
+		title, body, context = n.Meta.Title, n.Body, s.noteContext(slug, n)
+	} else {
+		c, err := s.V.LoadConcept(slug)
+		if err != nil {
+			return "", inputErrorf("no existe la nota «%s»", slug)
+		}
+		title, body, context = c.Meta.Title, c.Body, head(c.Body, 3000)
+	}
+	if _, found := viz.SetSrc(body, brief, ""); !found {
+		return "", inputErrorf("la nota no tiene ese visual")
+	}
+	prompt := "Topic: " + title + "\nWhat the learner studied: " + context + "\nBuild this: " + brief
+	html, err := s.buildHTML(ctx, prompt)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256([]byte(brief))
+	name := slug + "-" + hex.EncodeToString(sum[:4])
+	if err := s.V.SaveInteractive(name, html); err != nil {
+		return "", err
+	}
+	src := "interactive/" + name + ".html"
+	set := func(b string) string { out, _ := viz.SetSrc(b, brief, src); return out }
+	if isGuide {
+		err = s.V.Update(slug, func(n *vault.Note) error { n.Body = set(n.Body); return nil })
+	} else {
+		err = s.V.UpdateConcept(slug, func(c *vault.Concept) error { c.Body = set(c.Body); return nil })
+	}
+	return src, err
 }

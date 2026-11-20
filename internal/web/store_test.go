@@ -148,7 +148,15 @@ func TestRunningSessionCannotBeDeleted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { run.cancel(); run.in.Close() }()
+	defer func() {
+		run.cancel()
+		run.in.Close()
+		// let the run write its last state before the temporary vault is removed
+		for i := 0; i < 200 && !run.isDone(); i++ {
+			time.Sleep(10 * time.Millisecond)
+		}
+		run.scheduleSave(true)
+	}()
 	if res, _ := do(t, ts, "DELETE", "/api/sessions/"+itoa(run.ID), nil, nil); res.StatusCode != 409 {
 		t.Errorf("a running session must be cancelled first, got %d", res.StatusCode)
 	}

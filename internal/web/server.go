@@ -102,6 +102,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/notes/{slug}/extend", s.extend)
 	mux.HandleFunc("POST /api/notes/{slug}/doubt", s.doubt)
 	mux.HandleFunc("POST /api/notes/{slug}/concept", s.concept)
+	mux.HandleFunc("POST /api/notes/{slug}/viz", s.vizPage)
 	mux.HandleFunc("GET /api/roadmaps", s.roadmaps)
 	mux.HandleFunc("GET /api/daily", s.daily)
 	mux.HandleFunc("GET /api/sessions", s.sessions)
@@ -183,105 +184,6 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		"interests": s.Cfg.Interests,
 		"activeRun": active,
 		"warning":   s.Warning,
-	})
-}
-
-type gNode struct {
-	ID      string `json:"id"`
-	Label   string `json:"label"`
-	Status  string `json:"status"`
-	Mastery int    `json:"mastery"`
-	Roadmap string `json:"roadmap,omitempty"`
-	Order   int    `json:"order,omitempty"`
-	Source  string `json:"source,omitempty"`
-	Field   string `json:"field,omitempty"`
-}
-
-type gEdge struct {
-	From string `json:"from"`
-	To   string `json:"to"`
-	Kind string `json:"kind"` // requires: from must be understood before to | related
-}
-
-func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
-	notes, err := s.V.List()
-	if err != nil {
-		fail(w, 500, err.Error())
-		return
-	}
-	exists := map[string]bool{}
-	for _, n := range notes {
-		exists[n.Slug] = true
-	}
-	nodes := []gNode{}
-	edges := []gEdge{}
-	seen := map[string]bool{}
-	for _, n := range notes {
-		st := n.Meta.Status
-		if st == "" {
-			st = "new"
-		}
-		title := n.Meta.Title
-		if title == "" {
-			title = n.Slug
-		}
-		nodes = append(nodes, gNode{ID: n.Slug, Label: title, Status: st, Mastery: n.Meta.Mastery,
-			Roadmap: n.Meta.Roadmap, Order: n.Meta.Order, Source: n.Meta.Source, Field: n.Meta.Field})
-		for _, req := range n.Meta.Requires {
-			if exists[req] {
-				seen[req+">"+n.Slug] = true
-				edges = append(edges, gEdge{From: req, To: n.Slug, Kind: "requires"})
-			}
-		}
-	}
-	for _, n := range notes {
-		for _, to := range n.Links() {
-			if !exists[to] || to == n.Slug || seen[n.Slug+">"+to] || seen[to+">"+n.Slug] {
-				continue
-			}
-			seen[n.Slug+">"+to] = true
-			edges = append(edges, gEdge{From: n.Slug, To: to, Kind: "related"})
-		}
-	}
-	writeJSON(w, 200, map[string]any{"nodes": nodes, "edges": edges})
-}
-
-type linkRef struct {
-	Slug  string `json:"slug"`
-	Title string `json:"title"`
-}
-
-func (s *Server) note(w http.ResponseWriter, r *http.Request) {
-	slug := r.PathValue("slug")
-	if vault.Slugify(slug) != slug || slug == "" {
-		fail(w, 400, "tema inválido")
-		return
-	}
-	n, err := s.V.Load(slug)
-	if err != nil {
-		fail(w, 404, "no existe ese tema")
-		return
-	}
-	title := func(sl string) string {
-		if o, err := s.V.Load(sl); err == nil && o.Meta.Title != "" {
-			return o.Meta.Title
-		}
-		return sl
-	}
-	var back []linkRef
-	if bl, err := s.V.Backlinks(slug); err == nil {
-		for _, b := range bl {
-			back = append(back, linkRef{b, title(b)})
-		}
-	}
-	var req []linkRef
-	for _, q := range n.Meta.Requires {
-		req = append(req, linkRef{q, title(q)})
-	}
-	_, simErr := s.V.LoadInteractive(slug)
-	writeJSON(w, 200, map[string]any{
-		"slug": slug, "meta": n.Meta, "body": n.Body,
-		"backlinks": back, "requires": req, "hasSimulation": simErr == nil,
 	})
 }
 
@@ -618,10 +520,27 @@ func (s *Server) input(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Text   string `json:"text"`
-		Finish bool   `json:"finish"`
+		chatBody
+		Finish bool `json:"finish"`
 	}
 	if !readJSON(w, r, &body) {
+		return
+	}
+	if run.waiting() == "chat" {
+		m, err := s.message(body.chatBody)
+		if err != nil {
+			fail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if body.empty() {
+			fail(w, http.StatusBadRequest, "escribe un mensaje")
+			return
+		}
+		if err := run.sendChat(m, body.shown()); err != nil {
+			fail(w, http.StatusConflict, err.Error())
+			return
+		}
+		writeJSON(w, 200, map[string]bool{"ok": true})
 		return
 	}
 	if err := run.send(body.Text, body.Finish); err != nil {

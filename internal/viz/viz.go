@@ -118,7 +118,7 @@ type Block struct {
 // Parse decodes and checks one block.
 func Parse(data string) (Block, error) {
 	var b Block
-	dec := json.NewDecoder(strings.NewReader(data))
+	dec := json.NewDecoder(strings.NewReader(fixLatexEscapes(data)))
 	if err := dec.Decode(&b); err != nil {
 		return b, fmt.Errorf("JSON inválido: %w", err)
 	}
@@ -438,4 +438,33 @@ func Clean(md string) (string, []string) {
 		i = end
 	}
 	return strings.Join(out, "\n"), warnings
+}
+
+// SetSrc records in the html block with the given brief where its generated page lives.
+// It reports whether a block was found.
+func SetSrc(md, brief, src string) (string, bool) {
+	lines := strings.Split(md, "\n")
+	for i := 0; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) != "```"+Fence {
+			continue
+		}
+		end := -1
+		for j := i + 1; j < len(lines); j++ {
+			if strings.TrimSpace(lines[j]) == "```" {
+				end = j
+				break
+			}
+		}
+		if end < 0 {
+			break
+		}
+		b, err := Parse(strings.Join(lines[i+1:end], "\n"))
+		if err == nil && b.Type == "html" && strings.TrimSpace(b.Brief) == strings.TrimSpace(brief) {
+			b.Src = src
+			out := append(append(append([]string{}, lines[:i+1]...), b.Encode()), lines[end:]...)
+			return strings.Join(out, "\n"), true
+		}
+		i = end
+	}
+	return md, false
 }
