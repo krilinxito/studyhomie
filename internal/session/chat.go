@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/krilinxito/studyhomie/internal/prompts"
+	"github.com/krilinxito/studyhomie/internal/roadmap"
 	"github.com/krilinxito/studyhomie/internal/vault"
 )
 
@@ -38,6 +39,8 @@ type ChatAction struct {
 	Summary    string `json:"summary,omitempty"`
 	Brief      string `json:"brief,omitempty"`
 	Save       bool   `json:"save,omitempty"`
+	Reach      int    `json:"reach,omitempty"`   // roadmap: how much of the field it covers (1-3); 0 asks
+	Roadmap    string `json:"roadmap,omitempty"` // next: the roadmap whose current topic to open
 }
 
 // ChatOpts starts a chat.
@@ -106,7 +109,7 @@ func (s *Session) Chat(ctx context.Context, o ChatOpts) error {
 		var err error
 		switch {
 		case m.Material && len(m.Files) > 0:
-			err = s.chatMaterial(ctx, m.Files)
+			guide, err = s.chatMaterial(ctx, m.Files, guide, depth)
 		case m.Action != nil:
 			guide, err = s.runAction(ctx, *m.Action, guide, depth)
 		case strings.TrimSpace(m.Text) == "" && len(m.Files) == 0:
@@ -274,8 +277,18 @@ func (s *Session) runAction(ctx context.Context, a ChatAction, guide string, dep
 		if subject == "" {
 			return guide, inputErrorf("¿qué materia quieres planear?")
 		}
-		_, err := s.Roadmap(ctx, subject)
-		return guide, err
+		d := depth
+		rslug, err := s.Roadmap(ctx, subject, RoadmapOpts{Reach: a.Reach, GuideDepth: &d})
+		if err != nil {
+			return guide, err
+		}
+		return s.currentGuide(rslug, guide), nil
+	case "next":
+		slug, err := s.NextGuide(ctx, vault.Slugify(a.Roadmap))
+		if err != nil || slug == "" {
+			return guide, err
+		}
+		return slug, nil
 	}
 	return guide, fmt.Errorf("acción desconocida %q", a.Action)
 }
@@ -283,10 +296,25 @@ func (s *Session) runAction(ctx context.Context, a ChatAction, guide string, dep
 // CardConcept says a concept note is ready (Slug, Topic).
 const CardConcept = "concept"
 
-// chatMaterial builds a roadmap from attached files.
-func (s *Session) chatMaterial(ctx context.Context, paths []string) error {
-	_, err := s.Material(ctx, paths)
-	return err
+// chatMaterial builds a roadmap from attached files and returns the guide the chat is about after.
+func (s *Session) chatMaterial(ctx context.Context, paths []string, guide string, depth int) (string, error) {
+	rslug, err := s.Material(ctx, paths, RoadmapOpts{GuideDepth: &depth})
+	if err != nil {
+		return guide, err
+	}
+	return s.currentGuide(rslug, guide), nil
+}
+
+// currentGuide is the guide of the topic the learner is on in a roadmap, or fallback when it has none.
+func (s *Session) currentGuide(rslug, fallback string) string {
+	_, topics, err := s.roadmapTopics(rslug)
+	if err != nil {
+		return fallback
+	}
+	if n, ok := roadmap.Next(topics, s.passScore()); ok && hasGuide(n) {
+		return n.Slug
+	}
+	return fallback
 }
 
 // saveDoubt files a question and its answer in the guide's "Dudas" section.

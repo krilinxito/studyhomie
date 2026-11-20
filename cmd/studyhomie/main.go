@@ -36,9 +36,9 @@ Uso (sin argumentos abre la interfaz web):
   studyhomie version
   studyhomie update [--check] [-y]      busca una versión nueva y, si la hay, pregunta si instalarla;
                                         --check solo avisa, -y instala sin preguntar
-  studyhomie roadmap <materia>          te pregunta el alcance y traza el grafo de temas
+  studyhomie roadmap <materia>          te pregunta el alcance, traza la ruta de temas y escribe la guía del 1.º
   studyhomie material <archivo>...      roadmap a partir de txt, md, pdf, pptx, docx o imágenes
-  studyhomie next <roadmap>             siguiente tema cuyos prerrequisitos ya dominas
+  studyhomie next <roadmap>             el tema en el que vas; al aprobarlo se escribe la guía del siguiente
   studyhomie daily [campo|todos]        reto del día de tus campos de interés ("todos": cualquier campo)
   studyhomie study <tema>               preparación → prueba → Feynman
   studyhomie prepare <tema>             solo la guía de estudio
@@ -140,13 +140,13 @@ func run(ctx context.Context, cmd string, args []string) error {
 	topic := args[0]
 	switch cmd {
 	case "roadmap":
-		rslug, err := s.Roadmap(ctx, strings.Join(args, " "))
+		rslug, err := s.Roadmap(ctx, strings.Join(args, " "), session.RoadmapOpts{})
 		if err != nil {
 			return err
 		}
 		return startFirst(ctx, s, rslug)
 	case "material":
-		rslug, err := s.Material(ctx, args)
+		rslug, err := s.Material(ctx, args, session.RoadmapOpts{})
 		if err != nil {
 			return err
 		}
