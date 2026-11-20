@@ -31,6 +31,7 @@ type Card struct {
 	Slug      string           `json:"slug,omitempty"`
 	Plan      *ConceptPlan     `json:"plan,omitempty"`
 	Items     []ProgressItem   `json:"items,omitempty"`
+	Steps     []RoadmapStep    `json:"steps,omitempty"`
 }
 
 // card sends c to the UI and reports whether one is attached. Callers that also

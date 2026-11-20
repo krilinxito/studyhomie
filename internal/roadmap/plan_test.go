@@ -1,6 +1,7 @@
 package roadmap
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -65,26 +66,45 @@ func TestNormalizeRejectsBadPlans(t *testing.T) {
 	}
 }
 
-func note(slug, status string, order int, requires ...string) vault.Note {
-	return vault.Note{Slug: slug, Meta: vault.Meta{Status: status, Order: order, Requires: requires}}
+func note(slug, status string, order, mastery int) vault.Note {
+	return vault.Note{Slug: slug, Meta: vault.Meta{Status: status, Order: order, Mastery: mastery}}
 }
 
-func TestNext(t *testing.T) {
+func TestStepsAreLinear(t *testing.T) {
 	notes := []vault.Note{
-		note("c", "new", 3, "b"),
-		note("a", "explained", 1),
-		note("b", "prepared", 2, "a"),
+		note("c", "new", 3, 0),
+		note("a", "tested", 1, 80),
+		note("b", "explained", 2, 60), // explained but under the passing score
 	}
-	n, ok := Next(notes)
-	if !ok || n.Slug != "b" {
-		t.Fatalf("next = %v %v, want b", n.Slug, ok)
+	steps := Steps(notes, 70)
+	var got []string
+	for _, st := range steps {
+		got = append(got, fmt.Sprintf("%s:%v:%v", st.Note.Slug, st.Passed, st.Open))
 	}
-	notes[2].Meta.Status = "explained"
-	if n, ok = Next(notes); !ok || n.Slug != "c" {
-		t.Errorf("next = %v %v, want c", n.Slug, ok)
+	if want := "a:true:true,b:false:true,c:false:false"; strings.Join(got, ",") != want {
+		t.Errorf("steps = %v, want %s", got, want)
 	}
-	notes[0].Meta.Status = "explained"
-	if _, ok = Next(notes); ok {
-		t.Error("everything done: expected no next topic")
+	if n, ok := Next(notes, 70); !ok || n.Slug != "b" {
+		t.Errorf("next = %v %v, want b", n.Slug, ok)
+	}
+	if b, locked := Blocker(notes, "c", 70); !locked || b.Slug != "b" {
+		t.Errorf("c must be locked by b, got %v %v", b.Slug, locked)
+	}
+	if _, locked := Blocker(notes, "b", 70); locked {
+		t.Error("b is open")
+	}
+	// a lower passing score opens the rest
+	if _, locked := Blocker(notes, "c", 60); locked {
+		t.Error("with 60 to pass, c is open")
+	}
+	notes[2].Meta.Status = "prepared" // a guide alone, never tested, is not passed
+	notes[2].Meta.Mastery = 100
+	if n, ok := Next(notes, 0); !ok || n.Slug != "b" {
+		t.Errorf("an untested topic is not passed even with 0 to pass: %v", n.Slug)
+	}
+	notes[2].Meta.Status = "tested"
+	notes[0].Meta.Status, notes[0].Meta.Mastery = "explained", 90
+	if _, ok := Next(notes, 70); ok {
+		t.Error("everything passed: expected no next topic")
 	}
 }

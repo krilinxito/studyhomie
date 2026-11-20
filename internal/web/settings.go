@@ -43,7 +43,38 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 		"providers":  providers.Statuses(r.Context(), cfg),
 		"warning":    warning,
 		"configPath": s.ConfigPath,
+		"study":      studySettings{PassScore: &cfg.PassScore},
 	})
+}
+
+// studySettings are how studying works: the mastery a roadmap topic needs to unlock the next one.
+type studySettings struct {
+	PassScore *int `json:"passScore"`
+}
+
+// saveStudySettings writes the study settings to studyhomie.toml. Sessions read them when they start.
+func (s *Server) saveStudySettings(w http.ResponseWriter, r *http.Request) {
+	var body studySettings
+	if !readJSON(w, r, &body) {
+		return
+	}
+	if body.PassScore == nil || *body.PassScore < 0 || *body.PassScore > 100 {
+		fail(w, 400, "la nota para avanzar va de 0 a 100")
+		return
+	}
+	s.pmu.Lock()
+	cfg := s.Cfg
+	cfg.PassScore = *body.PassScore
+	if s.ConfigPath != "" {
+		if err := config.Write(s.ConfigPath, cfg); err != nil {
+			s.pmu.Unlock()
+			fail(w, 500, "no pude guardar "+s.ConfigPath+": "+err.Error())
+			return
+		}
+	}
+	s.Cfg = cfg
+	s.pmu.Unlock()
+	writeJSON(w, 200, studySettings{PassScore: &cfg.PassScore})
 }
 
 // saveSettings switches the AI backend, and writes the choice to studyhomie.toml.
