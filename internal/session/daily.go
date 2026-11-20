@@ -115,7 +115,11 @@ func (s *Session) Daily(ctx context.Context, field string) error {
 		}
 		return s.Study(ctx, p.Topic, "daily")
 	}
-	s.printf("\nHoy no te convenció ningún tema. Prueba `studyhomie daily <campo>` o vuelve más tarde.\n")
+	if s.rich() {
+		s.printf("\nHoy no te convenció ningún tema. Pide un reto de otra temática o vuelve más tarde.\n")
+	} else {
+		s.printf("\nHoy no te convenció ningún tema. Prueba `studyhomie daily <campo>` o vuelve más tarde.\n")
+	}
 	return nil
 }
 

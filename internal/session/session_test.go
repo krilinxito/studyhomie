@@ -197,3 +197,31 @@ func TestFeynmanFlow(t *testing.T) {
 		t.Errorf("output: %s", out.String())
 	}
 }
+
+// In the web app the transcript is shown as chat: terminal conventions («.», /fin), file paths
+// and technical notices must not leak into it.
+func TestWebSessionHidesTerminalText(t *testing.T) {
+	f := &fake{replies: []provider.Response{
+		reply(prepReply, 10),
+		reply("Bien, pero ¿por qué?", 10),
+		reply("Buen trabajo.\nSCORE: 80", 10),
+	}}
+	s, out := newSession(t, f, "Es como un filtro.\n.\n/fin\n")
+	s.Card = func(Card) {}
+	slug, err := s.Prepare(context.Background(), "Bayes", "adhoc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Feynman(context.Background(), slug); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	for _, bad := range []string{"«.»", "/fin", s.V.Root, "Guardado en", "Descarté", "Aviso"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("web transcript leaks %q:\n%s", bad, got)
+		}
+	}
+	if !strings.Contains(got, "Terminar y evaluar") {
+		t.Errorf("web transcript should point at the finish button:\n%s", got)
+	}
+}

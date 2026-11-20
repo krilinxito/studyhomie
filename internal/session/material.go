@@ -36,7 +36,7 @@ func (s *Session) Material(ctx context.Context, paths []string) (string, error) 
 		}
 		var part string
 		if kind == material.Image {
-			s.printf("Leyendo la imagen %s...\n", filepath.Base(abs))
+			s.status("Leyendo la imagen %s", filepath.Base(abs))
 			c := s.convo(prompts.Get("extract", s.Cfg.Language))
 			c.Files = []string{abs}
 			resp, err := c.Say(ctx, "Transcribe the attached image.", nil)

@@ -67,7 +67,7 @@ func (s *Session) Interactive(ctx context.Context, slug, brief string) error {
 	if brief != "" {
 		prompt += "\nBuild this: " + brief
 	}
-	s.printf("Generando la simulación interactiva (puede tardar)...\n")
+	s.status("Generando la simulación interactiva (puede tardar)")
 	html, err := s.buildHTML(ctx, prompt)
 	if err != nil {
 		return err
@@ -93,7 +93,11 @@ func (s *Session) Interactive(ctx context.Context, slug, brief string) error {
 	if err := s.V.Save(note); err != nil {
 		return err
 	}
-	s.printf("Simulación guardada en %s/%s\n", s.V.Root, rel)
+	if s.rich() {
+		s.printf("Simulación lista: ábrela desde los recursos de la guía.\n")
+	} else {
+		s.printf("Simulación guardada en %s/%s\n", s.V.Root, rel)
+	}
 	return nil
 }
 

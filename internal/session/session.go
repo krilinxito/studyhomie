@@ -59,6 +59,26 @@ func (s *Session) printf(format string, a ...any) {
 	}
 }
 
+// rich reports whether a UI draws this session (the web app); the terminal leaves Card nil.
+func (s *Session) rich() bool { return s.Card != nil }
+
+// termf writes text meant only for the terminal: typing conventions, file paths and the
+// technical notices a learner in the web app has no use for.
+func (s *Session) termf(format string, a ...any) {
+	if !s.rich() {
+		s.printf(format, a...)
+	}
+}
+
+// status says what the session is busy with. The terminal prints it as a line ending in "...";
+// a UI shows it in its busy indicator, so the chat transcript is not filled with progress lines.
+func (s *Session) status(format string, a ...any) {
+	text := fmt.Sprintf(format, a...)
+	if !s.card(Card{Kind: CardStatus, Detail: text + "…"}) {
+		s.printf("%s...\n", text)
+	}
+}
+
 func (s *Session) convo(system string, tools ...string) *Convo {
 	return &Convo{
 		P: s.P, System: system, Tools: tools, Model: s.Cfg.Model, Language: s.Cfg.Language,
@@ -129,7 +149,7 @@ func (s *Session) verified(ctx context.Context, in []vault.Resource) []vault.Res
 	var out []vault.Resource
 	for _, r := range in {
 		if r.URL != "" && !alive[r.URL] {
-			s.printf("Descarté un enlace que no responde: %s\n", r.URL)
+			s.termf("Descarté un enlace que no responde: %s\n", r.URL)
 			continue
 		}
 		out = append(out, r)
@@ -205,7 +225,7 @@ func (s *Session) Quiz(ctx context.Context, slug string, n int, difficulty strin
 	genPrompt := fmt.Sprintf("GENERATE a test.\nTopic: %s\nWhat the learner studied: %s\nNumber of questions: %d\nDifficulty: %s",
 		note.Meta.Title, s.V.LoadHandoff(slug), n, difficulty)
 	s.card(Card{Kind: CardPhase, Phase: "quiz"})
-	s.printf("Generando la prueba...\n")
+	s.status("Generando la prueba")
 	resp, err := s.convo(system).Say(ctx, genPrompt, nil)
 	if err != nil {
 		return err
@@ -240,7 +260,7 @@ func (s *Session) Quiz(ctx context.Context, slug string, n int, difficulty strin
 	for _, q := range gen.Questions {
 		fmt.Fprintf(&gb, "\nQuestion %d: %s\nReference answer: %s\nLearner's answer: %s\n", q.ID, q.Question, q.Answer, answers[q.ID])
 	}
-	s.printf("\nCorrigiendo...\n")
+	s.status("Corrigiendo")
 	resp, err = s.convo(system).Say(ctx, gb.String(), nil)
 	if err != nil {
 		return err
@@ -299,7 +319,11 @@ func (s *Session) Feynman(ctx context.Context, slug string) error {
 
 	s.card(Card{Kind: CardPhase, Phase: "feynman"})
 	s.printf("\nExplícame «%s» como si yo no supiera nada.\n", note.Meta.Title)
-	s.printf("Escribe tu explicación; una línea con solo «.» la envía, «/fin» termina la sesión.\n\n")
+	if s.rich() {
+		s.printf("Escríbela con tus palabras; te iré haciendo preguntas. Cuando quieras, pulsa «Terminar y evaluar».\n\n")
+	} else {
+		s.printf("Escribe tu explicación; una línea con solo «.» la envía, «/fin» termina la sesión.\n\n")
+	}
 
 	var transcript strings.Builder
 	first := true

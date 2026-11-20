@@ -9,6 +9,7 @@ const (
 	CardQuestion  = "question"  // N, Total, Question, Choices (empty for an open question)
 	CardScore     = "score"     // Label, Score, Detail
 	CardResources = "resources" // Resources: the verified material of a guide
+	CardStatus    = "status"    // Detail: what the session is doing now, shown by the busy indicator
 )
 
 // Card is one structured piece of output. The terminal never sees cards: it keeps

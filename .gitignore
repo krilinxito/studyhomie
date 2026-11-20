@@ -6,3 +6,6 @@
 # a vault created by running the app from the repo folder
 /vault/
 /studyhomie.toml
+
+# plan de trabajo local (no se publica)
+/plan/

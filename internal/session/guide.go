@@ -464,7 +464,7 @@ func (s *Session) Guide(ctx context.Context, req GuideReq) (string, error) {
 	s.card(Card{Kind: CardPhase, Phase: "prepare"})
 	plan := ConceptPlan{Topic: req.Topic, Depth: req.Depth}
 	if req.Depth > 0 || s.Cfg.Iceberg {
-		s.printf("Mapeando lo que «%s» da por sabido...\n", req.Topic)
+		s.status("Mapeando lo que «%s» da por sabido", req.Topic)
 		p, err := s.planConcepts(ctx, req, note)
 		switch {
 		case err != nil && ctx.Err() != nil:
@@ -500,9 +500,9 @@ func (s *Session) Guide(ctx context.Context, req GuideReq) (string, error) {
 		if linked > 0 {
 			msg += fmt.Sprintf(" (%d ya estaban en tu vault y solo se enlazan)", linked)
 		}
-		s.printf("%s...\n", msg)
+		s.status("%s", msg)
 	} else {
-		s.printf("Preparando la guía de «%s» (busca material en línea, puede tardar)...\n", req.Topic)
+		s.status("Preparando la guía de «%s» (busca material en línea, puede tardar)", req.Topic)
 	}
 	prog.set(slug, "working")
 
@@ -570,7 +570,7 @@ func (s *Session) Guide(ctx context.Context, req GuideReq) (string, error) {
 	}
 	s.card(Card{Kind: CardGuide, Slug: slug, Topic: req.Topic})
 	if len(plan.Concepts) > 0 {
-		s.printf("Listo: la guía y %d notas de concepto en %s/.\n", len(plan.Concepts)-failed, vault.ConceptsDir)
+		s.termf("Listo: la guía y %d notas de concepto en %s/.\n", len(plan.Concepts)-failed, vault.ConceptsDir)
 	}
 	return slug, nil
 }
@@ -625,7 +625,7 @@ func (s *Session) writeGuide(ctx context.Context, note *vault.Note, req GuideReq
 	guide, payload := splitJSON(resp.Text)
 	guide, warns := viz.Clean(guide)
 	for _, w := range warns {
-		s.printf("Aviso: %s\n", w)
+		s.termf("Aviso: %s\n", w)
 	}
 
 	var out struct {
@@ -634,10 +634,10 @@ func (s *Session) writeGuide(ctx context.Context, note *vault.Note, req GuideReq
 	}
 	if payload != "" {
 		if err := decodeJSON(payload, &out); err != nil {
-			s.printf("Aviso: no pude leer la lista de recursos (%v); guardo la guía sin ella.\n", err)
+			s.termf("Aviso: no pude leer la lista de recursos (%v); guardo la guía sin ella.\n", err)
 		}
 	} else {
-		s.printf("Aviso: la respuesta no incluyó recursos estructurados; guardo solo la guía.\n")
+		s.termf("Aviso: la respuesta no incluyó recursos estructurados; guardo solo la guía.\n")
 	}
 
 	resources := s.verified(ctx, out.Resources)
@@ -721,7 +721,7 @@ func (s *Session) writeConcept(ctx context.Context, c PlannedConcept, plan Conce
 	text, payload := splitJSON(resp.Text)
 	text, warns := viz.Clean(strings.TrimSpace(text))
 	for _, w := range warns {
-		s.printf("Aviso (%s): %s\n", c.Title, w)
+		s.termf("Aviso (%s): %s\n", c.Title, w)
 	}
 	if text == "" {
 		return fmt.Errorf("la nota salió vacía")
@@ -800,7 +800,7 @@ func (s *Session) Explain(ctx context.Context, guide, ref, summary string) (stri
 		for _, p := range g.Meta.Pending {
 			plan.Pending = append(plan.Pending, PlannedConcept{ID: p.ID, Title: p.Title})
 		}
-		s.printf("Escribiendo la nota «%s»...\n", pc.Title)
+		s.status("Escribiendo la nota «%s»", pc.Title)
 		if err := s.writeConcept(ctx, pc, plan, GuideReq{Topic: g.Meta.Title, Focus: g.Meta.Focus}, guide); err != nil {
 			return "", err
 		}

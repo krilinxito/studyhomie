@@ -48,7 +48,7 @@ func (s *Session) buildRoadmap(ctx context.Context, subject, scope, outline, mat
 	if outline != "" {
 		prompt += "\nSOURCE MATERIAL OUTLINE (build the roadmap from this):\n" + outline
 	}
-	s.printf("\nTrazando el roadmap...\n")
+	s.status("Trazando el roadmap")
 	resp, err := s.convo(prompts.Get("roadmap", s.Cfg.Language)).Say(ctx, prompt, nil)
 	if err != nil {
 		return "", err
@@ -62,7 +62,7 @@ func (s *Session) buildRoadmap(ctx context.Context, subject, scope, outline, mat
 		return "", fmt.Errorf("el roadmap generado no es válido: %w", err)
 	}
 	for _, w := range warnings {
-		s.printf("Aviso: %s\n", w)
+		s.termf("Aviso: %s\n", w)
 	}
 	rslug := vault.Slugify(subject)
 	if rslug == "" {
@@ -127,7 +127,8 @@ func (s *Session) buildRoadmap(ctx context.Context, subject, scope, outline, mat
 	if err := s.V.SaveIn("roadmaps", rn); err != nil {
 		return "", err
 	}
-	s.printf("\nRoadmap «%s» (%d temas):\n\n%s\nGuardado en %s/roadmaps/%s.md\n", rn.Meta.Title, len(plan.Nodes), route.String(), s.V.Root, rslug)
+	s.printf("\nRoadmap «%s» (%d temas):\n\n%s", rn.Meta.Title, len(plan.Nodes), route.String())
+	s.termf("\nGuardado en %s/roadmaps/%s.md\n", s.V.Root, rslug)
 	return rslug, nil
 }
 
