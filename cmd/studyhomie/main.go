@@ -26,15 +26,24 @@ const usage = `StudyHomie — aprende con intuición y explicando.
 Uso (sin argumentos abre la interfaz web):
   studyhomie serve [--port N] [--no-open]
                                         interfaz web: grafo, notas y sesiones
-  studyhomie init                       crea studyhomie.toml para cambiar la configuración
+  studyhomie init [--provider P] [--model M] [--quick-model M] [--base-url URL] [--vault DIR] [--port N]
+                                        crea studyhomie.toml y el vault (con flags, sin preguntar nada;
+                                        sobre un archivo existente cambia solo esos valores)
+  studyhomie check [--live]             la configuración, el vault y qué IAs están listas;
+                                        --live le manda un mensaje de prueba (sale con 1 si falla)
+  studyhomie version
   studyhomie roadmap <materia>          te pregunta el alcance y traza el grafo de temas
   studyhomie material <archivo>...      roadmap a partir de txt, md, pdf, pptx, docx o imágenes
   studyhomie next <roadmap>             siguiente tema cuyos prerrequisitos ya dominas
   studyhomie daily [campo|todos]        reto del día de tus campos de interés ("todos": cualquier campo)
   studyhomie study <tema>               preparación → prueba → Feynman
   studyhomie prepare <tema>             solo la guía de estudio
+  studyhomie guide <tema> [--depth N] [--foco "..."]
+                                        guía + notas de concepto hasta N niveles de prerrequisitos
   studyhomie quiz <tema> [n] [dificultad]
   studyhomie feynman <tema>
+  studyhomie extend <tema>              añade los conceptos base que la guía da por sabidos
+  studyhomie doubt <tema> "pregunta"    responde una duda y la guarda en la sección Dudas de la nota
   studyhomie interactive <tema>         genera una simulación interactiva del tema
   studyhomie graph                      temas y conexiones del vault
 `
@@ -64,8 +73,11 @@ func main() {
 }
 
 func run(ctx context.Context, cmd string, args []string) error {
-	if cmd == "init" {
-		return initProject()
+	switch cmd {
+	case "init":
+		return initProject(args, os.Stdout)
+	case "check":
+		return check(ctx, args, os.Stdout)
 	}
 	cfg, err := config.Load(config.FileName)
 	if err != nil {
@@ -85,6 +97,7 @@ func run(ctx context.Context, cmd string, args []string) error {
 	if cmd == "serve" {
 		srv := web.New(cfg, v, p)
 		srv.Warning = providers.Check(cfg)
+		srv.ConfigPath = config.FileName
 		if srv.Warning != "" {
 			fmt.Fprintln(os.Stderr, "Aviso:", srv.Warning)
 		}
@@ -123,6 +136,33 @@ func run(ctx context.Context, cmd string, args []string) error {
 	case "prepare":
 		_, err := s.Prepare(ctx, strings.Join(args, " "), "adhoc")
 		return err
+	case "guide":
+		req, err := guideArgs(args, cfg.Depth)
+		if err != nil {
+			return err
+		}
+		_, err = s.Guide(ctx, req)
+		return err
+	case "extend":
+		text, err := s.Extend(ctx, vault.Slugify(strings.Join(args, " ")))
+		if err != nil {
+			return err
+		}
+		fmt.Println(text)
+		return nil
+	case "doubt":
+		if len(args) < 2 {
+			return fmt.Errorf("uso: studyhomie doubt <tema> \"pregunta\"\n\n%s", usage)
+		}
+		ans, err := s.Doubt(ctx, vault.Slugify(topic), strings.Join(args[1:], " "))
+		if err != nil {
+			return err
+		}
+		fmt.Println(ans.Entry)
+		for _, c := range ans.Concepts {
+			fmt.Printf("Podría ser su propio tema: %s\n", c.Title)
+		}
+		return nil
 	case "interactive":
 		return s.Interactive(ctx, vault.Slugify(strings.Join(args, " ")), "")
 	case "quiz":
@@ -140,6 +180,36 @@ func run(ctx context.Context, cmd string, args []string) error {
 		return s.Feynman(ctx, vault.Slugify(topic))
 	}
 	return fmt.Errorf("comando desconocido %q\n\n%s", cmd, usage)
+}
+
+// guideArgs reads "tema... [--depth N] [--foco texto...]".
+func guideArgs(args []string, depth int) (session.GuideReq, error) {
+	req := session.GuideReq{Depth: depth, Source: "adhoc"}
+	var topic, focus []string
+	into := &topic
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--depth", "--profundidad":
+			if i+1 >= len(args) {
+				return req, errors.New("--depth necesita un número")
+			}
+			n, err := strconv.Atoi(args[i+1])
+			if err != nil || n < 0 || n > session.MaxDepth {
+				return req, fmt.Errorf("profundidad no válida: %q (0 a %d)", args[i+1], session.MaxDepth)
+			}
+			req.Depth = n
+			i++
+		case "--foco", "--focus":
+			into = &focus
+		default:
+			*into = append(*into, args[i])
+		}
+	}
+	req.Topic, req.Focus = strings.Join(topic, " "), strings.Join(focus, " ")
+	if strings.TrimSpace(req.Topic) == "" {
+		return req, errors.New("falta el tema")
+	}
+	return req, nil
 }
 
 // serve runs the local web UI until interrupted.
@@ -204,21 +274,6 @@ func openBrowser(url string) {
 func startFirst(ctx context.Context, s *session.Session, rslug string) error {
 	fmt.Println()
 	return s.Next(ctx, rslug)
-}
-
-func initProject() error {
-	if _, err := os.Stat(config.FileName); err == nil {
-		return fmt.Errorf("%s ya existe", config.FileName)
-	}
-	cfg := config.Default()
-	if err := config.Write(config.FileName, cfg); err != nil {
-		return err
-	}
-	if _, err := vault.Open(cfg.Vault); err != nil {
-		return err
-	}
-	fmt.Printf("Listo: %s y vault en ./%s (puedes abrirlo con Obsidian)\n", config.FileName, cfg.Vault)
-	return nil
 }
 
 func printGraph(v *vault.Vault) error {

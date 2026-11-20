@@ -4,6 +4,8 @@ package config
 import (
 	"errors"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -11,14 +13,20 @@ import (
 const FileName = "studyhomie.toml"
 
 type Config struct {
-	Provider      string   `toml:"provider"` // claude-cli | anthropic-api
-	Model         string   `toml:"model"`    // empty = the provider's default
-	Port          int      `toml:"port"`     // local web UI
+	Provider      string   `toml:"provider"`    // see providers.Catalog: claude-cli, codex, agy, anthropic-api, openai, gemini, openrouter, ollama…
+	BaseURL       string   `toml:"base_url"`    // local servers and other OpenAI-compatible services
+	Model         string   `toml:"model"`       // empty = the provider's default
+	QuickModel    string   `toml:"quick_model"` // for short answers (base concepts, doubts); empty = Model
+	Port          int      `toml:"port"`        // local web UI
 	Language      string   `toml:"language"`
-	Vault         string   `toml:"vault"`
+	Vault         string   `toml:"vault"`          // the vault in use
+	Vaults        []string `toml:"vaults"`         // every vault you added, to switch between them
 	Interests     []string `toml:"interests"`      // fields the Daily draws from
 	ContextWindow int      `toml:"context_window"` // tokens
 	CompactAt     float64  `toml:"compact_at"`     // fraction of the window that triggers compaction
+	Depth         int      `toml:"depth"`          // levels of prerequisite concept notes a guide gets by default (0-4)
+	Parallel      int      `toml:"parallel"`       // concept notes written at the same time
+	Iceberg       bool     `toml:"iceberg"`        // map the prerequisites down to the basics even when writing fewer
 }
 
 // DefaultInterests are the fields the Daily draws from when none are configured.
@@ -37,6 +45,9 @@ func Default() Config {
 		Vault:         "vault",
 		ContextWindow: 200000,
 		CompactAt:     0.6,
+		Depth:         1,
+		Parallel:      3,
+		Iceberg:       true,
 		Interests:     DefaultInterests(),
 	}
 }
@@ -59,4 +70,20 @@ func Write(path string, c Config) error {
 	}
 	defer f.Close()
 	return toml.NewEncoder(f).Encode(c)
+}
+
+// VaultList is every known vault, the one in use first, without repeats (paths compared cleaned
+// and case-insensitively, as Windows does).
+func (c Config) VaultList() []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, v := range append([]string{c.Vault}, c.Vaults...) {
+		key := strings.ToLower(filepath.Clean(v))
+		if strings.TrimSpace(v) == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, v)
+	}
+	return out
 }

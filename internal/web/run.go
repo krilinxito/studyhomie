@@ -6,11 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/krilinxito/studyhomie/internal/session"
 	"github.com/krilinxito/studyhomie/internal/vault"
@@ -76,17 +75,26 @@ func (b *inputBuf) Close() {
 
 // Run is one flow (study, roadmap...) executing in the background.
 type Run struct {
-	ID  int
-	Cmd string
+	ID      int
+	Cmd     string
+	Title   string
+	Slug    string // the topic or roadmap it works on, when known
+	Started time.Time
+	Ended   time.Time
 
 	cancel context.CancelFunc
 	in     *inputBuf
+	store  *store // nil when sessions are not persisted
 
-	mu      sync.Mutex
-	events  []Event
-	subs    map[chan struct{}]struct{}
-	askKind string // what the flow is waiting for; "" when it is not waiting
-	done    bool
+	mu        sync.Mutex
+	events    []Event
+	subs      map[chan struct{}]struct{}
+	askKind   string // what the flow is waiting for; "" when it is not waiting
+	parked    bool   // an idle chat closed to make room for another
+	done      bool
+	status    string
+	errMsg    string
+	saveTimer *time.Timer
 }
 
 func (r *Run) emit(e Event) {
@@ -97,6 +105,16 @@ func (r *Run) emit(e Event) {
 	}
 	if e.Type == "done" {
 		r.done = true
+		r.Ended = time.Now()
+		r.errMsg = e.Error
+		switch e.Error {
+		case "":
+			r.status = statusDone
+		case "cancelado":
+			r.status = statusCancelled
+		default:
+			r.status = statusError
+		}
 	}
 	for ch := range r.subs {
 		select {
@@ -105,6 +123,7 @@ func (r *Run) emit(e Event) {
 		}
 	}
 	r.mu.Unlock()
+	r.scheduleSave(e.Type == "done")
 }
 
 // since returns the events from index n on, and whether the run has finished.
@@ -181,6 +200,7 @@ func (w outWriter) Write(p []byte) (int, error) {
 // StartReq is the body of POST /api/runs.
 type StartReq struct {
 	Cmd        string   `json:"cmd"`
+	Title      string   `json:"title"` // optional label for the session history
 	Topic      string   `json:"topic"`
 	Slug       string   `json:"slug"`
 	Subject    string   `json:"subject"`
@@ -190,6 +210,11 @@ type StartReq struct {
 	N          int      `json:"n"`
 	Difficulty string   `json:"difficulty"`
 	Files      []string `json:"files"`
+
+	// chat: the opening message, the guide open next to it, and the chat it continues
+	Chat   *chatBody `json:"chat"`
+	Guide  string    `json:"guide"`
+	Resume int       `json:"resume"`
 }
 
 var uploadIDRe = regexp.MustCompile(`^[0-9a-f]{16}/[^/\\]+$`)
@@ -230,17 +255,16 @@ func (s *Server) validate(req *StartReq) (paths []string, err error) {
 		return nil, need("el roadmap", req.Roadmap)
 	case "daily":
 		return nil, nil
+	case "chat":
+		return nil, nil
 	case "material":
 		if len(req.Files) == 0 {
 			return nil, errors.New("falta el archivo")
 		}
 		for _, id := range req.Files {
-			if !uploadIDRe.MatchString(id) {
-				return nil, fmt.Errorf("archivo no válido: %q", id)
-			}
-			p := filepath.Join(s.uploadDir(), filepath.FromSlash(id))
-			if _, err := os.Stat(p); err != nil {
-				return nil, fmt.Errorf("no encuentro el archivo subido %q", id)
+			p, err := s.uploadPath(id)
+			if err != nil {
+				return nil, err
 			}
 			paths = append(paths, p)
 		}
@@ -257,28 +281,71 @@ func (s *Server) StartRun(req StartReq) (*Run, error) {
 	if err != nil {
 		return nil, err
 	}
+	var first *session.ChatMsg
+	shown := ""
+	if req.Cmd == "chat" && req.Chat != nil && !req.Chat.empty() {
+		m, err := s.message(*req.Chat)
+		if err != nil {
+			return nil, err
+		}
+		first, shown = &m, req.Chat.shown()
+	}
 	s.mu.Lock()
 	if s.active != nil && !s.active.isDone() {
-		s.mu.Unlock()
-		return nil, errBusy
+		// a chat that is only waiting for a message steps aside; anything working keeps the floor
+		if req.Cmd != "chat" || s.active.waiting() != "chat" {
+			s.mu.Unlock()
+			return nil, errBusy
+		}
+		s.active.park()
 	}
 	s.seq++
 	ctx, cancel := context.WithCancel(context.Background())
-	run := &Run{ID: s.seq, Cmd: req.Cmd, cancel: cancel, in: newInputBuf()}
+	run := &Run{
+		ID: s.seq, Cmd: req.Cmd, Title: s.runTitle(req), Slug: runSlug(req), Started: s.Now(),
+		cancel: cancel, in: newInputBuf(), store: s.store, status: statusRunning,
+	}
 	s.runs[run.ID] = run
 	s.active = run
 	s.mu.Unlock()
+	opts := session.ChatOpts{First: first, Guide: req.Guide}
+	if req.Cmd == "chat" {
+		if req.Resume > 0 {
+			hist, slug := s.carryOver(run, req.Resume)
+			opts.History = hist
+			if opts.Guide == "" {
+				opts.Guide = slug
+			}
+		}
+		if shown != "" {
+			run.emit(Event{Type: "in", Text: shown})
+		}
+	}
+	run.scheduleSave(false)
 
+	prov, cfg, _ := s.backend()
 	sess := &session.Session{
-		P: s.P, V: s.V, Cfg: s.Cfg, CheckLinks: s.CheckLinks,
-		In:   bufio.NewReader(run.in),
-		Out:  outWriter{run},
-		Ask:  func(kind, label, def string) { run.emit(Event{Type: "ask", Kind: kind, Label: label, Def: def}) },
-		Card: func(c session.Card) { run.emit(Event{Type: "card", Card: &c}) },
+		P: prov, V: s.vault(), Cfg: cfg, CheckLinks: s.CheckLinks,
+		In:  bufio.NewReader(run.in),
+		Out: outWriter{run},
+		Ask: func(kind, label, def string) { run.emit(Event{Type: "ask", Kind: kind, Label: label, Def: def}) },
+		Card: func(c session.Card) {
+			if c.Kind == session.CardGuide {
+				run.mu.Lock()
+				run.Slug = c.Slug // the history offers to reopen the guide the chat ended on
+				run.mu.Unlock()
+			}
+			run.emit(Event{Type: "card", Card: &c})
+		},
 	}
 	go func() {
 		defer cancel()
-		err := s.dispatch(ctx, sess, req, paths)
+		var err error
+		if req.Cmd == "chat" {
+			err = sess.Chat(ctx, opts)
+		} else {
+			err = s.dispatch(ctx, sess, req, paths)
+		}
 		run.in.Close()
 		done := Event{Type: "done"}
 		if err != nil && !errors.Is(err, context.Canceled) {
@@ -287,9 +354,69 @@ func (s *Server) StartRun(req StartReq) (*Run, error) {
 		if ctx.Err() != nil {
 			done.Error = "cancelado"
 		}
+		run.mu.Lock()
+		if run.parked {
+			done.Error = ""
+		}
+		run.mu.Unlock()
 		run.emit(done)
 	}()
 	return run, nil
+}
+
+// runSlug is the note or roadmap a request works on, or "" when it creates one.
+func runSlug(req StartReq) string {
+	switch req.Cmd {
+	case "study", "prepare":
+		return vault.Slugify(req.Topic)
+	case "chat":
+		return vault.Slugify(req.Guide)
+	case "quiz", "feynman", "interactive":
+		return req.Slug
+	case "next":
+		return req.Roadmap
+	}
+	return ""
+}
+
+// runTitle labels a session in the history: the caller's title, else a name built from the request.
+func (s *Server) runTitle(req StartReq) string {
+	if t := strings.TrimSpace(req.Title); t != "" {
+		return truncate(t, 160)
+	}
+	switch req.Cmd {
+	case "chat":
+		if req.Chat != nil {
+			if t := req.Chat.shown(); t != "" {
+				return truncate(strings.Join(strings.Fields(t), " "), 80)
+			}
+		}
+		return "Chat"
+	case "roadmap":
+		return truncate(req.Subject, 160)
+	case "daily":
+		if f := strings.TrimSpace(req.Field); f != "" && f != "*" {
+			return "Reto de hoy: " + truncate(f, 60)
+		}
+		return "Reto de hoy"
+	case "material":
+		return "Material"
+	case "next":
+		return req.Roadmap
+	case "quiz", "feynman", "interactive":
+		if n, err := s.vault().Load(req.Slug); err == nil && n.Meta.Title != "" {
+			return n.Meta.Title
+		}
+		return req.Slug
+	}
+	return truncate(req.Topic, 160)
+}
+
+func truncate(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return string(r[:n])
+	}
+	return s
 }
 
 var errBusy = errors.New("ya hay una sesión en curso; termínala o cancélala primero")

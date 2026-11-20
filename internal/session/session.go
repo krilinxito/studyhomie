@@ -52,7 +52,12 @@ func (s *Session) pick(n int) int {
 	return rand.IntN(n)
 }
 
-func (s *Session) printf(format string, a ...any) { fmt.Fprintf(s.Out, format, a...) }
+// printf writes to the learner; a session without output (a short web request) stays quiet.
+func (s *Session) printf(format string, a ...any) {
+	if s.Out != nil {
+		fmt.Fprintf(s.Out, format, a...)
+	}
+}
 
 func (s *Session) convo(system string, tools ...string) *Convo {
 	return &Convo{
@@ -103,84 +108,9 @@ func (s *Session) readBlock() (text string, finished bool, err error) {
 	}
 }
 
-// Prepare writes the study guide, verifies its external links and saves everything.
+// Prepare writes the study guide of a topic, with concept notes down to the configured depth.
 func (s *Session) Prepare(ctx context.Context, topic, source string) (string, error) {
-	slug := vault.Slugify(topic)
-	if slug == "" {
-		return "", fmt.Errorf("invalid topic %q", topic)
-	}
-	var note vault.Note
-	if s.V.Exists(slug) {
-		var err error
-		if note, err = s.V.Load(slug); err != nil {
-			return "", err
-		}
-	} else {
-		note = vault.Note{Slug: slug, Meta: vault.Meta{Title: topic, Source: source}}
-	}
-
-	prompt := "Topic: " + topic
-	if note.Meta.Summary != "" {
-		prompt += "\nBy the end the learner should be able to: " + note.Meta.Summary
-	}
-	if g := s.grounding(note); g != "" {
-		prompt += "\n\nSOURCE MATERIAL (excerpts from the learner's document):\n" + g
-	}
-
-	s.card(Card{Kind: CardPhase, Phase: "prepare"})
-	s.printf("Preparando la guía de «%s» (busca material en línea, puede tardar)...\n", topic)
-	c := s.convo(prompts.Get("prepare", s.Cfg.Language), "WebSearch", "WebFetch")
-	resp, err := c.Say(ctx, prompt, nil)
-	if err != nil {
-		return "", err
-	}
-	guide, payload := splitJSON(resp.Text)
-
-	var out struct {
-		Resources []vault.Resource `json:"resources"`
-		Handoff   string           `json:"handoff"`
-	}
-	if payload != "" {
-		if err := decodeJSON(payload, &out); err != nil {
-			s.printf("Aviso: no pude leer la lista de recursos (%v); guardo la guía sin ella.\n", err)
-		}
-	} else {
-		s.printf("Aviso: la respuesta no incluyó recursos estructurados; guardo solo la guía.\n")
-	}
-
-	resources := s.verified(ctx, out.Resources)
-	// keep simulations generated earlier, and do not propose building another one
-	if have := localInteractive(note.Meta.Resources); len(have) > 0 {
-		var rest []vault.Resource
-		for _, r := range resources {
-			if r.Type != "interactive" || r.URL != "" {
-				rest = append(rest, r)
-			}
-		}
-		resources = append(rest, have...)
-	}
-
-	if note.Meta.Status == "" || note.Meta.Status == "new" {
-		note.Meta.Status = "prepared" // re-preparing a guide must not undo later progress
-	}
-	note.Meta.Resources = resources
-	note.Body = guideBody(note.Body, guide, resources)
-	if err := s.V.Save(note); err != nil {
-		return "", err
-	}
-	handoff := out.Handoff
-	if handoff == "" {
-		handoff = guide
-	}
-	if err := s.V.SaveHandoff(slug, handoff); err != nil {
-		return "", err
-	}
-	s.printf("\n%s\n\n", guide)
-	if len(resources) > 0 {
-		s.card(Card{Kind: CardResources, Resources: resources})
-	}
-	s.printf("Guardado en %s/topics/%s.md\n", s.V.Root, slug)
-	return slug, nil
+	return s.Guide(ctx, GuideReq{Topic: topic, Source: source, Depth: s.Cfg.Depth})
 }
 
 // verified drops resources whose URL is dead and keeps URL-less ones (books).
@@ -336,7 +266,7 @@ func (s *Session) Quiz(ctx context.Context, slug string, n int, difficulty strin
 	if len(g.Gaps) > 0 {
 		rep.WriteString("\nPara repasar: " + strings.Join(g.Gaps, "; ") + "\n")
 	}
-	if s.card(Card{Kind: CardScore, Label: "Prueba", Score: g.Score, Detail: "dificultad " + difficulty}) {
+	if s.card(Card{Kind: CardScore, Label: "Preguntas", Score: g.Score, Detail: "dificultad " + difficulty}) {
 		s.printf("\n%s", rep.String()) // the card already shows the score
 	} else {
 		s.printf("\n%s%s", header, rep.String())
@@ -402,7 +332,7 @@ func (s *Session) Feynman(ctx context.Context, slug string) error {
 		score, body, ok := extractScore(resp.Text)
 		s.printf("\n%s\n", body)
 		fmt.Fprintf(&transcript, "**Evaluación final:** %s\n", body)
-		if ok && !s.card(Card{Kind: CardScore, Label: "Feynman", Score: score}) {
+		if ok && !s.card(Card{Kind: CardScore, Label: "Explicación", Score: score}) {
 			s.printf("\nPuntaje Feynman: %d/100\n", score)
 		}
 		return s.saveFeynman(slug, transcript.String(), score, ok)
@@ -452,7 +382,7 @@ func (s *Session) Study(ctx context.Context, topic, source string) error {
 
 // afterPrepare continues with the test and the Feynman phase of an already prepared topic.
 func (s *Session) afterPrepare(ctx context.Context, slug string) error {
-	if ok, _ := s.confirm("\n¿Pasamos a la prueba?"); !ok {
+	if ok, _ := s.confirm("\n¿Respondemos unas preguntas?"); !ok {
 		return nil
 	}
 	nStr, err := s.readLine("¿Cuántas preguntas?", "5")
@@ -470,7 +400,7 @@ func (s *Session) afterPrepare(ctx context.Context, slug string) error {
 	if err := s.Quiz(ctx, slug, n, diff); err != nil {
 		return err
 	}
-	if ok, _ := s.confirm("\n¿Pasamos a la fase Feynman?"); !ok {
+	if ok, _ := s.confirm("\n¿Lo explicas con tus palabras?"); !ok {
 		return nil
 	}
 	return s.Feynman(ctx, slug)

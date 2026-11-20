@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <style>
+    .tip { fill: #7c5fd3; }
+    .facet { fill: #b9a2f2; }
+    .wave { fill: none; stroke: #9d84e3; stroke-width: 3.2; stroke-linecap: round; stroke-linejoin: round; }
+    .deep { fill: #9d84e3; opacity: .28; }
+    @media (prefers-color-scheme: dark) {
+      .tip { fill: #cfbff7; }
+      .facet { fill: #efe8fd; }
+      .wave { stroke: #b9a2f2; }
+      .deep { fill: #b9a2f2; opacity: .32; }
+    }
+  </style>
+  <!-- the tip: what you see -->
+  <path class="tip" d="M17 27 L25 15 L30 19 L37 7 L47 27 Z"/>
+  <path class="facet" d="M37 7 L47 27 H39.5 Z"/>
+  <!-- the waterline -->
+  <path class="wave" d="M6 33 q4.5 -4 9 0 t9 0 t9 0 t9 0 t9 0 t7 0"/>
+  <!-- and everything underneath -->
+  <path class="deep" d="M13 38 H51 L58 47 L45 58 L22 60 L7 48 Z"/>
+</svg>

@@ -27,6 +27,7 @@ import (
 	"github.com/krilinxito/studyhomie/internal/config"
 	"github.com/krilinxito/studyhomie/internal/provider"
 	"github.com/krilinxito/studyhomie/internal/roadmap"
+	"github.com/krilinxito/studyhomie/internal/session"
 	"github.com/krilinxito/studyhomie/internal/vault"
 )
 
@@ -46,6 +47,14 @@ type Server struct {
 	Now func() time.Time
 	// Warning, if set, is shown in the UI: the AI backend is not ready.
 	Warning string
+	// ConfigPath is where the settings page saves the AI choice; empty keeps it in memory.
+	ConfigPath string
+	pmu        sync.RWMutex // guards P, Cfg and Warning, which the settings page can change
+	vmu        sync.RWMutex // guards V, which changes when you switch vaults
+	// PickFolder and Open reach the desktop (folder dialog, explorer, Obsidian); nil uses the
+	// system's. Tests replace them.
+	PickFolder func(ctx context.Context) (string, error)
+	Open       func(kind, target string) error
 	// CheckLinks verifies cited URLs; nil uses the real check. Tests replace it.
 	CheckLinks func(ctx context.Context, urls []string) map[string]bool
 
@@ -53,13 +62,51 @@ type Server struct {
 	runs   map[int]*Run
 	active *Run
 	seq    int
+	store  *store // nil when the sessions folder cannot be created: they then live in memory only
 }
 
 func New(cfg config.Config, v *vault.Vault, p provider.Provider) *Server {
-	return &Server{Cfg: cfg, V: v, P: p, Now: time.Now, runs: map[int]*Run{}}
+	s := &Server{Cfg: cfg, V: v, P: p, Now: time.Now, runs: map[int]*Run{}}
+	if st, err := newStore(s.sessionsDir()); err == nil {
+		s.store = st
+		s.loadSessions()
+	}
+	return s
 }
 
-func (s *Server) uploadDir() string { return filepath.Join(s.V.Root, ".studyhomie", "uploads") }
+// vault is the vault in use; switching vaults replaces it.
+func (s *Server) vault() *vault.Vault {
+	s.vmu.RLock()
+	defer s.vmu.RUnlock()
+	return s.V
+}
+
+func (s *Server) uploadDir() string { return filepath.Join(s.vault().Root, ".studyhomie", "uploads") }
+func (s *Server) sessionsDir() string {
+	return filepath.Join(s.vault().Root, ".studyhomie", "sessions")
+}
+
+// loadSessions brings back the stored history. One that was still running when the app closed
+// is marked interrupted and given a closing event, so the browser can replay it to the end.
+func (s *Server) loadSessions() {
+	for _, sf := range s.store.load() {
+		run := restore(sf)
+		run.store = s.store
+		if sf.Status == statusRunning || len(sf.Events) == 0 || sf.Events[len(sf.Events)-1].Type != "done" {
+			run.status = statusInterrupted
+			run.errMsg = interruptedMsg
+			run.events = append(run.events, Event{Type: "done", Error: interruptedMsg})
+			if run.Ended.IsZero() {
+				run.Ended = run.Started
+			}
+			s.store.save(run)
+		}
+		s.runs[run.ID] = run
+		if run.ID > s.seq {
+			s.seq = run.ID
+		}
+	}
+}
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -67,10 +114,35 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /", pageHeaders(http.FileServerFS(static)))
 
 	mux.HandleFunc("GET /api/state", s.state)
+	mux.HandleFunc("GET /api/settings", s.getSettings)
+	mux.HandleFunc("POST /api/settings", s.saveSettings)
+	mux.HandleFunc("POST /api/settings/models", s.listModels)
+	mux.HandleFunc("POST /api/settings/test", s.testSettings)
 	mux.HandleFunc("GET /api/graph", s.graph)
 	mux.HandleFunc("GET /api/notes/{slug}", s.note)
+	mux.HandleFunc("POST /api/notes/{slug}/extend", s.extend)
+	mux.HandleFunc("POST /api/notes/{slug}/doubt", s.doubt)
+	mux.HandleFunc("POST /api/notes/{slug}/concept", s.concept)
+	mux.HandleFunc("POST /api/notes/{slug}/viz", s.vizPage)
+	mux.HandleFunc("POST /api/notes/{slug}/explain", s.explain)
+	mux.HandleFunc("GET /api/vaults", s.vaults)
+	mux.HandleFunc("POST /api/vaults", s.addVault)
+	mux.HandleFunc("POST /api/vaults/use", s.useVault)
+	mux.HandleFunc("POST /api/vaults/forget", s.forgetVault)
+	mux.HandleFunc("POST /api/vaults/pick", s.pickFolder)
+	mux.HandleFunc("POST /api/vault/open", s.openOutside)
+	mux.HandleFunc("GET /api/vault/files", s.vaultFiles)
+	mux.HandleFunc("GET /api/vault/search", s.vaultSearch)
+	mux.HandleFunc("GET /api/vault/raw/{dir}/{slug}", s.readRaw)
+	mux.HandleFunc("PUT /api/vault/raw/{dir}/{slug}", s.writeRaw)
+	mux.HandleFunc("GET /api/apuntes/{slug}", s.getApunte)
+	mux.HandleFunc("PUT /api/apuntes/{slug}", s.saveApunte)
+	mux.HandleFunc("POST /api/adjuntos", s.attach)
+	mux.HandleFunc("GET /api/adjuntos/{name}", s.attachment)
 	mux.HandleFunc("GET /api/roadmaps", s.roadmaps)
 	mux.HandleFunc("GET /api/daily", s.daily)
+	mux.HandleFunc("GET /api/sessions", s.sessions)
+	mux.HandleFunc("DELETE /api/sessions/{id}", s.deleteSession)
 	mux.HandleFunc("POST /api/upload", s.upload)
 	mux.HandleFunc("POST /api/runs", s.startRun)
 	mux.HandleFunc("GET /api/runs/{id}/events", s.events)
@@ -107,7 +179,7 @@ func guard(next http.Handler) http.Handler {
 func pageHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
-		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; frame-src 'self' https://www.youtube-nocookie.com; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; frame-src 'self' https://www.youtube-nocookie.com; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Cache-Control", "no-cache")
@@ -142,121 +214,123 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		active = s.active.ID
 	}
 	s.mu.Unlock()
+	p, cfg, warning := s.backend()
 	writeJSON(w, 200, map[string]any{
-		"provider":  s.P.Name(),
-		"vault":     s.V.Root,
-		"interests": s.Cfg.Interests,
+		"provider":  p.Name(),
+		"vault":     s.vault().Root,
+		"interests": cfg.Interests,
 		"activeRun": active,
-		"warning":   s.Warning,
+		"warning":   warning,
 	})
 }
 
-type gNode struct {
-	ID      string `json:"id"`
-	Label   string `json:"label"`
-	Status  string `json:"status"`
-	Mastery int    `json:"mastery"`
-	Roadmap string `json:"roadmap,omitempty"`
-	Order   int    `json:"order,omitempty"`
-	Source  string `json:"source,omitempty"`
-	Field   string `json:"field,omitempty"`
+// answerTimeout bounds a short answer (base concepts, a doubt). They are small, so a model
+// that has not replied by then is stuck.
+const answerTimeout = 3 * time.Minute
+
+// shortSession is a session for actions that do not need a conversation with the learner:
+// they take their input from the request and send the result back in the response.
+func (s *Server) shortSession() *session.Session {
+	p, cfg, _ := s.backend()
+	return &session.Session{P: p, V: s.vault(), Cfg: cfg, CheckLinks: s.CheckLinks}
 }
 
-type gEdge struct {
-	From string `json:"from"`
-	To   string `json:"to"`
-	Kind string `json:"kind"` // requires: from must be understood before to | related
-}
+// drain reads what is left of the request body. Go only notices that the browser closed the connection
+// once the body is read to its end, and a short action is cancelled that way: the browser aborts the
+// request, the request's context ends, and the model is stopped.
+func drain(r *http.Request) { io.Copy(io.Discard, r.Body) }
 
-func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
-	notes, err := s.V.List()
-	if err != nil {
-		fail(w, 500, err.Error())
-		return
-	}
-	exists := map[string]bool{}
-	for _, n := range notes {
-		exists[n.Slug] = true
-	}
-	nodes := []gNode{}
-	edges := []gEdge{}
-	seen := map[string]bool{}
-	for _, n := range notes {
-		st := n.Meta.Status
-		if st == "" {
-			st = "new"
-		}
-		title := n.Meta.Title
-		if title == "" {
-			title = n.Slug
-		}
-		nodes = append(nodes, gNode{ID: n.Slug, Label: title, Status: st, Mastery: n.Meta.Mastery,
-			Roadmap: n.Meta.Roadmap, Order: n.Meta.Order, Source: n.Meta.Source, Field: n.Meta.Field})
-		for _, req := range n.Meta.Requires {
-			if exists[req] {
-				seen[req+">"+n.Slug] = true
-				edges = append(edges, gEdge{From: req, To: n.Slug, Kind: "requires"})
-			}
-		}
-	}
-	for _, n := range notes {
-		for _, to := range n.Links() {
-			if !exists[to] || to == n.Slug || seen[n.Slug+">"+to] || seen[to+">"+n.Slug] {
-				continue
-			}
-			seen[n.Slug+">"+to] = true
-			edges = append(edges, gEdge{From: n.Slug, To: to, Kind: "related"})
-		}
-	}
-	writeJSON(w, 200, map[string]any{"nodes": nodes, "edges": edges})
-}
-
-type linkRef struct {
-	Slug  string `json:"slug"`
-	Title string `json:"title"`
-}
-
-func (s *Server) note(w http.ResponseWriter, r *http.Request) {
+// noteSlug reads the {slug} of a note route, or answers 400.
+func noteSlug(w http.ResponseWriter, r *http.Request) (string, bool) {
 	slug := r.PathValue("slug")
-	if vault.Slugify(slug) != slug || slug == "" {
+	if slug == "" || vault.Slugify(slug) != slug {
 		fail(w, 400, "tema inválido")
+		return "", false
+	}
+	return slug, true
+}
+
+// extend writes the base concepts of a note and answers with the text, to put in the article.
+func (s *Server) extend(w http.ResponseWriter, r *http.Request) {
+	slug, ok := noteSlug(w, r)
+	if !ok {
 		return
 	}
-	n, err := s.V.Load(slug)
+	drain(r)
+	ctx, cancel := context.WithTimeout(r.Context(), answerTimeout)
+	defer cancel()
+	text, err := s.shortSession().Extend(ctx, slug)
 	if err != nil {
-		fail(w, 404, "no existe ese tema")
+		fail(w, shortStatus(err), err.Error())
 		return
 	}
-	title := func(sl string) string {
-		if o, err := s.V.Load(sl); err == nil && o.Meta.Title != "" {
-			return o.Meta.Title
-		}
-		return sl
+	writeJSON(w, 200, map[string]string{"text": text})
+}
+
+// doubt answers a question about a note and saves it under the note's "Dudas" section.
+func (s *Server) doubt(w http.ResponseWriter, r *http.Request) {
+	slug, ok := noteSlug(w, r)
+	if !ok {
+		return
 	}
-	var back []linkRef
-	if bl, err := s.V.Backlinks(slug); err == nil {
-		for _, b := range bl {
-			back = append(back, linkRef{b, title(b)})
-		}
+	var body struct {
+		Question string `json:"question"`
 	}
-	var req []linkRef
-	for _, q := range n.Meta.Requires {
-		req = append(req, linkRef{q, title(q)})
+	if !readJSON(w, r, &body) {
+		return
 	}
-	_, simErr := s.V.LoadInteractive(slug)
-	writeJSON(w, 200, map[string]any{
-		"slug": slug, "meta": n.Meta, "body": n.Body,
-		"backlinks": back, "requires": req, "hasSimulation": simErr == nil,
-	})
+	drain(r)
+	ctx, cancel := context.WithTimeout(r.Context(), answerTimeout)
+	defer cancel()
+	ans, err := s.shortSession().Doubt(ctx, slug, body.Question)
+	if err != nil {
+		fail(w, shortStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, 200, ans)
+}
+
+// concept adds a concept a doubt brought up to the vault as a new note.
+func (s *Server) concept(w http.ResponseWriter, r *http.Request) {
+	slug, ok := noteSlug(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Title   string `json:"title"`
+		Summary string `json:"summary"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	got, created, err := s.shortSession().AddConcept(slug, body.Title, body.Summary)
+	if err != nil {
+		fail(w, shortStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"slug": got, "created": created})
+}
+
+// shortStatus tells what the learner did wrong (no guide yet, empty question) from what failed on our side.
+func shortStatus(err error) int {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return http.StatusGatewayTimeout
+	case errors.Is(err, context.Canceled):
+		return 499 // the browser went away; nobody reads this
+	case session.IsInputError(err):
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
 }
 
 func (s *Server) roadmaps(w http.ResponseWriter, r *http.Request) {
-	rms, err := s.V.ListIn("roadmaps")
+	rms, err := s.vault().ListIn("roadmaps")
 	if err != nil {
 		fail(w, 500, err.Error())
 		return
 	}
-	topics, err := s.V.List()
+	topics, err := s.vault().List()
 	if err != nil {
 		fail(w, 500, err.Error())
 		return
@@ -293,14 +367,14 @@ func (s *Server) roadmaps(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) daily(w http.ResponseWriter, r *http.Request) {
 	date := s.Now().Format("2006-01-02")
-	d, err := s.V.LoadFrom("daily", date)
+	d, err := s.vault().LoadFrom("daily", date)
 	if err != nil {
 		writeJSON(w, 200, map[string]any{"date": date})
 		return
 	}
 	slug := vault.Slugify(d.Meta.Title)
 	res := map[string]any{"date": date, "topic": d.Meta.Title, "slug": slug, "field": d.Meta.Field}
-	if n, err := s.V.Load(slug); err == nil {
+	if n, err := s.vault().Load(slug); err == nil {
 		res["status"], res["mastery"] = n.Meta.Status, n.Meta.Mastery
 	}
 	writeJSON(w, 200, res)
@@ -354,6 +428,47 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"files": ids})
+}
+
+// sessions lists the history, newest first.
+func (s *Server) sessions(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	runs := make([]*Run, 0, len(s.runs))
+	for _, run := range s.runs {
+		runs = append(runs, run)
+	}
+	s.mu.Unlock()
+	out := make([]summary, 0, len(runs))
+	for _, run := range runs {
+		out = append(out, run.summary())
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID > out[j].ID })
+	writeJSON(w, 200, out)
+}
+
+func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
+	run := s.run(r)
+	if run == nil {
+		fail(w, 404, "sesión desconocida")
+		return
+	}
+	if !run.isDone() {
+		fail(w, http.StatusConflict, "la sesión sigue en curso; cancélala primero")
+		return
+	}
+	s.mu.Lock()
+	delete(s.runs, run.ID)
+	if s.active == run {
+		s.active = nil
+	}
+	s.mu.Unlock()
+	if s.store != nil {
+		if err := s.store.remove(run.ID); err != nil {
+			fail(w, 500, err.Error())
+			return
+		}
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 
 func (s *Server) startRun(w http.ResponseWriter, r *http.Request) {
@@ -443,10 +558,27 @@ func (s *Server) input(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Text   string `json:"text"`
-		Finish bool   `json:"finish"`
+		chatBody
+		Finish bool `json:"finish"`
 	}
 	if !readJSON(w, r, &body) {
+		return
+	}
+	if run.waiting() == "chat" {
+		m, err := s.message(body.chatBody)
+		if err != nil {
+			fail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if body.empty() {
+			fail(w, http.StatusBadRequest, "escribe un mensaje")
+			return
+		}
+		if err := run.sendChat(m, body.shown()); err != nil {
+			fail(w, http.StatusConflict, err.Error())
+			return
+		}
+		writeJSON(w, 200, map[string]bool{"ok": true})
 		return
 	}
 	if err := run.send(body.Text, body.Finish); err != nil {
@@ -476,7 +608,7 @@ func (s *Server) interactive(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	html, err := s.V.LoadInteractive(slug)
+	html, err := s.vault().LoadInteractive(slug)
 	if err != nil {
 		http.NotFound(w, r)
 		return

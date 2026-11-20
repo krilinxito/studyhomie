@@ -5,10 +5,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -51,7 +54,9 @@ func newTestServer(t *testing.T, p provider.Provider) (*Server, *httptest.Server
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(config.Default(), v, p)
+	cfg := config.Default()
+	cfg.Depth, cfg.Iceberg = 0, false // guides without concept notes, so the scripted replies stay in order
+	s := New(cfg, v, p)
 	s.Now = func() time.Time { return time.Date(2026, 10, 27, 9, 0, 0, 0, time.UTC) }
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
@@ -384,17 +389,21 @@ func TestStudyRunOverSSE(t *testing.T) {
 	// wait for the question that comes after the guide
 	evs := readEvents(t, ts, id, 0, func(e []Event) bool { return has(e, "ask") != nil })
 	ask := has(evs, "ask")
-	if ask == nil || ask.Kind != "line" || !strings.Contains(ask.Label, "prueba") {
+	if ask == nil || ask.Kind != "line" || !strings.Contains(ask.Label, "Respondemos") {
 		t.Fatalf("expected the quiz question, got %+v", evs)
 	}
-	var out strings.Builder
+	// the browser shows the guide in its reading panel: the run announces it with a card
+	ready := false
 	for _, e := range evs {
-		if e.Type == "out" {
-			out.WriteString(e.Text)
+		if e.Type == "card" && e.Card.Kind == "guide" && e.Card.Slug == "bayes" {
+			ready = true
 		}
 	}
-	if !strings.Contains(out.String(), "La intuición es X.") {
-		t.Errorf("guide not streamed: %s", out.String())
+	if !ready {
+		t.Errorf("no guide card in %+v", evs)
+	}
+	if n, err := s.V.Load("bayes"); err != nil || !strings.Contains(n.Body, "La intuición es X.") {
+		t.Errorf("guide not saved: %v", err)
 	}
 
 	// a second run is refused while this one waits
@@ -454,6 +463,7 @@ func TestStartValidation(t *testing.T) {
 		{"cmd": "nope"},
 		{"cmd": "study"},
 		{"cmd": "quiz"},
+		{"cmd": "extend"},
 		{"cmd": "roadmap", "subject": "  "},
 		{"cmd": "material"},
 		{"cmd": "material", "files": []string{"../../etc/passwd"}},
@@ -535,5 +545,471 @@ func TestBlockInputCannotEndEarly(t *testing.T) {
 	n, _ = run.in.Read(buf)
 	if !strings.HasSuffix(string(buf[:n]), "listo\n/fin\n") {
 		t.Errorf("finish must send /fin: %q", buf[:n])
+	}
+}
+
+func guidedNote(t *testing.T, s *Server) {
+	t.Helper()
+	if err := s.V.Save(vault.Note{Slug: "cumpleanos", Meta: vault.Meta{Title: "Paradoja del cumpleaños", Status: "prepared"}, Body: "## Guía\n\nEn un grupo de 23 personas..."}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestExtendEndpointAnswersWithTheTextAndSavesIt(t *testing.T) {
+	s, ts := newTestServer(t, &scripted{replies: []string{"### Probabilidad\n\nContar casos."}})
+	guidedNote(t, s)
+	res, data := do(t, ts, "POST", "/api/notes/cumpleanos/extend", map[string]string{}, nil)
+	var out struct{ Text string }
+	json.Unmarshal(data, &out)
+	if res.StatusCode != 200 || !strings.Contains(out.Text, "Contar casos.") {
+		t.Fatalf("extend = %d %s", res.StatusCode, data)
+	}
+	n, _ := s.V.Load("cumpleanos")
+	if !strings.Contains(n.Body, "## Conceptos base") || n.Meta.Status != "prepared" {
+		t.Errorf("section not saved, or progress changed:\n%s\n%+v", n.Body, n.Meta)
+	}
+	if rows := s.runs; len(rows) != 0 {
+		t.Errorf("an instant action must not appear in the session history: %v", rows)
+	}
+}
+
+func TestDoubtEndpointSavesTheExchangeAndOffersConcepts(t *testing.T) {
+	reply := "Se multiplican porque piden las dos cosas, ver [[Probabilidad condicional]].\n\n```json\n" + `{"concepts":[{"title":"Probabilidad condicional","summary":"Cómo cambia una probabilidad al saber algo más."}]}` + "\n```"
+	s, ts := newTestServer(t, &scripted{replies: []string{reply}})
+	guidedNote(t, s)
+
+	res, data := do(t, ts, "POST", "/api/notes/cumpleanos/doubt", map[string]string{"question": "¿Por qué se multiplican?"}, nil)
+	var ans struct {
+		Entry    string
+		Concepts []struct{ Title, Slug string }
+	}
+	json.Unmarshal(data, &ans)
+	if res.StatusCode != 200 || !strings.HasPrefix(ans.Entry, "### ¿Por qué se multiplican?") || len(ans.Concepts) != 1 || ans.Concepts[0].Slug != "probabilidad-condicional" {
+		t.Fatalf("doubt = %d %s", res.StatusCode, data)
+	}
+	n, _ := s.V.Load("cumpleanos")
+	if !strings.Contains(n.Body, "## Dudas") || !strings.Contains(n.Body, "piden las dos cosas") {
+		t.Errorf("the exchange must be saved in the note:\n%s", n.Body)
+	}
+
+	// adding the concept creates an empty note, once
+	for i, want := range []bool{true, false} {
+		res, data = do(t, ts, "POST", "/api/notes/cumpleanos/concept", map[string]string{"title": "Probabilidad condicional", "summary": "x"}, nil)
+		var c struct {
+			Slug    string
+			Created bool
+		}
+		json.Unmarshal(data, &c)
+		if res.StatusCode != 200 || c.Slug != "probabilidad-condicional" || c.Created != want {
+			t.Fatalf("concept #%d = %d %s", i, res.StatusCode, data)
+		}
+	}
+	if c, err := s.V.Load("probabilidad-condicional"); err != nil || c.Meta.Status != "new" {
+		t.Errorf("the concept note was not created: %v %+v", err, c.Meta)
+	}
+}
+
+func TestShortActionsRejectBadRequests(t *testing.T) {
+	s, ts := newTestServer(t, &scripted{})
+	guidedNote(t, s)
+	s.V.Save(vault.Note{Slug: "sin-guia", Meta: vault.Meta{Title: "Sin guía"}, Body: ""})
+	cases := []struct {
+		path string
+		body map[string]string
+		want int
+	}{
+		{"/api/notes/cumpleanos/doubt", map[string]string{"question": "  "}, 400},
+		{"/api/notes/sin-guia/doubt", map[string]string{"question": "¿y esto?"}, 400},
+		{"/api/notes/sin-guia/extend", map[string]string{}, 400},
+		{"/api/notes/no-existe/extend", map[string]string{}, 400},
+		{"/api/notes/Mal Slug/extend", map[string]string{}, 400},
+		{"/api/notes/cumpleanos/concept", map[string]string{"title": " "}, 400},
+		{"/api/notes/no-existe/concept", map[string]string{"title": "Algo"}, 400},
+	}
+	for _, c := range cases {
+		if res, data := do(t, ts, "POST", strings.ReplaceAll(c.path, " ", "%20"), c.body, nil); res.StatusCode != c.want {
+			t.Errorf("%s %v = %d, want %d (%s)", c.path, c.body, res.StatusCode, c.want, data)
+		}
+	}
+	// nothing that changes a note may be done from another origin
+	res, _ := do(t, ts, "POST", "/api/notes/cumpleanos/doubt", map[string]string{"question": "x"}, func(r *http.Request) { r.Header.Set("Origin", "http://evil.example") })
+	if res.StatusCode != 403 {
+		t.Errorf("foreign origin = %d, want 403", res.StatusCode)
+	}
+}
+
+func TestCancellingAShortActionStopsTheModelAndSavesNothing(t *testing.T) {
+	hold := make(chan struct{}) // the model never answers
+	s, ts := newTestServer(t, &scripted{hold: hold, replies: []string{"nunca se usa"}})
+	guidedNote(t, s)
+	for _, path := range []string{"/api/notes/cumpleanos/extend", "/api/notes/cumpleanos/doubt"} {
+		ctx, cancel := context.WithCancel(context.Background())
+		body := strings.NewReader(`{"question":"¿por qué?"}`)
+		req, _ := http.NewRequestWithContext(ctx, "POST", ts.URL+path, body)
+		req.Header.Set("Origin", ts.URL)
+		req.Header.Set("Content-Type", "application/json")
+		done := make(chan error, 1)
+		go func() {
+			res, err := http.DefaultClient.Do(req)
+			if res != nil {
+				res.Body.Close()
+			}
+			done <- err
+		}()
+		time.Sleep(150 * time.Millisecond) // the request is now waiting for the model
+		cancel()
+		select {
+		case err := <-done:
+			if err == nil {
+				t.Errorf("%s: the request should have been cancelled", path)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatalf("%s: cancelling did not release the request", path)
+		}
+	}
+	time.Sleep(200 * time.Millisecond) // let the handlers notice and finish
+	n, _ := s.V.Load("cumpleanos")
+	if strings.Contains(n.Body, "## Dudas") || strings.Contains(n.Body, "## Conceptos base") {
+		t.Errorf("a cancelled action must not change the note:\n%s", n.Body)
+	}
+}
+
+func lastAsk(evs []Event) *Event {
+	for i := len(evs) - 1; i >= 0; i-- {
+		if evs[i].Type == "ask" {
+			return &evs[i]
+		}
+		if evs[i].Type == "in" {
+			return nil
+		}
+	}
+	return nil
+}
+
+func TestChatRunTalksParksAndResumes(t *testing.T) {
+	p := &scripted{replies: []string{"Hola, ¿qué estudiamos?", "La media es el promedio.", "Otro chat.", "Seguimos con lo de antes."}}
+	s, ts := newTestServer(t, p)
+	code, id := startRunHTTP(t, ts, map[string]any{"cmd": "chat", "chat": map[string]any{"text": "hola", "depth": 2}})
+	if code != 200 {
+		t.Fatalf("start chat: %d", code)
+	}
+	waitChat := func(id, n int) []Event {
+		return readEvents(t, ts, id, 0, func(e []Event) bool {
+			a := lastAsk(e)
+			c := 0
+			for _, x := range e {
+				if x.Type == "ask" && x.Kind == "chat" {
+					c++
+				}
+			}
+			return a != nil && a.Kind == "chat" && c >= n
+		})
+	}
+	evs := waitChat(id, 1)
+	if evs[0].Type != "in" || evs[0].Text != "hola" || !strings.Contains(outText(evs), "qué estudiamos") {
+		t.Fatalf("opening exchange: %+v", evs)
+	}
+	if res, body := do(t, ts, "POST", "/api/runs/"+itoa(id)+"/input", map[string]any{"text": "¿qué es la media?"}, nil); res.StatusCode != 200 {
+		t.Fatalf("chat input: %d %s", res.StatusCode, body)
+	}
+	evs = waitChat(id, 2)
+	if !strings.Contains(outText(evs), "promedio") {
+		t.Errorf("second answer missing: %s", outText(evs))
+	}
+
+	// a new chat parks the idle one, which ends without error
+	code, id2 := startRunHTTP(t, ts, map[string]any{"cmd": "chat", "chat": map[string]any{"text": "otra cosa"}})
+	if code != 200 {
+		t.Fatalf("second chat: %d", code)
+	}
+	old := readEvents(t, ts, id, 0, func(e []Event) bool { return has(e, "done") != nil })
+	if d := has(old, "done"); d.Error != "" {
+		t.Errorf("a parked chat must end cleanly: %q", d.Error)
+	}
+	waitChat(id2, 1)
+
+	// continuing the first chat brings its transcript along, under a new id
+	code, id3 := startRunHTTP(t, ts, map[string]any{"cmd": "chat", "resume": id, "chat": map[string]any{"text": "sigamos"}})
+	if code != 200 {
+		t.Fatalf("resume: %d", code)
+	}
+	evs = waitChat(id3, 3)
+	if evs[0].Text != "hola" || !strings.Contains(outText(evs), "Seguimos con lo de antes.") {
+		t.Errorf("resumed transcript: %+v", evs)
+	}
+	s.mu.Lock()
+	_, stillThere := s.runs[id]
+	s.mu.Unlock()
+	if stillThere {
+		t.Error("the continued chat should be replaced by the new one")
+	}
+}
+
+func TestNoteEndpointServesConcepts(t *testing.T) {
+	s, ts := newTestServer(t, &scripted{})
+	if err := s.V.Save(vault.Note{Slug: "bayes", Meta: vault.Meta{Title: "Bayes", Concepts: []string{"probabilidad"}, Base: []string{"probabilidad"}}, Body: "## Guía\n\nVer [[probabilidad]].\n"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.V.SaveConcept(vault.Concept{Slug: "probabilidad", Meta: vault.ConceptMeta{Title: "Probabilidad", Guides: []string{"bayes"}}, Body: "# Probabilidad\n"}); err != nil {
+		t.Fatal(err)
+	}
+	res, body := do(t, ts, "GET", "/api/notes/probabilidad", nil, nil)
+	if res.StatusCode != 200 || !strings.Contains(string(body), `"kind":"concept"`) || !strings.Contains(string(body), `"guides":[{"slug":"bayes","title":"Bayes"}]`) {
+		t.Errorf("concept note: %d %s", res.StatusCode, body)
+	}
+	_, body = do(t, ts, "GET", "/api/notes/bayes", nil, nil)
+	if !strings.Contains(string(body), `"concepts":[{"slug":"probabilidad","title":"Probabilidad","exists":true}]`) {
+		t.Errorf("guide note: %s", body)
+	}
+	_, body = do(t, ts, "GET", "/api/graph", nil, nil)
+	if !strings.Contains(string(body), `{"from":"probabilidad","to":"bayes","kind":"requires"}`) || !strings.Contains(string(body), `"kind":"concept"`) {
+		t.Errorf("graph: %s", body)
+	}
+}
+
+func TestExplainEndpointAndPendingInTheGraph(t *testing.T) {
+	s, ts := newTestServer(t, &scripted{replies: []string{"## En una frase\n\nAlgo."}})
+	if err := s.V.Save(vault.Note{Slug: "bayes", Meta: vault.Meta{Title: "Bayes",
+		Pending: []vault.PendingConcept{{ID: "fraccion", Title: "Fracción", Level: 2}}}, Body: "## Guía\n\nVer [[fraccion]].\n"}); err != nil {
+		t.Fatal(err)
+	}
+	_, body := do(t, ts, "GET", "/api/graph", nil, nil)
+	if !strings.Contains(string(body), `"id":"fraccion","label":"Fracción","kind":"pending"`) {
+		t.Errorf("graph without the pending concept: %s", body)
+	}
+	res, body := do(t, ts, "POST", "/api/notes/bayes/explain", map[string]string{"ref": "fraccion"}, nil)
+	if res.StatusCode != 200 || !strings.Contains(string(body), `"slug":"fraccion"`) {
+		t.Fatalf("explain: %d %s", res.StatusCode, body)
+	}
+	if !s.V.ConceptExists("fraccion") {
+		t.Error("the concept note was not written")
+	}
+	_, body = do(t, ts, "GET", "/api/graph", nil, nil)
+	if strings.Contains(string(body), `"kind":"pending"`) || !strings.Contains(string(body), `"id":"fraccion","label":"Fracción","kind":"concept"`) {
+		t.Errorf("explained concept should be a concept now: %s", body)
+	}
+}
+
+func TestSettingsSwitchTheBackend(t *testing.T) {
+	ai := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/models") {
+			fmt.Fprint(w, `{"data":[{"id":"qwen3:14b"}]}`)
+			return
+		}
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"listo\"}}]}\n\ndata: [DONE]\n\n")
+	}))
+	defer ai.Close()
+	s, ts := newTestServer(t, &scripted{})
+	s.ConfigPath = filepath.Join(t.TempDir(), "studyhomie.toml")
+
+	_, body := do(t, ts, "GET", "/api/settings", nil, nil)
+	if !strings.Contains(string(body), `"id":"ollama"`) || !strings.Contains(string(body), `"id":"codex"`) {
+		t.Fatalf("settings: %s", body)
+	}
+	choice := map[string]string{"provider": "ollama", "model": "qwen3:14b", "baseURL": ai.URL + "/v1"}
+	res, body := do(t, ts, "POST", "/api/settings/models", choice, nil)
+	if res.StatusCode != 200 || !strings.Contains(string(body), "qwen3:14b") {
+		t.Errorf("models: %d %s", res.StatusCode, body)
+	}
+	res, body = do(t, ts, "POST", "/api/settings/test", choice, nil)
+	if res.StatusCode != 200 || !strings.Contains(string(body), `"reply":"listo"`) {
+		t.Errorf("test: %d %s", res.StatusCode, body)
+	}
+	res, body = do(t, ts, "POST", "/api/settings", choice, nil)
+	if res.StatusCode != 200 {
+		t.Fatalf("save: %d %s", res.StatusCode, body)
+	}
+	_, body = do(t, ts, "GET", "/api/state", nil, nil)
+	if !strings.Contains(string(body), `"provider":"ollama"`) {
+		t.Errorf("the app must use the new backend at once: %s", body)
+	}
+	saved, _ := os.ReadFile(s.ConfigPath)
+	if !strings.Contains(string(saved), `provider = "ollama"`) || !strings.Contains(string(saved), `model = "qwen3:14b"`) || !strings.Contains(string(saved), "base_url") {
+		t.Errorf("config file:\n%s", saved)
+	}
+	if res, _ := do(t, ts, "POST", "/api/settings", map[string]string{"provider": "nope"}, nil); res.StatusCode != 400 {
+		t.Errorf("unknown provider must be refused, got %d", res.StatusCode)
+	}
+}
+
+func TestApuntesAndAttachments(t *testing.T) {
+	s, ts := newTestServer(t, &scripted{})
+	if err := s.V.Save(vault.Note{Slug: "integral", Meta: vault.Meta{Title: "Integral"}, Body: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if res, _ := do(t, ts, "PUT", "/api/apuntes/no-existe", map[string]string{"body": "hola"}, nil); res.StatusCode != 404 {
+		t.Errorf("notes on a missing note = %d", res.StatusCode)
+	}
+	if res, body := do(t, ts, "PUT", "/api/apuntes/integral", map[string]string{"body": "Mi resumen ![[foto.png]]"}, nil); res.StatusCode != 200 {
+		t.Fatalf("save = %d %s", res.StatusCode, body)
+	}
+	_, body := do(t, ts, "GET", "/api/apuntes/integral", nil, nil)
+	if !strings.Contains(string(body), "Mi resumen") {
+		t.Errorf("load = %s", body)
+	}
+	_, body = do(t, ts, "GET", "/api/notes/integral", nil, nil)
+	if !strings.Contains(string(body), `"apunte":true`) {
+		t.Errorf("the note must say it has notes: %s", body)
+	}
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("files", "pizarra.png")
+	io.WriteString(fw, "\x89PNG fake")
+	fw, _ = mw.CreateFormFile("files", "ejercicios.html")
+	io.WriteString(fw, "<script>alert(1)</script>")
+	mw.Close()
+	req, _ := http.NewRequest("POST", ts.URL+"/api/adjuntos", &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("Origin", ts.URL)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var up struct {
+		Files []struct {
+			Name  string
+			Image bool
+		}
+	}
+	json.NewDecoder(res.Body).Decode(&up)
+	res.Body.Close()
+	if len(up.Files) != 2 || up.Files[0].Name != "pizarra.png" || !up.Files[0].Image || up.Files[1].Image {
+		t.Fatalf("attach = %+v", up)
+	}
+	res, _ = do(t, ts, "GET", "/api/adjuntos/pizarra.png", nil, nil)
+	if res.Header.Get("Content-Type") != "image/png" {
+		t.Errorf("image type = %q", res.Header.Get("Content-Type"))
+	}
+	res, _ = do(t, ts, "GET", "/api/adjuntos/ejercicios.html", nil, nil)
+	if !strings.HasPrefix(res.Header.Get("Content-Disposition"), "attachment") || strings.Contains(res.Header.Get("Content-Type"), "html") {
+		t.Errorf("other files must download: %v", res.Header)
+	}
+	if res, _ := do(t, ts, "GET", "/api/adjuntos/..%2F..%2Fstudyhomie.toml", nil, nil); res.StatusCode == 200 {
+		t.Error("path escape served")
+	}
+}
+
+func TestVaultsSwitchAndManage(t *testing.T) {
+	proposal := "```json\n{\"field\":\"Historia\",\"topic\":\"Tema\",\"hook\":\"h\"}\n```"
+	s, ts := newTestServer(t, &scripted{replies: []string{proposal, proposal, proposal, proposal, proposal}})
+	first := s.V.Root
+	s.ConfigPath = filepath.Join(t.TempDir(), "studyhomie.toml")
+	s.Cfg.Vault = first
+	if err := s.V.Save(vault.Note{Slug: "fourier", Meta: vault.Meta{Title: "Fourier"}, Body: "La fase importa."}); err != nil {
+		t.Fatal(err)
+	}
+	// a chat in the first vault
+	code, id := startRunHTTP(t, ts, map[string]any{"cmd": "daily"})
+	if code != 200 {
+		t.Fatalf("start = %d", code)
+	}
+	readEvents(t, ts, id, 0, func(e []Event) bool { return has(e, "ask") != nil })
+
+	second := filepath.Join(t.TempDir(), "Cálculo")
+	if res, body := do(t, ts, "POST", "/api/vaults", map[string]string{"path": "relativo"}, nil); res.StatusCode != 400 {
+		t.Errorf("relative path = %d %s", res.StatusCode, body)
+	}
+	// busy: the daily run is waiting for a yes/no, not for a chat message
+	if res, _ := do(t, ts, "POST", "/api/vaults", map[string]string{"path": second}, nil); res.StatusCode != 409 {
+		t.Errorf("switch while a flow waits for an answer = %d", res.StatusCode)
+	}
+	do(t, ts, "POST", fmt.Sprintf("/api/runs/%d/cancel", id), map[string]any{}, nil)
+	readEvents(t, ts, id, 0, func(e []Event) bool { return has(e, "done") != nil })
+	if res, body := do(t, ts, "POST", "/api/vaults", map[string]string{"path": second}, nil); res.StatusCode != 200 {
+		t.Fatalf("add = %d %s", res.StatusCode, body)
+	}
+	if _, err := os.Stat(filepath.Join(second, vault.GuidesDir)); err != nil {
+		t.Error("a new vault gets its folders")
+	}
+	_, body := do(t, ts, "GET", "/api/sessions", nil, nil)
+	if string(body) != "[]\n" && string(body) != "[]" {
+		t.Errorf("the new vault has its own chats: %s", body)
+	}
+	_, body = do(t, ts, "GET", "/api/graph", nil, nil)
+	if strings.Contains(string(body), "fourier") {
+		t.Errorf("the new vault must not show the old notes: %s", body)
+	}
+	saved, _ := os.ReadFile(s.ConfigPath)
+	if !strings.Contains(string(saved), "Cálculo") || !strings.Contains(string(saved), "vaults") {
+		t.Errorf("config: %s", saved)
+	}
+	var vl struct {
+		Vaults []struct {
+			Path    string
+			Current bool
+		}
+	}
+	_, body = do(t, ts, "GET", "/api/vaults", nil, nil)
+	json.Unmarshal(body, &vl)
+	if len(vl.Vaults) != 2 || !vl.Vaults[0].Current {
+		t.Fatalf("vault list: %s", body)
+	}
+	if res, _ := do(t, ts, "POST", "/api/vaults/forget", map[string]string{"path": second}, nil); res.StatusCode != 400 {
+		t.Error("the vault in use cannot be forgotten")
+	}
+	// back to the first one: its notes and its chat come back
+	if res, body := do(t, ts, "POST", "/api/vaults/use", map[string]string{"path": first}, nil); res.StatusCode != 200 {
+		t.Fatalf("use = %d %s", res.StatusCode, body)
+	}
+	_, body = do(t, ts, "GET", "/api/sessions", nil, nil)
+	if !strings.Contains(string(body), "daily") {
+		t.Errorf("the first vault's chats must come back: %s", body)
+	}
+	if res, _ := do(t, ts, "POST", "/api/vaults/use", map[string]string{"path": "C:/nunca/agregado"}, nil); res.StatusCode != 404 {
+		t.Error("unknown vault accepted")
+	}
+	if res, _ := do(t, ts, "POST", "/api/vaults/forget", map[string]string{"path": second}, nil); res.StatusCode != 200 {
+		t.Error("forget")
+	}
+	if _, err := os.Stat(second); err != nil {
+		t.Error("forgetting a vault must never delete it")
+	}
+
+	// browse, search, edit
+	_, body = do(t, ts, "GET", "/api/vault/files", nil, nil)
+	if !strings.Contains(string(body), `"slug":"fourier"`) {
+		t.Errorf("files: %s", body)
+	}
+	_, body = do(t, ts, "GET", "/api/vault/search?q=FASE", nil, nil)
+	if !strings.Contains(string(body), "La fase importa") {
+		t.Errorf("search: %s", body)
+	}
+	var raw struct {
+		Text    string
+		Updated time.Time
+	}
+	_, body = do(t, ts, "GET", "/api/vault/raw/guias/fourier", nil, nil)
+	json.Unmarshal(body, &raw)
+	if !strings.Contains(raw.Text, "title: Fourier") {
+		t.Fatalf("raw: %s", body)
+	}
+	edited := strings.Replace(raw.Text, "La fase importa.", "La fase importa mucho.", 1)
+	if res, body := do(t, ts, "PUT", "/api/vault/raw/guias/fourier", map[string]any{"text": edited, "since": raw.Updated}, nil); res.StatusCode != 200 {
+		t.Fatalf("write = %d %s", res.StatusCode, body)
+	}
+	if n, _ := s.vault().Load("fourier"); !strings.Contains(n.Body, "mucho") {
+		t.Errorf("edit not saved: %q", n.Body)
+	}
+	if res, _ := do(t, ts, "PUT", "/api/vault/raw/guias/fourier", map[string]any{"text": edited, "since": raw.Updated.Add(-time.Hour)}, nil); res.StatusCode != 409 {
+		t.Errorf("a stale edit must be refused, got %d", res.StatusCode)
+	}
+
+	// the desktop: the folder picker and opening outside the app
+	s.PickFolder = func(context.Context) (string, error) { return `D:\Uni`, nil }
+	_, body = do(t, ts, "POST", "/api/vaults/pick", map[string]any{}, nil)
+	var picked struct{ Path string }
+	if json.Unmarshal(body, &picked); picked.Path != `D:\Uni` {
+		t.Errorf("pick: %s", body)
+	}
+	var opened []string
+	s.Open = func(kind, target string) error { opened = append(opened, kind+" "+target); return nil }
+	do(t, ts, "POST", "/api/vault/open", map[string]string{"app": "obsidian", "dir": "guias", "slug": "fourier"}, nil)
+	do(t, ts, "POST", "/api/vault/open", map[string]string{"app": "folder"}, nil)
+	if res, _ := do(t, ts, "POST", "/api/vault/open", map[string]string{"app": "folder", "dir": "..", "slug": "x"}, nil); res.StatusCode != 404 {
+		t.Error("open outside the vault accepted")
+	}
+	if len(opened) != 2 || !strings.HasPrefix(opened[0], "url obsidian://open?path=") || !strings.Contains(opened[0], "fourier.md") || !strings.HasPrefix(opened[1], "folder ") {
+		t.Errorf("opened: %q", opened)
 	}
 }

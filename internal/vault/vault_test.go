@@ -1,6 +1,8 @@
 package vault
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -110,5 +112,75 @@ func TestAppendSectionReplaces(t *testing.T) {
 	}
 	if !strings.Contains(n.Body, "## Feynman") || !strings.Contains(n.Body, "Intro.") {
 		t.Errorf("other content lost:\n%s", n.Body)
+	}
+}
+
+func TestSectionAndPlaceSection(t *testing.T) {
+	body := "## Guía\n\nTexto de la guía.\n\n## Recursos\n\n- uno\n\n## Prueba\n\nPuntaje."
+	if got := Section(body, "Guía"); got != "Texto de la guía." {
+		t.Errorf("Section = %q", got)
+	}
+	if Section(body, "Feynman") != "" {
+		t.Error("a missing section must be empty")
+	}
+
+	placed := PlaceSection(body, "Conceptos base", "### Probabilidad\n\nBase.", "Guía")
+	guide, extra, res := strings.Index(placed, "## Guía"), strings.Index(placed, "## Conceptos base"), strings.Index(placed, "## Recursos")
+	if guide >= extra || extra >= res || !strings.Contains(placed, "## Prueba") || !strings.Contains(placed, "- uno") {
+		t.Errorf("section not placed after the guide:\n%s", placed)
+	}
+	again := PlaceSection(placed, "Conceptos base", "Nuevo.", "Guía")
+	if strings.Count(again, "## Conceptos base") != 1 || strings.Contains(again, "Probabilidad") || strings.Index(again, "## Conceptos base") != extra {
+		t.Errorf("an existing section must be replaced where it is:\n%s", again)
+	}
+	if got := PlaceSection("Intro.", "X", "y", "Guía"); !strings.HasSuffix(got, "## X\n\ny\n") {
+		t.Errorf("without the anchor section it is appended:\n%s", got)
+	}
+	// the model cannot open sections of its own
+	if got := PlaceSection(body, "X", "## Colado\ntexto", "Guía"); strings.Contains(got, "\n## Colado") {
+		t.Errorf("heading leaked:\n%s", got)
+	}
+}
+
+func TestOpenMovesTopicsToGuides(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "topics"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "topics", "bayes.md"), []byte("---\ntitle: Bayes\n---\n\nhola\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	v, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := v.Load("bayes")
+	if err != nil || n.Meta.Title != "Bayes" {
+		t.Fatalf("guide not moved: %v %+v", err, n)
+	}
+	if _, err := os.Stat(filepath.Join(root, "topics")); !os.IsNotExist(err) {
+		t.Error("the old folder should be gone once empty")
+	}
+}
+
+func TestConceptRoundTrip(t *testing.T) {
+	v, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := Concept{Slug: "media", Meta: ConceptMeta{Title: "Media", Category: "estadistica", Requires: []string{"suma"}}, Body: "# Media\n\nVer [[suma|la suma]].\n"}
+	if err := v.SaveConcept(c); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(v.Root, ConceptsDir, "media.md"))
+	if !strings.Contains(string(data), "titulo: Media") || !strings.Contains(string(data), "requiere:") {
+		t.Errorf("frontmatter must use the vault's Spanish keys:\n%s", data)
+	}
+	got, err := v.LoadConcept("media")
+	if err != nil || got.Meta.Category != "estadistica" || got.Links()[0] != "suma" {
+		t.Errorf("round trip: %v %+v", err, got)
+	}
+	if back, _ := v.Backlinks("suma"); len(back) != 1 || back[0] != "media" {
+		t.Errorf("backlinks from concepts: %v", back)
 	}
 }

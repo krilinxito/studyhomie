@@ -95,6 +95,9 @@ func newSession(t *testing.T, f *fake, input string) (*Session, *bytes.Buffer) {
 	var out bytes.Buffer
 	cfg := config.Default()
 	cfg.Language = "español"
+	cfg.Depth = 0 // a guide without concept notes unless a test asks for them
+	cfg.Parallel = 1
+	cfg.Iceberg = false
 	return &Session{
 		P: f, V: v, Cfg: cfg, In: bufio.NewReader(strings.NewReader(input)), Out: &out,
 		CheckLinks: func(_ context.Context, urls []string) map[string]bool {

@@ -35,11 +35,15 @@ func allFields(interests []string) []string {
 // Daily proposes today's challenge topic and studies it. field restricts the draw
 // to one knowledge field (any text, not only the configured ones) or is AllFields;
 // empty draws from the configured interests. Running it again the same day resumes
-// today's topic instead of drawing a new one.
+// today's topic instead of drawing a new one, unless a different theme is asked for:
+// then today's challenge is drawn again from that theme.
 func (s *Session) Daily(ctx context.Context, field string) error {
 	date := s.now().Format("2006-01-02")
 	if n, err := s.V.LoadFrom("daily", date); err == nil {
-		return s.resumeDaily(ctx, n)
+		f := strings.TrimSpace(field)
+		if f == "" || strings.EqualFold(f, n.Meta.Field) {
+			return s.resumeDaily(ctx, n)
+		}
 	}
 
 	past, err := s.V.ListIn("daily")

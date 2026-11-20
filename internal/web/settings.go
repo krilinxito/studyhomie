@@ -1,0 +1,130 @@
+package web
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/krilinxito/studyhomie/internal/config"
+	"github.com/krilinxito/studyhomie/internal/provider"
+	"github.com/krilinxito/studyhomie/internal/providers"
+)
+
+// backend returns the provider and config in use. Settings can swap them while the app runs;
+// a session already running keeps the ones it started with.
+func (s *Server) backend() (provider.Provider, config.Config, string) {
+	s.pmu.RLock()
+	defer s.pmu.RUnlock()
+	return s.P, s.Cfg, s.Warning
+}
+
+// aiSettings is the part of the config the settings page edits.
+type aiSettings struct {
+	Provider   string `json:"provider"`
+	Model      string `json:"model"`
+	QuickModel string `json:"quickModel"`
+	BaseURL    string `json:"baseURL"`
+}
+
+func (a aiSettings) apply(cfg config.Config) config.Config {
+	cfg.Provider = strings.TrimSpace(a.Provider)
+	cfg.Model = strings.TrimSpace(a.Model)
+	cfg.QuickModel = strings.TrimSpace(a.QuickModel)
+	cfg.BaseURL = strings.TrimSpace(a.BaseURL)
+	return cfg
+}
+
+func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
+	_, cfg, warning := s.backend()
+	writeJSON(w, 200, map[string]any{
+		"current":    aiSettings{Provider: cfg.Provider, Model: cfg.Model, QuickModel: cfg.QuickModel, BaseURL: cfg.BaseURL},
+		"providers":  providers.Statuses(r.Context(), cfg),
+		"warning":    warning,
+		"configPath": s.ConfigPath,
+	})
+}
+
+// saveSettings switches the AI backend, and writes the choice to studyhomie.toml.
+func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
+	var body aiSettings
+	if !readJSON(w, r, &body) {
+		return
+	}
+	if _, ok := providers.Find(body.Provider); !ok {
+		fail(w, 400, "proveedor desconocido")
+		return
+	}
+	_, cur, _ := s.backend()
+	cfg := body.apply(cur)
+	p, err := providers.New(cfg)
+	if err != nil {
+		fail(w, 400, err.Error())
+		return
+	}
+	if s.ConfigPath != "" {
+		if err := config.Write(s.ConfigPath, cfg); err != nil {
+			fail(w, 500, "no pude guardar "+s.ConfigPath+": "+err.Error())
+			return
+		}
+	}
+	warning := providers.Check(cfg)
+	s.pmu.Lock()
+	s.P, s.Cfg, s.Warning = p, cfg, warning
+	s.pmu.Unlock()
+	writeJSON(w, 200, map[string]any{"ok": true, "provider": p.Name(), "warning": warning})
+}
+
+// listModels asks a backend which models it offers.
+func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
+	var body aiSettings
+	if !readJSON(w, r, &body) {
+		return
+	}
+	_, cur, _ := s.backend()
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	models, err := providers.Models(ctx, body.apply(cur))
+	if err != nil {
+		fail(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	if models == nil {
+		models = []string{}
+	}
+	writeJSON(w, 200, map[string]any{"models": models})
+}
+
+// testSettings sends one tiny message with the given settings, without saving them.
+func (s *Server) testSettings(w http.ResponseWriter, r *http.Request) {
+	var body aiSettings
+	if !readJSON(w, r, &body) {
+		return
+	}
+	_, cur, _ := s.backend()
+	cfg := body.apply(cur)
+	if msg := providers.Check(cfg); msg != "" {
+		fail(w, 400, msg)
+		return
+	}
+	p, err := providers.New(cfg)
+	if err != nil {
+		fail(w, 400, err.Error())
+		return
+	}
+	drain(r)
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+	start := time.Now()
+	resp, err := p.Complete(ctx, provider.Request{Prompt: "Responde solo con la palabra: listo", Model: cfg.Model}, nil)
+	if err != nil {
+		status := http.StatusBadGateway
+		if errors.Is(err, context.DeadlineExceeded) {
+			status = http.StatusGatewayTimeout
+		}
+		fail(w, status, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "reply": strings.TrimSpace(resp.Text), "ms": time.Since(start).Milliseconds()})
+}

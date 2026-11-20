@@ -3,132 +3,135 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
   <title>StudyHomie</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231f7a6d'/%3E%3Ccircle cx='10' cy='11' r='3' fill='white'/%3E%3Ccircle cx='23' cy='10' r='3' fill='white'/%3E%3Ccircle cx='16' cy='23' r='3' fill='white'/%3E%3Cpath d='M10 11 23 10 16 23Z' fill='none' stroke='white' stroke-width='1.6'/%3E%3C/svg%3E">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="stylesheet" href="vendor/katex/katex.min.css">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header class="top">
-    <div class="brand">
-      <svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8"/><circle cx="10" cy="11" r="3"/><circle cx="23" cy="10" r="3"/><circle cx="16" cy="23" r="3"/><path d="M10 11 23 10 16 23Z"/></svg>
+    <a class="brand" href="#" id="brand" aria-label="StudyHomie, nuevo chat">
+      <svg class="logo" viewBox="0 0 64 64" aria-hidden="true">
+        <path class="logo-tip" d="M17 27 L25 15 L30 19 L37 7 L47 27 Z"/>
+        <path class="logo-facet" d="M37 7 L47 27 H39.5 Z"/>
+        <path class="logo-wave" d="M6 33 q4.5 -4 9 0 t9 0 t9 0 t9 0 t9 0 t7 0"/>
+        <path class="logo-deep" d="M13 38 H51 L58 47 L45 58 L22 60 L7 48 Z"/>
+      </svg>
       <span>StudyHomie</span>
+    </a>
+    <div class="top-meta">
+      <span class="dot" id="session-dot" hidden title="Hay algo en curso"></span>
+      <span class="badge" id="provider-badge" title="Proveedor de IA"></span>
+      <button class="icon-btn" id="btn-panel" type="button" aria-pressed="false" title="Abrir el panel de estudio (guía, conceptos, mapa, apuntes)"><svg class="ic"><use href="icons.svg#i-panel-right-open"/></svg></button>
+      <div class="menu">
+        <button class="icon-btn" id="btn-layout" type="button" aria-haspopup="true" aria-expanded="false" title="Paneles y layout"><svg class="ic"><use href="icons.svg#i-layout-dashboard"/></svg></button>
+        <div class="menu-pop" id="layout-menu" hidden></div>
+      </div>
+      <button class="icon-btn" id="btn-vault" type="button" title="Vault: tus notas y tus vaults"><svg class="ic"><use href="icons.svg#i-library-big"/></svg></button>
+      <button class="icon-btn" id="btn-settings" type="button" title="Ajustes: elegir la IA"><svg class="ic"><use href="icons.svg#i-settings"/></svg></button>
+      <button class="icon-btn" id="btn-theme" type="button" title="Cambiar tema"><svg class="ic"><use href="icons.svg#i-moon"/></svg></button>
     </div>
-    <nav class="tabs" role="tablist" aria-label="Vistas">
-      <button role="tab" id="tab-map" aria-selected="true" data-view="map">Mapa</button>
-      <button role="tab" id="tab-session" aria-selected="false" data-view="session">Sesión <span class="dot" id="session-dot" hidden></span></button>
-    </nav>
-    <div class="top-meta"><span class="badge" id="provider-badge" title="Proveedor de IA"></span></div>
   </header>
 
   <div class="banner" id="banner" role="alert" hidden></div>
 
-  <div class="layout">
-    <aside class="side" aria-label="Acciones">
-      <section class="card" id="daily-card" aria-labelledby="daily-h">
-        <h2 id="daily-h">Reto de hoy</h2>
-        <div id="daily-body"></div>
-      </section>
+  <main class="dock" id="dock"></main>
 
-      <section class="card" aria-labelledby="start-h">
-        <h2 id="start-h">Empezar a estudiar</h2>
-        <div class="seg" role="tablist" aria-label="Tipo de inicio">
-          <button type="button" role="tab" aria-selected="true" data-form="topic">Un tema</button>
-          <button type="button" role="tab" aria-selected="false" data-form="roadmap">Roadmap</button>
-          <button type="button" role="tab" aria-selected="false" data-form="material">Material</button>
-        </div>
-        <form class="start-form" id="form-topic">
-          <label for="in-topic">¿Qué quieres entender?</label>
-          <input id="in-topic" required maxlength="120" placeholder="Teorema de Bayes" autocomplete="off">
-          <button class="btn primary" type="submit">Preparar y estudiar</button>
-        </form>
-        <form class="start-form" id="form-roadmap" hidden>
-          <label for="in-subject">Materia a aprender</label>
-          <input id="in-subject" required maxlength="120" placeholder="Teoría de juegos" autocomplete="off">
-          <p class="hint">Te haré unas preguntas sobre tu objetivo y nivel, y trazaré el grafo de temas.</p>
-          <button class="btn primary" type="submit">Trazar roadmap</button>
-        </form>
-        <form class="start-form" id="form-material" hidden>
-          <label for="in-files">Tus apuntes</label>
-          <input id="in-files" type="file" multiple required accept=".txt,.md,.markdown,.pdf,.pptx,.docx,.png,.jpg,.jpeg,.webp,.gif">
-          <p class="hint">PDF con texto, PPTX, DOCX, texto o imágenes. Armo un roadmap a partir de ellos.</p>
-          <button class="btn primary" type="submit">Subir y planificar</button>
-        </form>
-      </section>
+  <!-- the panels; the dock mounts each of them -->
+  <div id="panes" hidden>
+    <section class="pane sidebar" data-pane="chats" aria-label="Chats">
+      <button class="btn primary new-chat" id="btn-new" type="button"><svg class="ic"><use href="icons.svg#i-square-pen"/></svg>Nuevo chat</button>
+      <label class="sr-only" for="chat-search">Buscar chats</label>
+      <input id="chat-search" type="search" placeholder="Buscar chats…" autocomplete="off">
+      <ul class="chat-list" id="chat-list"></ul>
+    </section>
 
-      <section class="card" aria-labelledby="rm-h">
-        <h2 id="rm-h">Mis roadmaps</h2>
-        <ul class="rm-list" id="roadmaps"></ul>
-      </section>
-    </aside>
-
-    <main>
-      <section id="view-map">
-        <div class="toolbar">
-          <label class="sr-only" for="search">Buscar tema</label>
-          <input id="search" type="search" placeholder="Buscar tema…" autocomplete="off">
-          <label class="sr-only" for="filter-rm">Filtrar por roadmap</label>
-          <select id="filter-rm"><option value="">Todos los temas</option></select>
-          <ul class="legend" aria-label="Leyenda">
-            <li><i class="sw s-new"></i>Nuevo</li>
-            <li><i class="sw s-prepared"></i>Guía lista</li>
-            <li><i class="sw s-tested"></i>Probado</li>
-            <li><i class="sw s-explained"></i>Explicado</li>
-          </ul>
-        </div>
-        <div class="map-wrap">
-          <div id="cy" role="img" aria-label="Grafo de temas y sus conexiones"></div>
-          <div class="empty" id="map-empty" hidden>
-            <h3>Tu vault está vacío</h3>
-            <p>Empieza con un tema suelto, traza un roadmap o sube tus apuntes. Cada tema que estudies aparecerá aquí, conectado con los demás.</p>
-          </div>
-          <article class="panel" id="note-panel" hidden aria-label="Detalle del tema"></article>
-        </div>
-      </section>
-
-      <section id="view-session" hidden>
-        <div class="session-head">
-          <h2 id="session-title">Sesión</h2>
-          <div class="session-actions">
-            <button class="btn" id="btn-cancel" type="button" hidden>Cancelar</button>
-            <button class="btn" id="btn-back" type="button" hidden>Volver al mapa</button>
-          </div>
-        </div>
-        <ol class="stepper" id="stepper" aria-label="Fases del tema" hidden>
-          <li data-state="todo"><span class="step-n">1</span>Guía</li>
-          <li data-state="todo"><span class="step-n">2</span>Prueba</li>
-          <li data-state="todo"><span class="step-n">3</span>Feynman</li>
-        </ol>
-        <div id="transcript" class="transcript" aria-live="polite"></div>
-        <div class="working" id="working" hidden><span class="pulse"></span><span id="working-text">Pensando…</span></div>
-        <form class="composer" id="composer" hidden>
-          <div class="composer-label" id="composer-label" hidden></div>
-          <div class="quick" id="quick" hidden></div>
-          <div class="freeform" id="freeform">
-            <label class="sr-only" for="reply">Tu respuesta</label>
-            <textarea id="reply" rows="1" placeholder="Escribe tu respuesta"></textarea>
+    <section class="pane chat" data-pane="chat" aria-label="Chat">
+      <div class="chat-head">
+        <h2 id="chat-title">Nuevo chat</h2>
+        <button class="btn small red" id="btn-cancel" type="button" hidden>Detener</button>
+      </div>
+      <div id="transcript" class="transcript" aria-live="polite"></div>
+      <div class="working" id="working" hidden><span class="pulse"></span><span id="working-text">Pensando…</span></div>
+      <form class="composer" id="composer">
+        <div class="composer-label" id="composer-label" hidden></div>
+        <div class="quick" id="quick" hidden></div>
+        <div class="freeform" id="freeform">
+          <div class="composer-box">
+            <ul class="staged" id="staged" aria-label="Adjuntos del mensaje" hidden></ul>
+            <label class="sr-only" for="reply">Tu mensaje</label>
+            <textarea id="reply" rows="2" placeholder="Pregunta lo que quieras, o pide una guía"></textarea>
             <div class="composer-row">
-              <span class="hint" id="composer-hint"></span>
-              <button class="btn" type="button" id="btn-finish" hidden>Terminar y evaluar</button>
-              <button class="btn primary" type="submit" id="btn-send">Enviar</button>
+              <div class="depth" id="depth" role="radiogroup" aria-label="Niveles de conceptos que se escriben ahora">
+                <span class="depth-label" title="Lo que quede más abajo se mapea igual y se explica cuando lo pidas">Escribir ahora</span>
+                <span class="depth-line" id="depth-stations"></span>
+                <span class="depth-text" id="depth-text"></span>
+              </div>
+              <input type="file" id="attach-input" multiple hidden accept=".txt,.md,.markdown,.pdf,.pptx,.docx,.csv,.json,.png,.jpg,.jpeg,.webp,.gif">
+              <input type="file" id="material-input" multiple hidden accept=".txt,.md,.markdown,.pdf,.pptx,.docx,.png,.jpg,.jpeg,.webp,.gif">
+              <button class="icon-btn" type="button" id="btn-attach" title="Adjuntar una imagen o un archivo a tu mensaje (también puedes pegarlo o arrastrarlo)" aria-label="Adjuntar"><svg class="ic"><use href="icons.svg#i-paperclip"/></svg></button>
+              <button class="btn small" type="button" id="btn-finish" hidden>Terminar y evaluar</button>
+              <button class="send-btn" type="submit" id="btn-send" aria-label="Enviar"><svg class="ic"><use href="icons.svg#i-send"/></svg></button>
             </div>
           </div>
-        </form>
-      </section>
-    </main>
+          <span class="hint" id="composer-hint"></span>
+        </div>
+      </form>
+    </section>
+
+    <section class="pane" data-pane="guide" id="p-guide" aria-label="Guía"><div class="reader" id="reader"></div></section>
+    <section class="pane" data-pane="concepts" id="p-concepts" aria-label="Conceptos"></section>
+    <section class="pane map-view" data-pane="map" id="p-map" aria-label="Mapa">
+      <div class="toolbar">
+        <label class="sr-only" for="search">Buscar en el mapa</label>
+        <input id="search" type="search" placeholder="Buscar…" autocomplete="off">
+        <div class="map-scope" id="map-scope" role="group" aria-label="Qué mapa ver">
+          <button type="button" data-scope="chat">Este chat</button>
+          <button type="button" data-scope="all">Todos tus chats</button>
+        </div>
+        <div class="line-chips" id="filter-rm" role="group" aria-label="Filtrar por guía"></div>
+      </div>
+      <div class="map-wrap">
+        <div id="cy" role="img" aria-label="Mapa: cada guía con los conceptos en que se apoya"></div>
+        <div class="empty" id="map-empty" hidden>
+          <h3 id="map-empty-title">Tu mapa está vacío</h3>
+          <p id="map-empty-text">Pide una guía en el chat. Cada guía y sus conceptos aparecerán aquí, conectados.</p>
+          <button class="btn small" type="button" id="map-see-all" hidden>Ver el mapa de todos tus chats</button>
+        </div>
+      </div>
+      <ul class="legend" aria-label="Leyenda">
+        <li><i class="st st-new"></i>Por descubrir</li>
+        <li><i class="st st-prepared"></i>Guía lista</li>
+        <li><i class="st st-tested"></i>Comprobado</li>
+        <li><i class="st st-explained"></i>Explicado</li>
+        <li><i class="st st-concept"></i>Concepto</li>
+        <li><i class="st st-pending"></i>Por explicar</li>
+      </ul>
+    </section>
+    <section class="pane" data-pane="practice" id="p-practice" aria-label="Practicar"></section>
+    <section class="pane" data-pane="notes" id="p-notes" aria-label="Apuntes"></section>
+    <section class="pane" data-pane="vault" id="p-vault" aria-label="Vault"></section>
+    <section class="pane" data-pane="settings" id="p-settings" aria-label="Ajustes"></section>
   </div>
 
+  <div class="explain-pop" id="explain-pop" role="dialog" aria-label="Explicar un concepto" hidden></div>
+
   <dialog id="sim-dialog" aria-label="Simulación interactiva">
-    <div class="dlg-head"><strong id="sim-title">Simulación</strong><button class="btn" type="button" id="sim-close">Cerrar</button></div>
+    <div class="dlg-head"><strong id="sim-title">Simulación</strong><button class="btn small" type="button" id="sim-close">Cerrar</button></div>
     <iframe id="sim-frame" sandbox="allow-scripts" title="Simulación interactiva" referrerpolicy="no-referrer"></iframe>
   </dialog>
 
   <div id="toast" role="status" aria-live="assertive" hidden></div>
 
+  <script src="theme.js"></script>
   <script src="vendor/marked.min.js"></script>
   <script src="vendor/purify.min.js"></script>
   <script src="vendor/katex/katex.min.js"></script>
   <script src="vendor/cytoscape.min.js"></script>
+  <script src="vendor/dockview/dockview-core.min.js"></script>
+  <script type="module" src="motion.mjs"></script>
+  <script src="viz.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
