@@ -336,6 +336,7 @@ Todo es opcional; sin el archivo se usan estos valores. `studyhomie init` lo cre
 | `parallel` | `3` | Notas de concepto que se escriben a la vez |
 | `context_window` / `compact_at` | `200000` / `0.6` | Cuándo se resume una conversación larga |
 | `pass_score` | `70` | Nota (0–100, prueba o Feynman) que necesita un tema de un roadmap para desbloquear el siguiente |
+| `timeout` | `5` | Minutos que puede tardar una respuesta de la IA antes de cortarla con un aviso (las guías que buscan en la web tienen el triple). `0` es sin límite. También en Ajustes → Estudio |
 | `updates` | `"ask"` | Versiones nuevas: `"ask"` avisa y pregunta, `"auto"` las instala solas (se usan al reiniciar), `"never"` no busca |
 
 ## Actualizaciones

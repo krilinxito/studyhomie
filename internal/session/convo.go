@@ -3,6 +3,8 @@ package session
 
 import (
 	"context"
+	"errors"
+	"time"
 
 	"github.com/krilinxito/studyhomie/internal/prompts"
 	"github.com/krilinxito/studyhomie/internal/provider"
@@ -21,6 +23,8 @@ type Convo struct {
 
 	Window    int     // context window in tokens
 	CompactAt float64 // fraction of Window that triggers compaction
+
+	Timeout time.Duration // how long one call may take; 0 waits for ever
 
 	Compactions int // how many times the history was summarized
 
@@ -41,7 +45,7 @@ func (c *Convo) Say(ctx context.Context, prompt string, onText func(string)) (pr
 		prompt = "Summary of the conversation so far:\n" + c.seed + "\n\n" + prompt
 		c.seed = ""
 	}
-	resp, err := c.P.Complete(ctx, provider.Request{
+	resp, err := c.complete(ctx, provider.Request{
 		System: c.System, Prompt: prompt, Tools: c.Tools, Files: c.Files, Model: c.Model, SessionID: c.sessionID,
 	}, onText)
 	if err != nil {
@@ -59,7 +63,7 @@ func (c *Convo) Say(ctx context.Context, prompt string, onText func(string)) (pr
 // compact asks the model for a summary of the current session and starts the
 // next turn from a fresh session seeded with it.
 func (c *Convo) compact(ctx context.Context) error {
-	resp, err := c.P.Complete(ctx, provider.Request{
+	resp, err := c.complete(ctx, provider.Request{
 		System: c.System, Prompt: prompts.Get("compact", c.Language), Model: c.Model, SessionID: c.sessionID,
 	}, nil)
 	if err != nil {
@@ -69,4 +73,19 @@ func (c *Convo) compact(ctx context.Context) error {
 	c.sessionID = ""
 	c.Compactions++
 	return nil
+}
+
+// complete makes one call to the provider within Timeout, so a model that never answers (one
+// that keeps thinking, a CLI waiting for something) cannot leave the learner waiting for ever.
+func (c *Convo) complete(ctx context.Context, req provider.Request, onText func(string)) (provider.Response, error) {
+	if c.Timeout <= 0 {
+		return c.P.Complete(ctx, req, onText)
+	}
+	cctx, cancel := context.WithTimeout(ctx, c.Timeout)
+	defer cancel()
+	resp, err := c.P.Complete(cctx, req, onText)
+	if err != nil && ctx.Err() == nil && errors.Is(cctx.Err(), context.DeadlineExceeded) {
+		return resp, failf("la IA no respondió en %d minutos y corté la llamada. Prueba con un modelo más rápido en Ajustes, o sube el límite de tiempo.", max(1, int(c.Timeout.Round(time.Minute).Minutes())))
+	}
+	return resp, err
 }

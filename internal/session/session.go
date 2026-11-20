@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand/v2"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -86,7 +87,21 @@ func (s *Session) convo(system string, tools ...string) *Convo {
 	return &Convo{
 		P: s.P, System: system, Tools: tools, Model: s.Cfg.Model, Language: s.aiLang(),
 		Window: s.Cfg.ContextWindow, CompactAt: s.Cfg.CompactAt,
+		Timeout: callTimeout(s.Cfg.Timeout, tools),
 	}
+}
+
+// callTimeout is how long one AI call may take: the configured minutes, three times that for a
+// call that searches the web (a whole guide with its sources), none when the limit is 0.
+func callTimeout(minutes int, tools []string) time.Duration {
+	if minutes <= 0 {
+		return 0
+	}
+	d := time.Duration(minutes) * time.Minute
+	if slices.Contains(tools, "WebSearch") || slices.Contains(tools, "WebFetch") {
+		d *= 3
+	}
+	return d
 }
 
 // readLine prompts and returns a trimmed line; def is used for an empty answer.
