@@ -1047,3 +1047,28 @@ func TestStudySettings(t *testing.T) {
 		t.Errorf("pass score = %d", cfg.PassScore)
 	}
 }
+
+func TestLanguageScriptAndSetting(t *testing.T) {
+	s, ts := newTestServer(t, &scripted{})
+	s.Cfg.Language = ""
+	_, body := do(t, ts, "GET", "/i18n.js", nil, nil)
+	js := string(body)
+	if !strings.HasPrefix(js, "window.I18N = ") || !strings.Contains(js, `"chosen":false`) || !strings.Contains(js, `"lang":"es"`) || !strings.Contains(js, "function t(") {
+		t.Fatalf("i18n.js = %.300s", js)
+	}
+	if res, _ := do(t, ts, "POST", "/api/settings/language", map[string]any{"language": "klingon"}, nil); res.StatusCode != 400 {
+		t.Errorf("an unknown language must be rejected: %d", res.StatusCode)
+	}
+	if res, _ := do(t, ts, "POST", "/api/settings/language", map[string]any{"language": "fr"}, nil); res.StatusCode != 200 {
+		t.Fatalf("set language = %d", res.StatusCode)
+	}
+	_, body = do(t, ts, "GET", "/i18n.js", nil, nil)
+	js = string(body)
+	if !strings.Contains(js, `"lang":"fr"`) || !strings.Contains(js, `"chosen":true`) || !strings.Contains(js, `"Nueva conversación":"Nouvelle conversation"`) {
+		t.Errorf("after choosing French: %.300s", js)
+	}
+	// a run's questions come translated, with the Spanish one alongside to tell which it is
+	if _, cfg, _ := s.backend(); cfg.Language != "fr" {
+		t.Errorf("config language = %q", cfg.Language)
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/krilinxito/studyhomie/internal/i18n"
 	"github.com/krilinxito/studyhomie/internal/prompts"
 	"github.com/krilinxito/studyhomie/internal/vault"
 	"github.com/krilinxito/studyhomie/internal/viz"
@@ -309,7 +310,7 @@ func (s *Session) planConcepts(ctx context.Context, req GuideReq, note vault.Not
 	if g := s.grounding(note); g != "" {
 		b.WriteString("\nSOURCE MATERIAL (excerpts):\n" + head(g, 4000) + "\n")
 	}
-	resp, err := s.quickConvo(prompts.Get("plan", s.Cfg.Language)).Say(ctx, b.String(), nil)
+	resp, err := s.quickConvo(prompts.Get("plan", s.aiLang())).Say(ctx, b.String(), nil)
 	if err != nil {
 		return ConceptPlan{}, err
 	}
@@ -345,7 +346,7 @@ func (s *Session) approvePlan(p ConceptPlan) (ConceptPlan, bool, error) {
 			for _, c := range p.Concepts {
 				mark := ""
 				if c.Exists {
-					mark = " (ya en tu vault)"
+					mark = " " + s.tr("(ya en tu vault)")
 				}
 				s.printf("%s- %s [%s]%s\n", strings.Repeat("  ", c.Level-1), c.Title, c.ID, mark)
 			}
@@ -364,9 +365,9 @@ func (s *Session) approvePlan(p ConceptPlan) (ConceptPlan, bool, error) {
 		}
 		a = strings.TrimSpace(a)
 		switch strings.ToLower(a) {
-		case "", "s", "si", "sí", "y", "ok":
+		case "", "s", "si", "sí", "y", "yes", "o", "oui", "sim", "ok":
 			return p, true, nil
-		case "g", "guia", "guía":
+		case "g", "guia", "guía", "guide":
 			// no notes now: everything new stays in the iceberg, to explain on demand
 			var keep []PlannedConcept
 			for _, c := range p.Concepts {
@@ -379,7 +380,7 @@ func (s *Session) approvePlan(p ConceptPlan) (ConceptPlan, bool, error) {
 			p.Concepts, p.Promoted = keep, nil
 			sort.SliceStable(p.Pending, func(i, j int) bool { return p.Pending[i].Level < p.Pending[j].Level })
 			return p, true, nil
-		case "n", "no", "cancelar":
+		case "n", "no", "non", "não", "nao", "cancelar", "cancel":
 			return p, false, nil
 		}
 		var e planEdit
@@ -500,11 +501,11 @@ func (s *Session) Guide(ctx context.Context, req GuideReq) (string, error) {
 		prog.items = append(prog.items, ProgressItem{ID: c.ID, Title: c.Title, Kind: "concept", State: st})
 	}
 	if linked := len(plan.Concepts) - len(fresh); len(plan.Concepts) > 0 {
-		msg := fmt.Sprintf("Escribiendo la guía y %d notas de concepto", len(fresh))
 		if linked > 0 {
-			msg += fmt.Sprintf(" (%d ya estaban en tu vault y solo se enlazan)", linked)
+			s.status("Escribiendo la guía y %d notas de concepto (%d ya estaban en tu vault y solo se enlazan)", len(fresh), linked)
+		} else {
+			s.status("Escribiendo la guía y %d notas de concepto", len(fresh))
 		}
-		s.status("%s", msg)
 	} else {
 		s.status("Preparando la guía de «%s» (busca material en línea, puede tardar)", req.Topic)
 	}
@@ -621,7 +622,7 @@ func (s *Session) writeGuide(ctx context.Context, note *vault.Note, req GuideReq
 		prompt += "\n\nSOURCE MATERIAL (excerpts from the learner's document):\n" + g
 	}
 
-	c := s.convo(prompts.Get("guide", s.Cfg.Language), "WebSearch", "WebFetch")
+	c := s.convo(prompts.Get("guide", s.aiLang()), "WebSearch", "WebFetch")
 	resp, err := c.Say(ctx, prompt, nil)
 	if err != nil {
 		return err
@@ -673,7 +674,7 @@ func (s *Session) writeGuide(ctx context.Context, note *vault.Note, req GuideReq
 			note.Meta.Pending = append(note.Meta.Pending, vault.PendingConcept{ID: c.ID, Title: c.Title, Summary: c.Summary, Category: c.Category, Requires: c.Requires, Level: c.Level})
 		}
 	}
-	note.Body = guideBody(note.Body, guide, resources)
+	note.Body = s.guideBody(note.Body, guide, resources)
 	if err := s.V.Save(*note); err != nil {
 		return err
 	}
@@ -718,7 +719,7 @@ func (s *Session) writeConcept(ctx context.Context, c PlannedConcept, plan Conce
 			fmt.Fprintf(&b, "%s: %s\n", o.ID, o.Title)
 		}
 	}
-	resp, err := s.quickConvo(prompts.Get("concept", s.Cfg.Language)).Say(ctx, b.String(), nil)
+	resp, err := s.quickConvo(i18n.LocalizeHeadings(prompts.Get("concept", s.aiLang()), s.lang())).Say(ctx, b.String(), nil)
 	if err != nil {
 		return err
 	}
@@ -728,7 +729,7 @@ func (s *Session) writeConcept(ctx context.Context, c PlannedConcept, plan Conce
 		s.termf("Aviso (%s): %s\n", c.Title, w)
 	}
 	if text == "" {
-		return fmt.Errorf("la nota salió vacía")
+		return failf("la nota salió vacía")
 	}
 	var meta struct {
 		Aliases []string `json:"aliases"`
@@ -737,7 +738,7 @@ func (s *Session) writeConcept(ctx context.Context, c PlannedConcept, plan Conce
 	if payload != "" {
 		_ = decodeJSON(payload, &meta) // the note is still good without them
 	}
-	body := "# " + c.Title + "\n\n" + text + "\n\n## Aparece en\n\n" + appearsLine(guide, req.Topic) + "\n"
+	body := "# " + c.Title + "\n\n" + text + "\n\n## " + s.h("Aparece en") + "\n\n" + appearsLine(guide, req.Topic) + "\n"
 	return s.V.SaveConcept(vault.Concept{
 		Slug: c.ID,
 		Meta: vault.ConceptMeta{
@@ -761,9 +762,9 @@ func (s *Session) linkConcept(id, guide, title string) error {
 		c.Meta.Guides = append(c.Meta.Guides, guide)
 		line := appearsLine(guide, title)
 		if sec := vault.Section(c.Body, "Aparece en"); sec != "" {
-			c.Body = vault.ReplaceSection(c.Body, "Aparece en", sec+"\n"+line)
+			c.Body = vault.ReplaceSection(c.Body, s.h("Aparece en"), sec+"\n"+line)
 		} else {
-			c.Body = vault.ReplaceSection(c.Body, "Aparece en", line)
+			c.Body = vault.ReplaceSection(c.Body, s.h("Aparece en"), line)
 		}
 		return nil
 	})

@@ -304,7 +304,7 @@ func (s *Server) explain(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	id, err := s.shortSession().Explain(ctx, slug, body.Ref, body.Summary)
 	if err != nil {
-		fail(w, shortStatus(err), err.Error())
+		fail(w, shortStatus(err), s.errText(err))
 		return
 	}
 	writeJSON(w, 200, map[string]string{"slug": id})
@@ -330,7 +330,7 @@ func (s *Server) vizPage(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	src, err := s.shortSession().VizPage(ctx, slug, body.Brief)
 	if err != nil {
-		fail(w, shortStatus(err), err.Error())
+		fail(w, shortStatus(err), s.errText(err))
 		return
 	}
 	writeJSON(w, 200, map[string]string{"src": src})

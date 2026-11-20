@@ -1,5 +1,28 @@
 'use strict';
 
+/* ---------- language ---------- */
+// i18n.js (served by the app) runs before this script: window.I18N holds the page's language and
+// its catalog, and t() translates. Messages are written in Spanish and the Spanish text is the key.
+const LANG = (window.I18N && window.I18N.lang) || 'es';
+const LOCALE = (window.I18N && window.I18N.locale) || 'es';
+document.documentElement.lang = LOCALE;
+// t(msg, vars) and tn(n, one, many) come with i18n.js
+// the same section of a note in any language: "Guide" is "Guía"
+const HEADINGS = (window.I18N && window.I18N.headings) || {};
+function sectionKey(heading) {
+  const h = heading.trim();
+  for (const [k, hs] of Object.entries(HEADINGS)) if (hs.includes(h)) return k;
+  return h;
+}
+// the static texts of index.html: data-i18n (text), data-i18n-placeholder, -title, -aria-label
+function translatePage(root = document) {
+  for (const el of root.querySelectorAll('[data-i18n]')) el.textContent = t(el.dataset.i18n);
+  for (const attr of ['placeholder', 'title', 'aria-label']) {
+    for (const el of root.querySelectorAll(`[data-i18n-${attr}]`)) el.setAttribute(attr, t(el.getAttribute(`data-i18n-${attr}`)));
+  }
+}
+translatePage();
+
 /* ---------- helpers ---------- */
 // The panels live in a dock, and a panel that is not on screen is taken out of the page. So a lookup
 // falls back to the panels themselves: code that fills a hidden panel still finds its elements.
@@ -54,7 +77,7 @@ async function api(path, opts = {}) {
   let data = null;
   try { data = await res.json(); } catch { /* empty body */ }
   if (!res.ok) {
-    const err = new Error((data && data.error) || `Error ${res.status}`);
+    const err = new Error((data && data.error && t(data.error)) || t('Error {status}', { status: res.status }));
     err.status = res.status;
     err.data = data;
     throw err;
@@ -64,11 +87,11 @@ async function api(path, opts = {}) {
 
 let toastTimer;
 function toast(msg) {
-  const t = $('#toast');
-  t.textContent = msg;
-  t.hidden = false;
+  const box = $('#toast');
+  box.textContent = msg;
+  box.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.hidden = true; }, 6000);
+  toastTimer = setTimeout(() => { box.hidden = true; }, 6000);
 }
 
 // Same rules as vault.Slugify in Go, so links resolve to the same note.
@@ -89,10 +112,10 @@ const store = {
   set(k, v) { try { if (v == null) localStorage.removeItem(`sh.${k}`); else localStorage.setItem(`sh.${k}`, JSON.stringify(v)); } catch { /* private mode */ } },
 };
 
-const STATUS = { new: 'Por descubrir', prepared: 'Guía lista', tested: 'Comprobado', explained: 'Explicado' };
-const SECTION = { 'Guía': 'La guía', 'Conceptos base': 'Conceptos base', 'Dudas': 'Dudas', 'Prueba': 'Preguntas', 'Feynman': 'Explicación', 'Conexiones': 'Conexiones' };
-const TYPE = { video: 'Video', web: 'Web', book: 'Libro', paper: 'Paper', interactive: 'Interactivo' };
-const DEPTH = ['solo la guía', '1 nivel de conceptos', '2 niveles', '3 niveles', 'hasta lo básico'];
+const STATUS = { new: t('Por descubrir'), prepared: t('Guía lista'), tested: t('Comprobado'), explained: t('Explicado') };
+const SECTION = { 'Guía': t('La guía'), 'Conceptos base': t('Conceptos base'), 'Dudas': t('Dudas'), 'Prueba': t('Preguntas'), 'Feynman': t('Explicación'), 'Conexiones': t('Conexiones') };
+const TYPE = { video: t('Video'), web: t('Web'), book: t('Libro'), paper: t('Paper'), interactive: t('Interactivo') };
+const DEPTH = [t('solo la guía'), t('1 nivel de conceptos'), '2 niveles', '3 niveles', t('hasta lo básico')];
 const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 const smoothness = () => (reducedMotion() ? 'auto' : 'smooth');
@@ -120,9 +143,9 @@ const nodeOf = (slug) => ((S.graph && S.graph.nodes) || []).find((n) => n.id ===
 // a note that exists and has been written (a pending concept is mapped, not written)
 const writtenNode = (slug) => { const n = nodeOf(slug) || nodeOf(foldSlug(slug)); return n && n.kind !== 'pending' ? n : null; };
 function groupTitle(key) {
-  if (!key) return 'Sueltos';
+  if (!key) return t('Sueltos');
   if (key.startsWith('g:')) return (nodeOf(key.slice(2)) || {}).label || key.slice(2);
-  if (key.startsWith('c:')) return key.length > 2 ? `Conceptos de ${key.slice(2)}` : 'Conceptos sueltos';
+  if (key.startsWith('c:')) return key.length > 2 ? t('Conceptos de {guide}', { guide: key.slice(2) }) : t('Conceptos sueltos');
   return (S.roadmaps.find((r) => r.slug === key) || {}).title || key;
 }
 
@@ -150,10 +173,10 @@ function renderMd(src, { breaks = false } = {}) {
   // 2. pull math out before Markdown can mangle "_" and "*"
   const math = (tex, display) => keep({ tex, display });
   s = s
-    .replace(/\$\$([\s\S]+?)\$\$/g, (_, t) => math(t, true))
-    .replace(/\\\[([\s\S]+?)\\\]/g, (_, t) => math(t, true))
-    .replace(/\\\(([\s\S]+?)\\\)/g, (_, t) => math(t, false))
-    .replace(/(?<![\\$\w])\$(?!\s)([^$\n]+?)(?<!\s)\$(?![\w$])/g, (_, t) => math(t, false));
+    .replace(/\$\$([\s\S]+?)\$\$/g, (_, tex) => math(tex, true))
+    .replace(/\\\[([\s\S]+?)\\\]/g, (_, tex) => math(tex, true))
+    .replace(/\\\(([\s\S]+?)\\\)/g, (_, tex) => math(tex, false))
+    .replace(/(?<![\\$\w])\$(?!\s)([^$\n]+?)(?<!\s)\$(?![\w$])/g, (_, tex) => math(tex, false));
   // 3. [[wikilinks]] and links to generated simulations
   s = s
     .replace(/\[\[([^\]|#]+)(?:\|([^\]]+))?\]\]/g, (_, slug, title) => `[${(title || slug).trim()}](#note/${slugify(slug)})`)
@@ -193,12 +216,12 @@ function markPending(root) {
 /* ---------- rich blocks inside Markdown: callouts and diagrams ---------- */
 // Obsidian callout syntax ("> [!tip] Title"), so the same notes look right in both apps.
 const CALLOUT = {
-  info: ['info', 'Nota'], note: ['info', 'Nota'], abstract: ['info', 'Resumen'], summary: ['info', 'Resumen'],
-  tip: ['tip', 'Intuición'], hint: ['tip', 'Pista'], important: ['tip', 'Importante'], success: ['tip', 'Listo'],
-  example: ['example', 'Ejemplo'],
-  warning: ['warn', 'Ojo'], caution: ['warn', 'Ojo'], danger: ['warn', 'Ojo'], failure: ['warn', 'Error'], bug: ['warn', 'Error'],
-  question: ['question', 'Piénsalo'], todo: ['question', 'Piénsalo'], help: ['question', 'Piénsalo'],
-  quote: ['quote', 'Cita'], cite: ['quote', 'Cita'],
+  info: ['info', t('Nota')], note: ['info', t('Nota')], abstract: ['info', t('Resumen')], summary: ['info', t('Resumen')],
+  tip: ['tip', t('Intuición')], hint: ['tip', t('Pista')], important: ['tip', t('Importante')], success: ['tip', t('Listo')],
+  example: ['example', t('Ejemplo')],
+  warning: ['warn', t('Ojo')], caution: ['warn', t('Ojo')], danger: ['warn', t('Ojo')], failure: ['warn', t('Error')], bug: ['warn', t('Error')],
+  question: ['question', t('Piénsalo')], todo: ['question', t('Piénsalo')], help: ['question', t('Piénsalo')],
+  quote: ['quote', t('Cita')], cite: ['quote', t('Cita')],
 };
 
 function enhanceCallouts(root) {
@@ -244,8 +267,8 @@ let diagramSeq = 0;
 function enhanceDiagrams(root) {
   for (const code of $$('pre > code.language-mermaid', root)) {
     const src = code.textContent;
-    const body = h('div', { class: 'diagram-body', 'aria-busy': 'true' }, h('span', { class: 'hint' }, 'Dibujando el diagrama…'));
-    code.parentElement.replaceWith(h('figure', { class: 'diagram', role: 'img', 'aria-label': 'Diagrama' }, body));
+    const body = h('div', { class: 'diagram-body', 'aria-busy': 'true' }, h('span', { class: 'hint' }, t('Dibujando el diagrama…')));
+    code.parentElement.replaceWith(h('figure', { class: 'diagram', role: 'img', 'aria-label': t('Diagrama') }, body));
     drawDiagram(body, src);
   }
 }
@@ -261,7 +284,7 @@ function drawDiagram(body, src) {
       body.innerHTML = svg; // mermaid's strict mode has already sanitised the labels
     } catch {
       document.getElementById(`d${id}`)?.remove(); // mermaid leaves its error box in the page
-      body.replaceChildren(h('p', { class: 'hint' }, 'No pude dibujar este diagrama. Este es su código:'), h('pre', {}, h('code', {}, src)));
+      body.replaceChildren(h('p', { class: 'hint' }, t('No pude dibujar este diagrama. Este es su código:')), h('pre', {}, h('code', {}, src)));
     }
     done();
   });
@@ -274,13 +297,16 @@ function stripEmoji(md) {
     .replace(/^([ \t]*(?:#+|>|[-*]|\d+\.)) {2,}(?=\S)/gm, '$1 ')
     .replace(/[ \t]+$/gm, ''))).join('');
 }
+// "## heading" in any language: the section's name (in Spanish) or how it reads in any other
+const reEscape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const headingRe = (heading) => (HEADINGS[heading] || [heading]).map(reEscape).join('|');
 function stripSection(body, heading) {
-  const re = new RegExp(`(^|\\n)## ${heading}\\n[\\s\\S]*?(?=\\n## |$)`);
+  const re = new RegExp(`(^|\\n)## (?:${headingRe(heading)})\\n[\\s\\S]*?(?=\\n## |$)`);
   return body.replace(re, '\n');
 }
 // the part of a note under "## heading", without the heading
 function sectionOf(body, heading) {
-  const m = new RegExp(`(?:^|\\n)## ${heading}\\s*\\n([\\s\\S]*?)(?=\\n## |$)`).exec(body || '');
+  const m = new RegExp(`(?:^|\\n)## (?:${headingRe(heading)})\\s*\\n([\\s\\S]*?)(?=\\n## |$)`).exec(body || '');
   return m ? m[1].trim() : '';
 }
 
@@ -312,7 +338,7 @@ $('#btn-theme').addEventListener('click', () => {
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (!document.documentElement.dataset.theme) applyTheme(); });
 
 /* ---------- the dock: panels you can drag, split, stack and float ---------- */
-const PANES = { chat: 'Chat', chats: 'Conversaciones', guide: 'Guía', concepts: 'Conceptos', map: 'Mapa', practice: 'Practicar', notes: 'Apuntes', vault: 'Vault', settings: 'Ajustes' };
+const PANES = { chat: t('Chat'), chats: t('Conversaciones'), guide: t('Guía'), concepts: t('Conceptos'), map: t('Mapa'), practice: t('Practicar'), notes: t('Apuntes'), vault: t('Vault'), settings: t('Ajustes') };
 const STUDY = ['guide', 'concepts', 'map', 'practice', 'notes']; // the study panel: closed until there is something to show
 const NEAR_STUDY = [...STUDY, 'vault', 'settings']; // panels that open next to the study group
 
@@ -371,7 +397,7 @@ function setLayoutEditing(on) {
   $('#edit-bar').hidden = !on;
 }
 $('#edit-done').addEventListener('click', () => setLayoutEditing(false));
-$('#edit-reset').addEventListener('click', () => { store.set('dock', null); defaultLayout(); toast('Diseño restablecido.'); });
+$('#edit-reset').addEventListener('click', () => { store.set('dock', null); defaultLayout(); toast(t('Diseño restablecido.')); });
 
 function defaultLayout() {
   const dock = S.dock;
@@ -452,7 +478,7 @@ function syncPanelButton() {
   const open = studyOpen();
   const b = $('#btn-panel');
   b.setAttribute('aria-pressed', String(open));
-  b.title = open ? 'Cerrar el panel de estudio' : 'Abrir el panel de estudio (guía, conceptos, mapa, apuntes)';
+  b.title = open ? t('Cerrar el panel de estudio') : t('Abrir el panel de estudio (guía, conceptos, mapa, apuntes)');
 }
 $('#btn-panel').addEventListener('click', () => (studyOpen() ? closeStudy() : show(S.lastStudy || 'guide')));
 
@@ -471,13 +497,13 @@ function groupActions(group) {
       if (group.panels.every((p) => p.id === 'chats')) { element.replaceChildren(); return; } // the list of chats needs none
       const btn = (name, title, onclick) => h('button', { class: 'icon-btn', type: 'button', title, 'aria-label': title, onclick }, icon(name));
       element.replaceChildren(...[
-        full ? btn('minimize-2', 'Salir de pantalla completa', () => document.exitFullscreen().catch(() => {}))
-          : btn('fullscreen', 'Pantalla completa', () => fullScreen(group)),
-        full ? null : btn(max ? 'minimize-2' : 'maximize-2', max ? 'Volver al tamaño anterior' : 'Ampliar', () => {
+        full ? btn('minimize-2', t('Salir de pantalla completa'), () => document.exitFullscreen().catch(() => {}))
+          : btn('fullscreen', t('Pantalla completa'), () => fullScreen(group)),
+        full ? null : btn(max ? 'minimize-2' : 'maximize-2', max ? t('Volver al tamaño anterior') : t('Ampliar'), () => {
           if (group.api.isMaximized()) group.api.exitMaximized(); else group.api.maximize();
           drawGroupActions();
         }),
-        holdsChat || full ? null : btn('x', 'Cerrar el panel', () => closeGroup(group)),
+        holdsChat || full ? null : btn('x', t('Cerrar el panel'), () => closeGroup(group)),
       ].filter(Boolean));
     },
     init() { r.draw(); },
@@ -517,8 +543,14 @@ function onShown(id) {
 $('#btn-settings').addEventListener('click', () => show('settings'));
 
 /* ---------- Ajustes: which AI answers ---------- */
+const capitalize = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+// why a provider is not ready, as the server says it (in Spanish): "falta KEY" names a variable
+function providerReason(reason) {
+  const m = /^falta ([A-Z0-9_]+)$/.exec(reason || '');
+  return m ? t('falta {key}', { key: m[1] }) : t(reason || '');
+}
 // A plain settings page: one dropdown for the AI, dropdowns for its models, two buttons.
-const KIND = { cli: 'Con tu suscripción', api: 'Por API (clave propia)', local: 'En tu PC' };
+const KIND = { cli: t('Con tu suscripción'), api: t('Por API (clave propia)'), local: t('En tu PC') };
 const OTHER = '\u0000other'; // the "Otro…" option; cannot collide with a model name
 const SET = { data: null, pick: '', form: {}, models: {} }; // form and models are kept per provider
 
@@ -562,13 +594,13 @@ async function fetchModels(p) {
 
 // A dropdown of models with an "Otro…" option that opens a text field for any other name.
 function modelPicker({ value, list, loading, empty, label, onChange }) {
-  const custom = h('input', { type: 'text', value: value || '', placeholder: 'Nombre exacto del modelo', 'aria-label': `${label}: otro` });
+  const custom = h('input', { type: 'text', value: value || '', placeholder: t('Nombre exacto del modelo'), 'aria-label': t('{label}: otro', { label }) });
   const known = !value || list.includes(value);
   const select = h('select', { 'aria-label': label, disabled: loading || null },
-    loading ? h('option', {}, 'Cargando modelos…') : [
+    loading ? h('option', {}, t('Cargando modelos…')) : [
       h('option', { value: '', selected: !value || null }, empty),
       list.map((m) => h('option', { value: m, selected: m === value || null }, m)),
-      h('option', { value: OTHER, selected: !known || null }, 'Otro…'),
+      h('option', { value: OTHER, selected: !known || null }, t('Otro…')),
     ]);
   custom.hidden = loading || known;
   select.addEventListener('change', () => {
@@ -591,43 +623,43 @@ function drawSettings() {
   if (canList && !SET.models[sel.id] && (sel.ready || sel.kind === 'local' || sel.id === 'openai-compatible')) fetchModels(sel);
   const mods = SET.models[sel.id] || { list: [] };
 
-  const picker = h('select', { 'aria-label': 'Proveedor de IA', onchange: (e) => { SET.pick = e.target.value; drawSettings(); } },
+  const picker = h('select', { 'aria-label': t('Proveedor de IA'), onchange: (e) => { SET.pick = e.target.value; drawSettings(); } },
     Object.entries(KIND).map(([kind, title]) => h('optgroup', { label: title },
       list.filter((p) => p.kind === kind).map((p) => h('option', { value: p.id, selected: p.id === sel.id || null },
-        p.name + (p.id === inUse ? ' (en uso)' : ''))))));
+        p.name + (p.id === inUse ? ` (${t('en uso')})` : ''))))));
   const hasDefault = sel.kind === 'cli' || !!sel.defaultModel;
   const model = modelPicker({
-    value: f.model, list: mods.list, loading: mods.loading, label: 'Modelo',
-    empty: hasDefault ? 'Predeterminado' : 'Elige un modelo', onChange: (v) => { f.model = v; },
+    value: f.model, list: mods.list, loading: mods.loading, label: t('Modelo'),
+    empty: hasDefault ? t('Predeterminado') : t('Elige un modelo'), onChange: (v) => { f.model = v; },
   });
   const quick = modelPicker({
-    value: f.quick, list: mods.list, loading: mods.loading, label: 'Modelo rápido',
-    empty: 'Igual que el modelo', onChange: (v) => { f.quick = v; },
+    value: f.quick, list: mods.list, loading: mods.loading, label: t('Modelo rápido'),
+    empty: t('Igual que el modelo'), onChange: (v) => { f.quick = v; },
   });
   const url = sel.editURL ? h('input', { type: 'url', value: f.url, placeholder: 'https://…/v1', 'aria-label': 'URL' }) : null;
   url?.addEventListener('change', () => { f.url = url.value.trim(); delete SET.models[sel.id]; drawSettings(); });
   const result = h('p', { class: 'set-result', role: 'status' });
   const body = () => ({ provider: sel.id, model: f.model, quickModel: f.quick, baseURL: url ? f.url : '' });
   const say = (cls, text) => { result.className = `set-result ${cls}`; result.textContent = text; };
-  if (mods.error) say('bad', `No pude cargar los modelos: ${mods.error}`);
+  if (mods.error) say('bad', t('No pude cargar los modelos: {error}', { error: mods.error }));
 
   // one line of plain status: ready or what is missing, and whether it searches the web
   const facts = [
-    sel.ready ? 'Disponible' : sel.reason[0].toUpperCase() + sel.reason.slice(1),
-    sel.search ? 'busca en la web' : 'sin búsqueda web (las guías salen sin recursos externos)',
+    sel.ready ? t('Disponible') : capitalize(providerReason(sel.reason)),
+    sel.search ? t('busca en la web') : t('sin búsqueda web (las guías salen sin recursos externos)'),
     sel.experimental ? 'experimental' : '',
   ].filter(Boolean).join(' · ');
 
   const test = h('button', { class: 'btn small ghost', type: 'button', onclick: async (e) => {
     const b = e.currentTarget;
     b.disabled = true;
-    say('', 'Probando…');
+    say('', t('Probando…'));
     try {
       const r = await api('/api/settings/test', { method: 'POST', body: body() });
-      say('ok', `Funciona: respondió «${r.reply.slice(0, 60)}» en ${(r.ms / 1000).toFixed(1)} s.`);
+      say('ok', t('Funciona: respondió «{reply}» en {s} s.', { reply: r.reply.slice(0, 60), s: (r.ms / 1000).toFixed(1) }));
     } catch (err) { say('bad', err.message); }
     b.disabled = false;
-  } }, 'Probar');
+  } }, t('Probar'));
   const save = h('button', { class: 'btn small primary', type: 'button', onclick: async (e) => {
     const b = e.currentTarget;
     b.disabled = true;
@@ -636,31 +668,48 @@ function drawSettings() {
       $('#provider-badge').textContent = r.provider;
       $('#banner').textContent = r.warning || '';
       $('#banner').hidden = !r.warning;
-      toast(`Ahora responde ${sel.name}.`);
+      toast(t('Ahora responde {name}.', { name: sel.name }));
       await renderSettings();
     } catch (err) { say('bad', err.message); b.disabled = false; }
-  } }, 'Guardar');
+  } }, t('Guardar'));
 
   const row = (label, control, extra) => h('div', { class: 'set-row' }, h('span', { class: 'set-label' }, label), h('div', { class: 'set-control' }, control, extra || null));
   const keyLine = sel.kind === 'api' && (sel.keyEnvs || []).length && !sel.ready
-    ? h('p', { class: 'set-note' }, 'La clave va en una variable de entorno, no en la app: ', h('code', {}, `setx ${sel.keyEnvs[0]} "tu-clave"`), ' en PowerShell, y vuelve a abrir StudyHomie.')
+    ? h('p', { class: 'set-note' }, t('La clave va en una variable de entorno, no en la app: '), h('code', {}, `setx ${sel.keyEnvs[0]} "${t('tu-clave')}"`), t(' en PowerShell, y vuelve a abrir StudyHomie.'))
     : null;
 
   root.replaceChildren(h('div', { class: 'settings' },
-    h('h2', {}, 'Ajustes'),
+    h('h2', {}, t('Ajustes')),
     warning ? h('p', { class: 'set-warning' }, warning) : null,
     h('section', { class: 'set-section' },
-      h('h3', {}, 'Inteligencia artificial'),
-      row('Proveedor', picker, h('p', { class: 'set-facts' }, facts)),
-      sel.note ? row('', h('p', { class: 'set-note' }, mdInline(sel.note))) : null,
+      h('h3', {}, t('Inteligencia artificial')),
+      row(t('Proveedor'), picker, h('p', { class: 'set-facts' }, facts)),
+      sel.note ? row('', h('p', { class: 'set-note' }, mdInline(t(sel.note)))) : null,
       keyLine ? row('', keyLine) : null,
       url ? row('URL', url) : null,
-      row('Modelo', model),
-      row('Modelo rápido', quick, h('p', { class: 'set-facts' }, 'Para el chat, las notas de concepto y el plan.')),
+      row(t('Modelo'), model),
+      row(t('Modelo rápido'), quick, h('p', { class: 'set-facts' }, t('Para el chat, las notas de concepto y el plan.'))),
       row('', h('div', { class: 'set-actions' }, save, test), result)),
+    languageSection(row),
     studySection(row),
     updateSection(row),
-    h('p', { class: 'set-foot' }, `Se guarda en ${SET.data.configPath || 'studyhomie.toml'}. Lo que esté en curso termina con la IA anterior.`)));
+    h('p', { class: 'set-foot' }, t('Se guarda en {file}. Lo que esté en curso termina con la IA anterior.', { file: SET.data.configPath || 'studyhomie.toml' }))));
+}
+
+// the "Idioma" block of the settings page: the interface and what the AI writes. Changing it
+// reloads the page, so every text comes back in the new language.
+function languageSection(row) {
+  const langs = (window.I18N && window.I18N.langs) || [];
+  const result = h('p', { class: 'set-result', role: 'status' });
+  const pick = h('select', { 'aria-label': t('Idioma'), onchange: async (e) => {
+    try {
+      await api('/api/settings/language', { method: 'POST', body: { language: e.target.value } });
+      location.reload();
+    } catch (err) { result.className = 'set-result bad'; result.textContent = err.message; }
+  } }, langs.map((l) => h('option', { value: l.code, selected: l.code === LANG || null }, l.name)));
+  return h('section', { class: 'set-section' }, h('h3', {}, t('Idioma')),
+    row(t('Idioma'), pick, h('p', { class: 'set-facts' }, t('De la interfaz y de lo que escribe la IA: guías, notas, preguntas y el chat. Las notas que ya tienes quedan como están.'))),
+    row('', result));
 }
 
 // the "Estudio" block of the settings page: the score a roadmap topic needs to unlock the next one
@@ -668,20 +717,20 @@ function studySection(row) {
   const study = SET.data.study || {};
   const result = h('p', { class: 'set-result', role: 'status' });
   const say = (cls, text) => { result.className = `set-result ${cls}`; result.textContent = text; };
-  const input = h('input', { type: 'number', min: 0, max: 100, step: 5, value: study.passScore ?? 70, class: 'set-num', 'aria-label': 'Nota para avanzar en un roadmap' });
+  const input = h('input', { type: 'number', min: 0, max: 100, step: 5, value: study.passScore ?? 70, class: 'set-num', 'aria-label': t('Nota para avanzar en un roadmap') });
   input.addEventListener('change', async () => {
     const v = Math.round(Number(input.value));
-    if (!Number.isFinite(v) || v < 0 || v > 100) { say('bad', 'Pon un número de 0 a 100.'); return; }
+    if (!Number.isFinite(v) || v < 0 || v > 100) { say('bad', t('Pon un número de 0 a 100.')); return; }
     try {
       const r = await api('/api/settings/study', { method: 'POST', body: { passScore: v } });
       SET.data.study = r;
-      say('ok', 'Guardado.');
+      say('ok', t('Guardado.'));
       loadGraph().catch(() => {}).then(() => reloadGuide());
     } catch (err) { say('bad', err.message); }
   });
-  return h('section', { class: 'set-section' }, h('h3', {}, 'Estudio'),
-    row('Nota para avanzar', h('div', { class: 'set-inline' }, input, h('span', {}, '/ 100')),
-      h('p', { class: 'set-facts' }, 'En un roadmap, el tema siguiente se desbloquea (y se escribe su guía) cuando sacas esta nota o más en la prueba o explicándolo.')),
+  return h('section', { class: 'set-section' }, h('h3', {}, t('Estudio')),
+    row(t('Nota para avanzar'), h('div', { class: 'set-inline' }, input, h('span', {}, '/ 100')),
+      h('p', { class: 'set-facts' }, t('En un roadmap, el tema siguiente se desbloquea (y se escribe su guía) cuando sacas esta nota o más en la prueba o explicándolo.'))),
     row('', result));
 }
 
@@ -690,7 +739,7 @@ function studySection(row) {
 // the header offers it; installing downloads, verifies, swaps the binary and restarts the app, and
 // this tab waits for the new version to answer and reloads.
 const UPD = { st: null, busy: false };
-const UPDATE_MODES = { ask: 'Preguntarme antes de actualizar', auto: 'Instalar sola (se usa al reiniciar)', never: 'No buscar versiones nuevas' };
+const UPDATE_MODES = { ask: t('Preguntarme antes de actualizar'), auto: t('Instalar sola (se usa al reiniciar)'), never: t('No buscar versiones nuevas') };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function laterFor(tag) { try { return sessionStorage.getItem('update-later') === tag; } catch { return false; } }
@@ -708,15 +757,15 @@ function drawUpdateBar() {
   $('#update-bar').hidden = !show || UPD.busy;
   if (!show) return;
   $('#update-text').replaceChildren(st.staged
-    ? h('span', {}, h('strong', {}, `StudyHomie ${st.latest} ya está instalado.`), ' Se usa al reiniciar.')
-    : h('span', {}, h('strong', {}, 'Hay una versión nueva'), ` (${st.latest}). Tienes la ${st.current}.`));
-  $('#update-go span').textContent = st.staged ? 'Reiniciar ahora' : 'Actualizar';
+    ? h('span', {}, h('strong', {}, t('StudyHomie {version} ya está instalado.', { version: st.latest })), ' ', t('Se usa al reiniciar.'))
+    : h('span', {}, h('strong', {}, t('Hay una versión nueva')), ' ' + t('({latest}). Tienes la {current}.', { latest: st.latest, current: st.current })));
+  $('#update-go span').textContent = st.staged ? t('Reiniciar ahora') : t('Actualizar');
   $('#update-go use').setAttribute('href', `icons.svg#i-${st.staged ? 'refresh-cw' : 'download'}`);
 }
 
 function fmtDay(iso) {
   const d = new Date(iso);
-  return isNaN(d) || d.getFullYear() < 2000 ? '' : d.toLocaleDateString('es', { day: 'numeric', month: 'long', year: 'numeric' });
+  return isNaN(d) || d.getFullYear() < 2000 ? '' : d.toLocaleDateString(LOCALE, { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
 function openUpdateDialog() {
@@ -725,9 +774,9 @@ function openUpdateDialog() {
   $('#update-title').textContent = `StudyHomie ${st.latest}`;
   const day = st.published && fmtDay(st.published);
   $('#update-body').replaceChildren(...[
-    h('p', { class: 'update-meta' }, [day ? `Publicada el ${day}` : '', `tienes la ${st.current}`].filter(Boolean).join(' · ')),
-    mdBlock(st.notes || 'Esta versión no trae notas.'),
-    st.page ? h('p', { class: 'update-meta' }, h('a', { href: st.page, target: '_blank', rel: 'noopener noreferrer' }, 'Ver la versión en GitHub')) : null,
+    h('p', { class: 'update-meta' }, [day ? t('Publicada el {day}', { day }) : '', t('tienes la {current}', { current: st.current })].filter(Boolean).join(' · ')),
+    mdBlock(st.notes || t('Esta versión no trae notas.')),
+    st.page ? h('p', { class: 'update-meta' }, h('a', { href: st.page, target: '_blank', rel: 'noopener noreferrer' }, t('Ver la versión en GitHub'))) : null,
   ].filter(Boolean));
   updateFoot();
   if (!$('#update-dialog').open) $('#update-dialog').showModal();
@@ -747,16 +796,16 @@ function updateFoot(state = {}) {
   if (state.busy) {
     foot.replaceChildren(...[msg].filter(Boolean), h('div', { class: 'update-actions' },
       h('span', { class: 'spacer' }),
-      btn('', 'Esperar a que termine', () => $('#update-dialog').close()),
-      btn('primary', 'Actualizar igual', () => installUpdate(true), 'download')));
+      btn('', t('Esperar a que termine'), () => $('#update-dialog').close()),
+      btn('primary', t('Actualizar igual'), () => installUpdate(true), 'download')));
     return;
   }
   if (state.done) { foot.replaceChildren(...[msg].filter(Boolean)); return; }
   foot.replaceChildren(...[msg].filter(Boolean), h('div', { class: 'update-actions' },
-    st.staged ? null : btn('ghost', 'Omitir esta versión', skipUpdate),
+    st.staged ? null : btn('ghost', t('Omitir esta versión'), skipUpdate),
     h('span', { class: 'spacer' }),
-    btn('', 'Más tarde', () => { setLater(st.latest); drawUpdateBar(); $('#update-dialog').close(); }),
-    btn('primary', st.staged ? 'Reiniciar ahora' : 'Actualizar', () => installUpdate(), st.staged ? 'refresh-cw' : 'download')));
+    btn('', t('Más tarde'), () => { setLater(st.latest); drawUpdateBar(); $('#update-dialog').close(); }),
+    btn('primary', st.staged ? t('Reiniciar ahora') : t('Actualizar'), () => installUpdate(), st.staged ? 'refresh-cw' : 'download')));
 }
 
 async function skipUpdate() {
@@ -764,7 +813,7 @@ async function skipUpdate() {
     UPD.st = await api('/api/update/skip', { method: 'POST', body: { version: UPD.st.latest } });
     $('#update-dialog').close();
     drawUpdateBar();
-    toast(`No te avisaré de la ${UPD.st.latest}; sí de la siguiente.`);
+    toast(t('No te avisaré de la {version}; sí de la siguiente.', { version: UPD.st.latest }));
   } catch (err) { updateFoot({ error: err.message }); }
 }
 
@@ -774,7 +823,7 @@ async function installUpdate(force = false) {
   openUpdateDialog();
   UPD.busy = true;
   drawUpdateBar();
-  updateFoot({ progress: st.staged ? 'Reiniciando…' : `Descargando y verificando ${st.latest}…` });
+  updateFoot({ progress: st.staged ? t('Reiniciando…') : t('Descargando y verificando {version}…', { version: st.latest }) });
   try {
     const r = st.staged
       ? await api('/api/update/restart', { method: 'POST', body: {} })
@@ -782,10 +831,10 @@ async function installUpdate(force = false) {
     if (!r.restarting) {
       UPD.busy = false;
       await checkUpdate();
-      updateFoot({ done: true, note: `Listo: la ${r.version || st.latest} quedó instalada. Cierra StudyHomie y vuelve a abrirlo para usarla.` });
+      updateFoot({ done: true, note: t('Listo: la {version} quedó instalada. Cierra StudyHomie y vuelve a abrirlo para usarla.', { version: r.version || st.latest }) });
       return;
     }
-    updateFoot({ progress: 'Reiniciando StudyHomie…' });
+    updateFoot({ progress: t('Reiniciando StudyHomie…') });
     await waitForVersion(r.version || st.latest);
   } catch (err) {
     UPD.busy = false;
@@ -806,7 +855,7 @@ async function waitForVersion(tag) {
     } catch { /* still restarting */ }
     await sleep(1000);
   }
-  throw new Error('StudyHomie no volvió a arrancar solo. Ábrelo de nuevo: la versión nueva ya está instalada.');
+  throw new Error(t('StudyHomie no volvió a arrancar solo. Ábrelo de nuevo: la versión nueva ya está instalada.'));
 }
 
 $('#update-notes').addEventListener('click', openUpdateDialog);
@@ -818,40 +867,40 @@ $('#update-close').addEventListener('click', () => $('#update-dialog').close());
 function updateSection(row) {
   const st = UPD.st;
   if (!st) return null;
-  const head = h('h3', {}, 'Actualizaciones');
+  const head = h('h3', {}, t('Actualizaciones'));
   if (!st.enabled) {
     return h('section', { class: 'set-section' }, head,
-      row('Versión', h('p', { class: 'set-facts' }, `${st.current} · compilación de desarrollo: no se actualiza sola.`)));
+      row(t('Versión'), h('p', { class: 'set-facts' }, t('{version} · compilación de desarrollo: no se actualiza sola.', { version: st.current }))));
   }
   const result = h('p', { class: 'set-result', role: 'status' });
   const say = (cls, text) => { result.className = `set-result ${cls}`; result.textContent = text; };
-  const mode = h('select', { 'aria-label': 'Al salir una versión nueva', onchange: async (e) => {
+  const mode = h('select', { 'aria-label': t('Al salir una versión nueva'), onchange: async (e) => {
     try {
       UPD.st = await api('/api/update/mode', { method: 'POST', body: { mode: e.target.value } });
       drawUpdateBar();
-      say('ok', 'Guardado.');
+      say('ok', t('Guardado.'));
     } catch (err) { say('bad', err.message); }
   } }, Object.entries(UPDATE_MODES).map(([v, label]) => h('option', { value: v, selected: v === st.mode || null }, label)));
 
   let line;
-  if (st.staged) line = `La ${st.latest} ya está instalada: se usa al reiniciar.`;
-  else if (st.available) line = `Hay una versión nueva: ${st.latest}.`;
-  else if (st.latest) line = 'Tienes la última versión.';
-  else line = fmtDay(st.checked) ? 'Todavía no hay versiones publicadas.' : 'Todavía no se buscó.';
-  const checked = fmtDay(st.checked) ? ` Última búsqueda: ${new Date(st.checked).toLocaleString('es', { dateStyle: 'medium', timeStyle: 'short' })}.` : '';
+  if (st.staged) line = t('La {version} ya está instalada: se usa al reiniciar.', { version: st.latest });
+  else if (st.available) line = t('Hay una versión nueva: {version}.', { version: st.latest });
+  else if (st.latest) line = t('Tienes la última versión.');
+  else line = fmtDay(st.checked) ? t('Todavía no hay versiones publicadas.') : t('Todavía no se buscó.');
+  const checked = fmtDay(st.checked) ? ' ' + t('Última búsqueda: {when}.', { when: new Date(st.checked).toLocaleString(LOCALE, { dateStyle: 'medium', timeStyle: 'short' }) }) : '';
   if (st.error) say('bad', st.error);
 
   const find = h('button', { class: 'btn small ghost', type: 'button', onclick: async (e) => {
     e.currentTarget.disabled = true;
-    say('', 'Buscando…');
+    say('', t('Buscando…'));
     await checkUpdate(true);
     drawSettings();
-  } }, icon('refresh-cw'), 'Buscar ahora');
-  const see = st.available ? h('button', { class: 'btn small primary', type: 'button', onclick: openUpdateDialog }, st.staged ? 'Reiniciar' : 'Ver y actualizar') : null;
+  } }, icon('refresh-cw'), t('Buscar ahora'));
+  const see = st.available ? h('button', { class: 'btn small primary', type: 'button', onclick: openUpdateDialog }, st.staged ? t('Reiniciar') : t('Ver y actualizar')) : null;
 
   return h('section', { class: 'set-section' }, head,
-    row('Versión', h('p', { class: 'set-facts' }, h('strong', {}, st.current), ` · ${line}${checked}`)),
-    row('Al salir una nueva', mode),
+    row(t('Versión'), h('p', { class: 'set-facts' }, h('strong', {}, st.current), ` · ${line}${checked}`)),
+    row(t('Al salir una nueva'), mode),
     row('', h('div', { class: 'set-actions' }, see, find), result));
 }
 
@@ -868,9 +917,9 @@ $('#btn-layout').addEventListener('click', (e) => {
       S.dock.getPanel(id) ? '● ' : '○ ', title)),
     h('hr'),
     h('button', { type: 'button', onclick: () => { menu.hidden = true; setLayoutEditing(!S.editingLayout); } },
-      icon(S.editingLayout ? 'lock' : 'lock-open'), S.editingLayout ? 'Terminar de editar' : 'Editar diseño'),
-    h('button', { type: 'button', onclick: () => { menu.hidden = true; store.set('dock', null); defaultLayout(); toast('Diseño restablecido.'); } },
-      icon('rotate-ccw'), 'Restablecer diseño'));
+      icon(S.editingLayout ? 'lock' : 'lock-open'), S.editingLayout ? t('Terminar de editar') : t('Editar diseño')),
+    h('button', { type: 'button', onclick: () => { menu.hidden = true; store.set('dock', null); defaultLayout(); toast(t('Diseño restablecido.')); } },
+      icon('rotate-ccw'), t('Restablecer diseño')));
   menu.hidden = false;
   $('#btn-layout').setAttribute('aria-expanded', 'true');
 });
@@ -948,18 +997,18 @@ function explainPop(a, slug) {
   const pend = (S.note && (S.note.meta.pending || []).find((p) => p.id === slug || p.id === foldSlug(slug))) || nodeOf(slug) || {};
   const guide = owningGuide(slug);
   pop.replaceChildren(
-    h('p', { class: 'eyebrow' }, 'Aún sin nota'),
+    h('p', { class: 'eyebrow' }, t('Aún sin nota')),
     h('h4', {}, pend.title || pend.label || title),
-    h('p', {}, pend.summary || 'Escribo una nota corta, con lo justo para seguir la guía. Queda en tu vault.'),
+    h('p', {}, pend.summary || t('Escribo una nota corta, con lo justo para seguir la guía. Queda en tu vault.')),
     h('div', { class: 'actions' },
       h('button', { class: 'btn small primary', type: 'button', onclick: () => {
         pop.hidden = true;
         explainConcept(slug, { guide, title: pend.title || title, el: a });
-      } }, icon('sparkles'), 'Explicar'),
+      } }, icon('sparkles'), t('Explicar')),
       h('button', { class: 'btn small ghost', type: 'button', onclick: () => {
         pop.hidden = true;
-        chatAction({ action: 'guide', topic: pend.title || title, depth: S.depth }, `Guía: ${pend.title || title}`);
-      } }, 'Guía completa')));
+        chatAction({ action: 'guide', topic: pend.title || title, depth: S.depth }, t('Guía: {topic}', { topic: pend.title || title }));
+      } }, t('Guía completa'))));
   pop.hidden = false;
   const r = a.getBoundingClientRect();
   const w = pop.offsetWidth, ht = pop.offsetHeight;
@@ -976,7 +1025,7 @@ function owningGuide(slug) {
 
 // Writes the note of a concept under water. el (a link or a pill) shows that it is being written.
 async function explainConcept(ref, { guide = S.guide, title = ref, el } = {}) {
-  if (!guide) { chatAction({ action: 'concept', title }, `Explícame «${title}»`); return; }
+  if (!guide) { chatAction({ action: 'concept', title }, t('Explícame «{title}»', { title })); return; }
   el?.classList.add('writing');
   try {
     const r = await api(`/api/notes/${encodeURIComponent(guide)}/explain`, { method: 'POST', body: { ref } });
@@ -984,7 +1033,7 @@ async function explainConcept(ref, { guide = S.guide, title = ref, el } = {}) {
     await loadGraph();
     if (S.guide === guide) await reloadGuide(); else renderConcepts();
     if (S.concept) { try { S.concept = await api(`/api/notes/${encodeURIComponent(S.concept.slug)}`); renderConcepts(); } catch { /* it stays as it was */ } }
-    toast(`«${title}» ya tiene su nota.`);
+    toast(t('«{title}» ya tiene su nota.', { title }));
   } catch (err) {
     el?.classList.remove('writing');
     toast(err.message);
@@ -992,7 +1041,7 @@ async function explainConcept(ref, { guide = S.guide, title = ref, el } = {}) {
 }
 
 function openSim(slug, title) {
-  $('#sim-title').textContent = title || 'Simulación';
+  $('#sim-title').textContent = title || t('Simulación');
   $('#sim-frame').src = `/interactive/${encodeURIComponent(slug)}.html`;
   $('#sim-dialog').showModal();
 }
@@ -1012,7 +1061,7 @@ const roadmapOf = (slug) => S.roadmaps.find((r) => r.slug === slug);
 
 // asks the chat to write (or open) the guide of the topic the learner is on
 function nextTopic(rm, step) {
-  chatAction({ action: 'next', roadmap: rm.slug }, `Siguiente tema: ${step.title}`);
+  chatAction({ action: 'next', roadmap: rm.slug }, t('Siguiente tema: {title}', { title: step.title }));
 }
 
 // One roadmap as a numbered path: passed topics show their score, the current one opens (or gets
@@ -1029,11 +1078,11 @@ function roadmapPath(rm, { open = true } = {}) {
     const mark = st.state === 'passed' ? icon('check') : st.state === 'locked' ? icon('lock') : h('span', {}, String(st.n));
     let side = null;
     if (st.state === 'passed') side = h('small', { class: 'rm-score' }, `${st.mastery}/100`);
-    else if (st.state === 'locked') side = h('small', { class: 'rm-wait' }, 'Bloqueado');
+    else if (st.state === 'locked') side = h('small', { class: 'rm-wait' }, t('Bloqueado'));
     else if (!st.ready && open) {
       side = h('button', { class: 'btn small primary', type: 'button', onclick: (e) => { e.stopPropagation(); nextTopic(rm, st); } },
-        icon('sparkles'), 'Escribir la guía');
-    } else if (st.ready) side = h('small', { class: 'rm-now' }, st.mastery ? `${st.mastery}/100 · necesitas ${rm.pass}` : 'Ahora');
+        icon('sparkles'), t('Escribir la guía'));
+    } else if (st.ready) side = h('small', { class: 'rm-now' }, st.mastery ? t('{mastery}/100 · necesitas {pass}', { mastery: st.mastery, pass: rm.pass }) : t('Ahora'));
     const canOpen = open && st.ready && st.state !== 'locked'; // a locked topic stays closed, even with a guide from before
     const row = h(canOpen ? 'button' : 'div', {
       class: 'rm-step', type: canOpen ? 'button' : null, title: st.summary || null,
@@ -1048,7 +1097,7 @@ function roadmapPath(rm, { open = true } = {}) {
 
 function roadmapHint(rm) {
   const done = (rm.steps || []).filter((s) => s.state === 'passed').length;
-  return `${done} de ${(rm.steps || []).length} · cada tema se desbloquea con ${rm.pass}/100 en el anterior`;
+  return t('{done} de {total} · cada tema se desbloquea con {pass}/100 en el anterior', { done, total: (rm.steps || []).length, pass: rm.pass });
 }
 
 // every guide, grouped by roadmap: what the panel offers when no guide is open
@@ -1066,7 +1115,7 @@ function guideList() {
     h('h3', {}, icon('map'), groupTitle(k)),
     h('p', { class: 'rm-hint' }, roadmapHint(roadmapOf(k))),
     roadmapPath(roadmapOf(k))) : h('section', { class: 'dg' },
-    h('h3', {}, k ? groupTitle(k) : 'Tus guías'),
+    h('h3', {}, k ? groupTitle(k) : t('Tus guías')),
     h('ul', {}, groups.get(k).sort((a, b) => (a.order || 0) - (b.order || 0) || a.label.localeCompare(b.label)).map((n) => h('li', {},
       h('button', { class: 'dn', type: 'button', style: `--lc: ${lineColor(n.group)}`, onclick: () => openNote(n.id) },
         h('i', { class: `st st-${n.status}`, title: STATUS[n.status] || n.status }), n.label)))))));
@@ -1076,20 +1125,20 @@ function guideList() {
 function pathSection(rm, st, title) {
   const next = rm.steps[st.n]; // steps are numbered from 1
   let line;
-  if (!next) line = h('p', {}, st.state === 'passed' ? `Completaste «${rm.title}».` : `Es el último tema de «${rm.title}».`);
+  if (!next) line = h('p', {}, st.state === 'passed' ? t('Completaste «{title}».', { title: rm.title }) : t('Es el último tema de «{title}».', { title: rm.title }));
   else if (st.state !== 'passed') {
-    line = h('p', {}, `El tema ${next.n}, «${next.title}», se desbloquea cuando saques ${rm.pass}/100 o más en «${title}»`,
-      st.mastery ? ` (llevas ${st.mastery}).` : ', con la prueba o explicándolo.');
+    line = h('p', {}, t('El tema {n}, «{next}», se desbloquea cuando saques {pass}/100 o más en «{title}»', { n: next.n, next: next.title, pass: rm.pass, title }),
+      st.mastery ? ' ' + t('(llevas {mastery}).', { mastery: st.mastery }) : t(', con la prueba o explicándolo.'));
   } else if (next.ready) {
-    line = h('button', { class: 'neighbor', type: 'button', onclick: () => openNote(next.slug) }, h('small', {}, `Tema ${next.n}`), h('strong', {}, next.title));
+    line = h('button', { class: 'neighbor', type: 'button', onclick: () => openNote(next.slug) }, h('small', {}, t('Tema {n}', { n: next.n })), h('strong', {}, next.title));
   } else {
     line = h('div', { class: 'actions' }, h('button', { class: 'btn small primary', type: 'button', onclick: () => nextTopic(rm, next) },
-      icon('sparkles'), `Escribir el tema ${next.n}: ${next.title}`));
+      icon('sparkles'), t('Escribir el tema {n}: {title}', { n: next.n, title: next.title })));
   }
-  return h('section', { class: 'r-path' }, h('h2', {}, 'En la ruta'),
+  return h('section', { class: 'r-path' }, h('h2', {}, t('En la ruta')),
     h('p', { class: 'r-path-sub' }, `«${rm.title}» · ${roadmapHint(rm)}`), line,
     st.state !== 'passed' && next ? h('div', { class: 'actions' },
-      h('button', { class: 'btn small', type: 'button', onclick: () => show('practice') }, icon('target'), 'Practicar')) : null);
+      h('button', { class: 'btn small', type: 'button', onclick: () => show('practice') }, icon('target'), t('Practicar'))) : null);
 }
 
 function renderReader(n) {
@@ -1097,8 +1146,8 @@ function renderReader(n) {
   root.replaceChildren();
   if (!n) {
     root.append(h('div', { class: 'panel-empty' },
-      h('h3', {}, 'Aquí aparecerá tu guía'),
-      h('p', {}, 'Pide en el chat lo que quieras entender. «Escribir ahora» decide cuántos niveles de conceptos base se escriben de entrada; los demás quedan mapeados, en gris, para explicarlos cuando los necesites.'),
+      h('h3', {}, t('Aquí aparecerá tu guía')),
+      h('p', {}, t('Pide en el chat lo que quieras entender. «Escribir ahora» decide cuántos niveles de conceptos base se escriben de entrada; los demás quedan mapeados, en gris, para explicarlos cuando los necesites.')),
       guideList() || ''));
     return;
   }
@@ -1112,43 +1161,43 @@ function renderReader(n) {
   const rmStep = rm ? (rm.steps || []).find((s) => s.slug === n.slug) : null;
   const wrap = h('div', { class: 'reader-wrap', style: `--line-c: ${lineColor(node ? node.group : '')}` });
   wrap.append(h('header', { class: 'r-head' },
-    h('button', { class: 'crumb', type: 'button', onclick: closeGuide }, icon('arrow-left'), 'Todas las guías'),
-    h('p', { class: 'r-line' }, m.roadmap ? groupTitle(m.roadmap) : 'Guía'),
+    h('button', { class: 'crumb', type: 'button', onclick: closeGuide }, icon('arrow-left'), t('Todas las guías')),
+    h('p', { class: 'r-line' }, m.roadmap ? groupTitle(m.roadmap) : t('Guía')),
     h('h1', {}, title),
     h('div', { class: 'chips' }, statusChip(status),
-      rmStep ? h('span', { class: 'chip' }, `Tema ${rmStep.n} de ${rm.steps.length}`) : null,
+      rmStep ? h('span', { class: 'chip' }, t('Tema {n} de {total}', { n: rmStep.n, total: rm.steps.length })) : null,
       m.focus ? h('span', { class: 'chip' }, `Foco: ${m.focus}`) : null,
       m.field ? h('span', { class: 'chip' }, m.field) : null),
     m.mastery ? h('div', { class: 'mastery' },
-      h('div', { class: 'row' }, h('span', {}, 'Lo que llevas'), h('span', {}, `${m.mastery}/100`)),
+      h('div', { class: 'row' }, h('span', {}, t('Lo que llevas')), h('span', {}, `${m.mastery}/100`)),
       h('div', { class: 'bar' }, h('i', { style: `width:${m.mastery}%; background: var(--line-c)` }))) : null,
     h('div', { class: 'actions' },
       concepts.length || under ? h('button', { class: 'btn small yellow', type: 'button', onclick: () => show('concepts') },
-        icon('mountain-snow'), `${concepts.length} conceptos${under ? ` · ${under} bajo el agua` : ''}`) : null,
-      status !== 'new' ? h('button', { class: 'btn small', type: 'button', onclick: () => show('practice') }, icon('target'), 'Practicar') : null,
+        icon('mountain-snow'), tn(concepts.length, '{n} concepto', '{n} conceptos') + (under ? ' · ' + t('{n} bajo el agua', { n: under }) : '')) : null,
+      status !== 'new' ? h('button', { class: 'btn small', type: 'button', onclick: () => show('practice') }, icon('target'), t('Practicar')) : null,
       notesButton(n.slug, title, n.apunte),
-      h('button', { class: 'btn small ghost', type: 'button', onclick: () => askAbout(`Sobre «${title}»: `) }, icon('message-circle'), 'Preguntar'))));
+      h('button', { class: 'btn small ghost', type: 'button', onclick: () => askAbout(t('Sobre «{title}»:', { title }) + ' ') }, icon('message-circle'), t('Preguntar')))));
 
   const article = h('article', { class: 'r-article' });
   const bodySrc = stripEmoji(stripSection(n.body, 'Recursos')).trim();
   if (bodySrc) {
     const md = mdBlock(bodySrc, { viz: vizCtx(n.slug) });
-    for (const hd of $$('h2', md)) hd.textContent = SECTION[hd.textContent.trim()] || hd.textContent;
+    for (const hd of $$('h2', md)) hd.textContent = SECTION[sectionKey(hd.textContent)] || hd.textContent;
     article.append(md);
   } else {
-    article.append(h('p', { class: 'r-empty' }, 'Esta nota aún no tiene guía. Pídela en el chat.'));
+    article.append(h('p', { class: 'r-empty' }, t('Esta nota aún no tiene guía. Pídela en el chat.')));
   }
   const res = m.resources || [];
   if (res.length) {
-    article.append(h('section', { class: 'r-resources' }, h('h2', {}, 'Para seguir explorando'),
+    article.append(h('section', { class: 'r-resources' }, h('h2', {}, t('Para seguir explorando')),
       h('ul', { class: 'res-list' }, res.map((r) => resourceCard(r, { slug: n.slug, title })))));
   }
   const back = (n.backlinks || []).filter((b) => !concepts.some((c) => c.slug === b.slug));
   const before = n.requires || [];
   if (before.length || back.length) {
     const nb = (label, l) => h('button', { class: 'neighbor', type: 'button', onclick: () => openNote(l.slug) }, h('small', {}, label), h('strong', {}, l.title));
-    article.append(h('section', { class: 'r-next' }, h('h2', {}, 'Relacionado'),
-      before.map((l) => nb('Antes', l)), back.map((l) => nb('Enlaza aquí', l))));
+    article.append(h('section', { class: 'r-next' }, h('h2', {}, t('Relacionado')),
+      before.map((l) => nb(t('Antes'), l)), back.map((l) => nb(t('Enlaza aquí'), l))));
   }
   if (rmStep) article.append(pathSection(rm, rmStep, title));
   wrap.append(article);
@@ -1169,7 +1218,7 @@ function videoPlayer(r, id) {
       allow: 'accelerometer; autoplay; encrypted-media; picture-in-picture; fullscreen', allowfullscreen: '',
       referrerpolicy: 'strict-origin-when-cross-origin',
     })),
-  }, h('span', { class: 'play-icon', 'aria-hidden': 'true' }, '▶'), h('span', {}, 'Reproducir aquí'), h('small', {}, 'Carga YouTube al hacer clic')));
+  }, h('span', { class: 'play-icon', 'aria-hidden': 'true' }, '▶'), h('span', {}, t('Reproducir aquí')), h('small', {}, t('Carga YouTube al hacer clic'))));
   return frame;
 }
 
@@ -1187,8 +1236,8 @@ function resourceCard(r, ctx = {}) {
   const local = r.url && /^interactive\/([^/]+)\.html$/.exec(r.url);
   if (local) return h('li', { class: 'res' }, head(h('button', { class: 'link', type: 'button', onclick: () => openSim(local[1], ctx.title) }, r.title)), why);
   if (r.type === 'interactive') {
-    return h('li', { class: 'res' }, head(h('strong', {}, `${r.title} (propuesta)`)), why,
-      ctx.slug && h('div', {}, h('button', { class: 'btn small', type: 'button', onclick: () => chatAction({ action: 'interactive', brief: r.why || '' }, `Simulación: ${ctx.title}`) }, 'Generar')));
+    return h('li', { class: 'res' }, head(h('strong', {}, t('{title} (propuesta)', { title: r.title }))), why,
+      ctx.slug && h('div', {}, h('button', { class: 'btn small', type: 'button', onclick: () => chatAction({ action: 'interactive', brief: r.why || '' }, t('Simulación: {title}', { title: ctx.title })) }, t('Generar'))));
   }
   return h('li', { class: 'res' }, head(h('strong', {}, r.title)), why);
 }
@@ -1209,7 +1258,7 @@ function conceptLevels(n) {
   for (const c of list) if (!level.has(c.slug)) level.set(c.slug, 1);
   return level;
 }
-const levelName = (l) => (l === 1 ? 'Lo que el tema usa directamente' : l === 2 ? 'Lo que eso necesita' : `Más hondo (nivel ${l})`);
+const levelName = (l) => (l === 1 ? t('Lo que el tema usa directamente') : l === 2 ? t('Lo que eso necesita') : t('Más hondo (nivel {n})', { n: l }));
 
 function renderConcepts() {
   const root = PANE_EL.concepts;
@@ -1230,44 +1279,44 @@ function renderConcepts() {
     const pill = (c, isPending) => {
       const el = h('button', {
         class: `ice-pill${isPending ? ' pending' : ''}${S.lit === (c.slug || c.id) ? ' lit' : ''}`, type: 'button', style: `--i:${i++}`,
-        title: isPending ? 'Aún sin nota: pulsa para explicarlo' : 'Abrir la nota',
+        title: isPending ? t('Aún sin nota: pulsa para explicarlo') : t('Abrir la nota'),
         onclick: () => (isPending ? explainConcept(c.id, { guide: n.slug, title: c.title, el }) : openNote(c.slug)),
-      }, h('strong', {}, c.title), c.summary ? h('small', {}, c.summary) : null, isPending ? h('span', { class: 'go' }, 'Explicar') : null);
+      }, h('strong', {}, c.title), c.summary ? h('small', {}, c.summary) : null, isPending ? h('span', { class: 'go' }, t('Explicar')) : null);
       return el;
     };
     box.append(
       h('header', { class: 'c-head' },
-        h('p', { class: 'eyebrow' }, 'Lo que hay debajo'),
+        h('p', { class: 'eyebrow' }, t('Lo que hay debajo')),
         h('h2', {}, n.meta.title),
         h('p', { class: 'hint' }, pending.length
-          ? 'Lo blanco ya tiene nota. Lo punteado está mapeado pero sin escribir: explícalo solo si lo necesitas.'
-          : 'Cada nivel sostiene al de arriba. Si algo no se entiende, baja un nivel.')),
+          ? t('Lo blanco ya tiene nota. Lo punteado está mapeado pero sin escribir: explícalo solo si lo necesitas.')
+          : t('Cada nivel sostiene al de arriba. Si algo no se entiende, baja un nivel.'))),
       h('div', { class: 'iceberg' },
         h('div', { class: 'ice-tip' }, h('span', { class: 'tip' }, n.meta.title), h('span', { class: 'ice-wave', 'aria-hidden': 'true' })),
         h('ol', { class: 'ice-levels' }, keys.map((l) => {
           const g = levels.get(l);
           return h('li', { class: `ice-level${l > 1 ? ' deep' : ''}`, style: `--fade:${Math.max(0, 1 - (l - 1) * 0.22)}` },
-            h('h3', {}, levelName(l), h('small', {}, g.pending.length ? `${g.pending.length} por explicar` : '')),
+            h('h3', {}, levelName(l), h('small', {}, g.pending.length ? t('{n} por explicar', { n: g.pending.length }) : '')),
             h('div', { class: 'ice-pills' }, g.written.map((c) => pill(c, !c.exists)), g.pending.map((p) => pill(p, true))));
         }))),
       h('div', { class: 'ice-legend' },
-        h('span', {}, h('i', { class: 'st st-concept' }), 'Con nota'),
-        h('span', {}, h('i', { class: 'st st-pending' }), 'Por explicar (se escribe al pulsarlo)')));
+        h('span', {}, h('i', { class: 'st st-concept' }), t('Con nota')),
+        h('span', {}, h('i', { class: 'st st-pending' }), t('Por explicar (se escribe al pulsarlo)'))));
     S.lit = '';
   } else if (n) {
-    box.append(h('div', { class: 'panel-empty' }, h('h3', {}, 'Esta guía no tiene conceptos mapeados'),
-      h('p', {}, 'Las guías nuevas mapean todo lo que dan por sabido. También puedes pedir en el chat la nota de un concepto concreto.')));
+    box.append(h('div', { class: 'panel-empty' }, h('h3', {}, t('Esta guía no tiene conceptos mapeados')),
+      h('p', {}, t('Las guías nuevas mapean todo lo que dan por sabido. También puedes pedir en el chat la nota de un concepto concreto.'))));
   }
   const all = ((S.graph && S.graph.nodes) || []).filter((x) => x.kind === 'concept');
   if (all.length) {
     const byCat = new Map();
-    for (const c of all) { const k = c.category || 'sin categoría'; if (!byCat.has(k)) byCat.set(k, []); byCat.get(k).push(c); }
+    for (const c of all) { const k = c.category || t('sin categoría'); if (!byCat.has(k)) byCat.set(k, []); byCat.get(k).push(c); }
     box.append(h('details', { class: 'all-concepts', open: !n || null },
-      h('summary', {}, `Todos tus conceptos (${all.length})`),
+      h('summary', {}, t('Todos tus conceptos ({n})', { n: all.length })),
       [...byCat].sort((a, b) => a[0].localeCompare(b[0])).map(([cat, list]) => h('section', { class: 'dg' }, h('h3', {}, cat),
         h('div', { class: 'links' }, list.sort((a, b) => a.label.localeCompare(b.label)).map((c) => h('button', { type: 'button', onclick: () => openNote(c.id) }, c.label)))))));
   } else if (!n) {
-    box.append(h('div', { class: 'panel-empty' }, h('h3', {}, 'Aún no hay conceptos'), h('p', {}, 'Cuando pidas una guía, aquí verás su iceberg: lo que tiene nota y lo que queda por explicar.')));
+    box.append(h('div', { class: 'panel-empty' }, h('h3', {}, t('Aún no hay conceptos')), h('p', {}, t('Cuando pidas una guía, aquí verás su iceberg: lo que tiene nota y lo que queda por explicar.'))));
   }
   root.append(box);
 }
@@ -1278,16 +1327,16 @@ function conceptReader(c) {
   const body = stripEmoji(c.body.replace(/^# .*\n+/, '')).trim();
   return h('div', { class: 'reader-wrap concept', style: `--line-c: ${lineColor(node ? node.group : '')}` },
     h('header', { class: 'r-head' },
-      h('button', { class: 'crumb', type: 'button', onclick: () => { vt(() => { S.concept = null; renderConcepts(); }); } }, icon('arrow-left'), S.note ? `Iceberg de ${S.note.meta.title}` : 'Conceptos'),
-      h('p', { class: 'r-line' }, ['Concepto', m.category].filter(Boolean).join(' · ')),
+      h('button', { class: 'crumb', type: 'button', onclick: () => { vt(() => { S.concept = null; renderConcepts(); }); } }, icon('arrow-left'), S.note ? t('Iceberg de {title}', { title: S.note.meta.title }) : t('Conceptos')),
+      h('p', { class: 'r-line' }, [t('Concepto'), m.category].filter(Boolean).join(' · ')),
       h('h1', {}, m.title || c.slug),
       (m.aliases || []).length ? h('div', { class: 'chips' }, m.aliases.map((a) => h('span', { class: 'chip' }, a))) : null,
-      (c.requires || []).length ? h('div', { class: 'c-req' }, h('span', { class: 'hint' }, 'Se apoya en'), h('div', { class: 'links' }, c.requires.map((l) => h('button', { type: 'button', onclick: () => (writtenNode(l.slug) ? openNote(l.slug) : explainConcept(l.slug, { title: l.title, guide: owningGuide(l.slug) })) }, l.title)))) : null,
+      (c.requires || []).length ? h('div', { class: 'c-req' }, h('span', { class: 'hint' }, t('Se apoya en')), h('div', { class: 'links' }, c.requires.map((l) => h('button', { type: 'button', onclick: () => (writtenNode(l.slug) ? openNote(l.slug) : explainConcept(l.slug, { title: l.title, guide: owningGuide(l.slug) })) }, l.title)))) : null,
       h('div', { class: 'actions' }, notesButton(c.slug, m.title || c.slug, c.apunte),
-        h('button', { class: 'btn small ghost', type: 'button', onclick: () => askAbout(`Sobre «${m.title}»: `) }, icon('message-circle'), 'Preguntar'))),
+        h('button', { class: 'btn small ghost', type: 'button', onclick: () => askAbout(t('Sobre «{title}»:', { title: m.title }) + ' ') }, icon('message-circle'), t('Preguntar')))),
     h('article', { class: 'r-article' }, mdBlock(stripSection(body, 'Aparece en'), { viz: vizCtx(c.slug) }),
-      (c.guides || []).length ? h('section', { class: 'r-next' }, h('h2', {}, 'Aparece en'),
-        c.guides.map((g) => h('button', { class: 'neighbor', type: 'button', onclick: () => openNote(g.slug) }, h('small', {}, 'Guía'), h('strong', {}, g.title)))) : null));
+      (c.guides || []).length ? h('section', { class: 'r-next' }, h('h2', {}, t('Aparece en')),
+        c.guides.map((g) => h('button', { class: 'neighbor', type: 'button', onclick: () => openNote(g.slug) }, h('small', {}, t('Guía')), h('strong', {}, g.title)))) : null));
 }
 
 function askAbout(prefix) {
@@ -1304,7 +1353,7 @@ const N = { slug: '', title: '', body: '', file: '', mode: 'view', status: '', t
 
 function notesButton(slug, title, has) {
   return h('button', { class: 'btn small ghost', type: 'button', onclick: () => openNotes(slug, title) },
-    icon('notebook-pen'), has ? 'Mis apuntes' : 'Tomar apuntes');
+    icon('notebook-pen'), has ? t('Mis apuntes') : t('Tomar apuntes'));
 }
 
 async function openNotes(slug, title) {
@@ -1314,7 +1363,7 @@ async function openNotes(slug, title) {
   try {
     const r = await api(`/api/apuntes/${encodeURIComponent(slug)}`);
     if (N.slug !== slug) return;
-    Object.assign(N, { body: r.body, file: r.file, loading: false, mode: r.body.trim() ? 'view' : 'edit', status: r.updated ? `Guardado el ${r.updated}` : '' });
+    Object.assign(N, { body: r.body, file: r.file, loading: false, mode: r.body.trim() ? 'view' : 'edit', status: r.updated ? t('Guardado el {when}', { when: r.updated }) : '' });
   } catch (err) { N.loading = false; N.status = err.message; }
   renderNotes();
 }
@@ -1335,8 +1384,8 @@ function renderNotes() {
   if (!N.slug) {
     const target = S.concept && isShown('concepts') ? S.concept : S.note;
     if (target) { openNotes(target.slug, target.meta.title || target.slug); return; }
-    root.replaceChildren(h('div', { class: 'panel-empty' }, h('h3', {}, 'Apuntes'),
-      h('p', {}, 'Abre una guía o un concepto y pulsa «Tomar apuntes»: lo que escribas queda junto a esa nota, en tu vault.')));
+    root.replaceChildren(h('div', { class: 'panel-empty' }, h('h3', {}, t('Apuntes')),
+      h('p', {}, t('Abre una guía o un concepto y pulsa «Tomar apuntes»: lo que escribas queda junto a esa nota, en tu vault.'))));
     return;
   }
   const status = h('span', { class: 'notes-status', role: 'status' }, N.status);
@@ -1344,10 +1393,10 @@ function renderNotes() {
   file.addEventListener('change', () => { attachToNotes(file.files); file.value = ''; });
   const mode = (m, label) => h('button', { type: 'button', 'aria-pressed': String(N.mode === m), onclick: () => { N.mode = m; renderNotes(); } }, label);
   let editor;
-  if (N.loading) editor = h('p', { class: 'hint' }, 'Cargando…');
+  if (N.loading) editor = h('p', { class: 'hint' }, t('Cargando…'));
   else if (N.mode === 'edit') {
-    editor = h('textarea', { class: 'notes-text', 'aria-label': `Apuntes de ${N.title}`, spellcheck: 'true',
-      placeholder: 'Lo que entendiste, tus dudas, fórmulas con $…$, enlaces a otras notas con [[…]].\nPega o arrastra imágenes y archivos aquí.' });
+    editor = h('textarea', { class: 'notes-text', 'aria-label': t('Apuntes de {title}', { title: N.title }), spellcheck: 'true',
+      placeholder: t('Lo que entendiste, tus dudas, fórmulas con $…$, enlaces a otras notas con [[…]].\nPega o arrastra imágenes y archivos aquí.') });
     editor.value = N.body;
     editor.addEventListener('input', () => { N.body = editor.value; scheduleNotesSave(); });
     editor.addEventListener('blur', () => flushNotes());
@@ -1357,23 +1406,23 @@ function renderNotes() {
     editor.addEventListener('drop', (e) => { editor.classList.remove('drop'); if (e.dataTransfer.files.length) { e.preventDefault(); attachToNotes(e.dataTransfer.files, editor); } });
   } else {
     editor = N.body.trim() ? h('div', { class: 'notes-view', ondblclick: () => { N.mode = 'edit'; renderNotes(); } }, notesMd(N.body))
-      : h('p', { class: 'hint' }, 'Aún no escribiste nada aquí. Pulsa «Escribir».');
+      : h('p', { class: 'hint' }, t('Aún no escribiste nada aquí. Pulsa «Escribir».'));
   }
   root.replaceChildren(h('div', { class: 'notes' },
-    h('p', { class: 'eyebrow' }, 'Apuntes'),
+    h('p', { class: 'eyebrow' }, t('Apuntes')),
     h('h2', {}, h('a', { href: `#note/${N.slug}` }, N.title)),
     h('div', { class: 'notes-bar' },
-      h('div', { class: 'seg', role: 'group', 'aria-label': 'Modo' }, mode('edit', 'Escribir'), mode('view', 'Ver')),
-      h('button', { class: 'btn small ghost', type: 'button', onclick: () => file.click() }, icon('paperclip'), 'Adjuntar'),
+      h('div', { class: 'seg', role: 'group', 'aria-label': t('Modo') }, mode('edit', t('Escribir')), mode('view', t('Ver'))),
+      h('button', { class: 'btn small ghost', type: 'button', onclick: () => file.click() }, icon('paperclip'), t('Adjuntar')),
       file, status),
     editor,
-    h('p', { class: 'hint notes-foot' }, `Se guardan solos en ${N.file || `apuntes/${N.slug}.md`} de tu vault.`)));
+    h('p', { class: 'hint notes-foot' }, t('Se guardan solos en {file} de tu vault.', { file: N.file || `apuntes/${N.slug}.md` }))));
   if (N.mode === 'edit' && editor.tagName === 'TEXTAREA') editor.focus({ preventScroll: true });
 }
 
 function scheduleNotesSave() {
   clearTimeout(N.timer);
-  setNotesStatus('Sin guardar…');
+  setNotesStatus(t('Sin guardar…'));
   N.timer = setTimeout(() => flushNotes(), 700);
 }
 function setNotesStatus(text) {
@@ -1386,15 +1435,15 @@ async function flushNotes() {
   clearTimeout(N.timer);
   N.timer = null;
   const { slug, body } = N;
-  setNotesStatus('Guardando…');
+  setNotesStatus(t('Guardando…'));
   N.saving = api(`/api/apuntes/${encodeURIComponent(slug)}`, { method: 'PUT', body: { body } })
     .then(() => {
-      if (N.slug === slug) setNotesStatus('Guardado');
+      if (N.slug === slug) setNotesStatus(t('Guardado'));
       const has = !!body.trim();
       if (S.note && S.note.slug === slug && !!S.note.apunte !== has) { S.note.apunte = has; renderReader(S.note); }
       if (S.concept && S.concept.slug === slug && !!S.concept.apunte !== has) { S.concept.apunte = has; renderConcepts(); }
     })
-    .catch((err) => { if (N.slug === slug) setNotesStatus(`No se guardó: ${err.message}`); });
+    .catch((err) => { if (N.slug === slug) setNotesStatus(t('No se guardó: {error}', { error: err.message })); });
   return N.saving;
 }
 // closing the page right after typing: send what is pending, without waiting for the answer
@@ -1410,7 +1459,7 @@ async function attachToNotes(files, editor) {
   if (!files || !files.length) return;
   const fd = new FormData();
   for (const f of files) fd.append('files', f);
-  setNotesStatus('Subiendo…');
+  setNotesStatus(t('Subiendo…'));
   try {
     const r = await api('/api/adjuntos', { method: 'POST', body: fd });
     const text = r.files.map((f) => (f.image ? `![[${f.name}]]` : `[[${f.name}]]`)).join('\n');
@@ -1431,8 +1480,8 @@ async function attachToNotes(files, editor) {
 }
 
 /* ---------- Vault: your vaults, and every note in the one in use ---------- */
-const DIRS = { guias: 'Guía', conceptos: 'Concepto', apuntes: 'Apuntes', roadmaps: 'Roadmap', daily: 'Diario' };
-const DIRS_PLURAL = { guias: 'guías', conceptos: 'conceptos', apuntes: 'apuntes', roadmaps: 'roadmaps', daily: 'días' };
+const DIRS = { guias: t('Guía'), conceptos: t('Concepto'), apuntes: t('Apuntes'), roadmaps: t('Roadmap'), daily: t('Diario') };
+const DIRS_PLURAL = { guias: t('guías'), conceptos: t('conceptos'), apuntes: t('apuntes'), roadmaps: t('roadmaps'), daily: t('días') };
 const VLT = { info: null, files: [], hits: null, q: '', dir: '', adding: false, edit: null, timer: 0 };
 
 function fmtBytes(n) {
@@ -1453,7 +1502,7 @@ async function renderVault() {
 
 function openOutside(app, file) {
   return api('/api/vault/open', { method: 'POST', body: { app, dir: file?.dir || '', slug: file?.slug || '' } })
-    .then(() => toast(app === 'obsidian' ? 'Abriendo en Obsidian…' : 'Abriendo la carpeta…'))
+    .then(() => toast(app === 'obsidian' ? t('Abriendo en Obsidian…') : t('Abriendo la carpeta…')))
     .catch((err) => toast(err.message));
 }
 
@@ -1471,20 +1520,20 @@ function drawVault() {
   const root = PANE_EL.vault;
   const { vaults, root: abs, stats, canPick } = VLT.info;
   const cur = vaults.find((v) => v.current) || { name: abs.split(/[\\/]/).pop() };
-  const ONE = { guias: 'guía', conceptos: 'concepto', apuntes: 'nota de apuntes', roadmaps: 'roadmap', daily: 'día' };
+  const ONE = { guias: t('guía'), conceptos: t('concepto'), apuntes: t('nota de apuntes'), roadmaps: t('roadmap'), daily: t('día') };
   const counts = Object.keys(DIRS).filter((d) => stats.notes[d]).map((d) => `${stats.notes[d]} ${stats.notes[d] === 1 ? ONE[d] : DIRS_PLURAL[d]}`);
 
   // the vaults: one row each, the one in use first
   const vaultRows = h('ul', { class: 'v-list' }, vaults.map((v) => h('li', { class: v.current ? 'on' : null },
     h('div', { class: 'v-main' }, h('strong', {}, v.name), h('small', {}, v.abs)),
-    h('span', { class: 'v-meta' }, v.current ? 'en uso' : !v.exists ? 'no se encuentra' : `${v.guides} guías`),
+    h('span', { class: 'v-meta' }, v.current ? t('en uso') : !v.exists ? t('no se encuentra') : tn(v.guides, '{n} guía', '{n} guías')),
     v.current ? null : h('div', { class: 'v-actions' },
-      v.exists ? h('button', { class: 'btn small', type: 'button', onclick: () => useVault(v.path) }, 'Usar') : null,
-      h('button', { class: 'btn small ghost', type: 'button', title: 'Quitar de la lista (la carpeta no se borra)', onclick: async () => {
+      v.exists ? h('button', { class: 'btn small', type: 'button', onclick: () => useVault(v.path) }, t('Usar')) : null,
+      h('button', { class: 'btn small ghost', type: 'button', title: t('Quitar de la lista (la carpeta no se borra)'), onclick: async () => {
         try { await api('/api/vaults/forget', { method: 'POST', body: { path: v.path } }); renderVault(); } catch (err) { toast(err.message); }
-      } }, 'Quitar')))));
+      } }, t('Quitar'))))));
 
-  const pathIn = h('input', { type: 'text', placeholder: 'D:\\Universidad\\Calculo', 'aria-label': 'Carpeta del vault', spellcheck: 'false' });
+  const pathIn = h('input', { type: 'text', placeholder: t('D:\\Universidad\\Calculo'), 'aria-label': t('Carpeta del vault'), spellcheck: 'false' });
   const addForm = VLT.adding ? h('form', { class: 'v-add', onsubmit: (e) => { e.preventDefault(); if (pathIn.value.trim()) useVault(pathIn.value.trim(), true); } },
     h('div', { class: 'v-add-row' }, pathIn,
       canPick ? h('button', { class: 'btn small ghost', type: 'button', onclick: async (e) => {
@@ -1493,12 +1542,12 @@ function drawVault() {
         try { const r = await api('/api/vaults/pick', { method: 'POST', body: {} }); if (r.path) pathIn.value = r.path; } catch (err) { toast(err.message); }
         b.disabled = false;
         pathIn.focus();
-      } }, icon('folder-open'), 'Elegir carpeta…') : null,
-      h('button', { class: 'btn small primary', type: 'submit' }, 'Abrir')),
-    h('p', { class: 'hint' }, 'Una carpeta vacía (o nueva) se vuelve un vault con sus carpetas; una que ya tiene notas se abre tal cual. Cada vault tiene sus propias conversaciones.')) : null;
+      } }, icon('folder-open'), t('Elegir carpeta…')) : null,
+      h('button', { class: 'btn small primary', type: 'submit' }, t('Abrir'))),
+    h('p', { class: 'hint' }, t('Una carpeta vacía (o nueva) se vuelve un vault con sus carpetas; una que ya tiene notas se abre tal cual. Cada vault tiene sus propias conversaciones.'))) : null;
 
   // the notes: filter by folder, search by title and text
-  const search = h('input', { type: 'search', value: VLT.q, placeholder: 'Buscar en títulos y texto…', 'aria-label': 'Buscar notas' });
+  const search = h('input', { type: 'search', value: VLT.q, placeholder: t('Buscar en títulos y texto…'), 'aria-label': t('Buscar notas') });
   search.addEventListener('input', () => {
     VLT.q = search.value;
     clearTimeout(VLT.timer);
@@ -1507,25 +1556,25 @@ function drawVault() {
       drawNoteList();
     }, 220);
   });
-  const seg = h('div', { class: 'seg', role: 'group', 'aria-label': 'Carpeta' },
-    [['', 'Todas'], ...Object.entries(DIRS).filter(([d]) => stats.notes[d]).map(([d]) => [d, DIRS_PLURAL[d][0].toUpperCase() + DIRS_PLURAL[d].slice(1)])]
+  const seg = h('div', { class: 'seg', role: 'group', 'aria-label': t('Carpeta') },
+    [['', t('Todas')], ...Object.entries(DIRS).filter(([d]) => stats.notes[d]).map(([d]) => [d, DIRS_PLURAL[d][0].toUpperCase() + DIRS_PLURAL[d].slice(1)])]
       .map(([d, label]) => h('button', { type: 'button', 'aria-pressed': String(VLT.dir === d), onclick: () => { VLT.dir = d; drawVault(); } }, label)));
 
   root.replaceChildren(h('div', { class: 'vault' },
-    h('p', { class: 'eyebrow' }, 'Vault'),
+    h('p', { class: 'eyebrow' }, t('Vault')),
     h('h2', {}, cur.name),
     h('p', { class: 'v-path' }, abs),
-    h('p', { class: 'v-stats' }, [...counts, `${fmtBytes(stats.bytes)} en total`].join(' · ')),
+    h('p', { class: 'v-stats' }, [...counts, t('{size} en total', { size: fmtBytes(stats.bytes) })].join(' · ')),
     h('div', { class: 'actions' },
-      h('button', { class: 'btn small', type: 'button', onclick: () => openOutside('folder') }, icon('folder-open'), 'Abrir la carpeta'),
-      h('button', { class: 'btn small', type: 'button', onclick: () => openOutside('obsidian') }, icon('external-link'), 'Abrir en Obsidian')),
+      h('button', { class: 'btn small', type: 'button', onclick: () => openOutside('folder') }, icon('folder-open'), t('Abrir la carpeta')),
+      h('button', { class: 'btn small', type: 'button', onclick: () => openOutside('obsidian') }, icon('external-link'), t('Abrir en Obsidian'))),
     h('section', { class: 'v-section' },
-      h('h3', {}, 'Tus vaults'),
+      h('h3', {}, t('Tus vaults')),
       vaultRows,
       VLT.adding ? addForm : h('button', { class: 'btn small ghost v-add-btn', type: 'button', onclick: () => { VLT.adding = true; drawVault(); PANE_EL.vault.querySelector('.v-add input').focus(); } },
-        icon('folder-plus'), 'Agregar o crear un vault')),
+        icon('folder-plus'), t('Agregar o crear un vault'))),
     h('section', { class: 'v-section' },
-      h('h3', {}, 'Notas'),
+      h('h3', {}, t('Notas')),
       h('div', { class: 'v-tools' }, search, seg),
       h('ul', { class: 'v-notes', id: 'v-notes' }))));
   drawNoteList();
@@ -1536,16 +1585,16 @@ function drawNoteList() {
   if (!ul) return;
   const rows = VLT.hits || VLT.files.filter((f) => !VLT.q.trim() || slugify(f.title).includes(slugify(VLT.q)));
   const list = rows.filter((f) => !VLT.dir || f.dir === VLT.dir);
-  if (!list.length) { ul.replaceChildren(h('li', { class: 'hint' }, VLT.q ? 'Nada coincide.' : 'Aún no hay notas aquí.')); return; }
+  if (!list.length) { ul.replaceChildren(h('li', { class: 'hint' }, VLT.q ? t('Nada coincide.') : t('Aún no hay notas aquí.'))); return; }
   ul.replaceChildren(...list.slice(0, 300).map((f) => h('li', {},
     h('button', { class: 'v-open', type: 'button', onclick: () => openVaultFile(f) },
       h('strong', {}, f.title),
       h('small', {}, `${DIRS[f.dir] || f.dir} · ${when(f.updated)}`),
       f.snippet ? h('span', { class: 'v-snip' }, f.snippet) : null),
     h('div', { class: 'v-actions' },
-      h('button', { class: 'icon-btn', type: 'button', title: 'Editar el Markdown', 'aria-label': `Editar ${f.title}`, onclick: () => editVaultFile(f) }, icon('file-pen-line')),
-      h('button', { class: 'icon-btn', type: 'button', title: 'Abrir en Obsidian', 'aria-label': `Abrir ${f.title} en Obsidian`, onclick: () => openOutside('obsidian', f) }, icon('external-link')),
-      h('button', { class: 'icon-btn', type: 'button', title: 'Mostrar en la carpeta', 'aria-label': `Mostrar ${f.title} en la carpeta`, onclick: () => openOutside('folder', f) }, icon('folder-open'))))));
+      h('button', { class: 'icon-btn', type: 'button', title: t('Editar el Markdown'), 'aria-label': t('Editar {title}', { title: f.title }), onclick: () => editVaultFile(f) }, icon('file-pen-line')),
+      h('button', { class: 'icon-btn', type: 'button', title: t('Abrir en Obsidian'), 'aria-label': t('Abrir {title} en Obsidian', { title: f.title }), onclick: () => openOutside('obsidian', f) }, icon('external-link')),
+      h('button', { class: 'icon-btn', type: 'button', title: t('Mostrar en la carpeta'), 'aria-label': t('Mostrar {title} en la carpeta', { title: f.title }), onclick: () => openOutside('folder', f) }, icon('folder-open'))))));
 }
 
 function openVaultFile(f) {
@@ -1568,50 +1617,50 @@ function drawEditor() {
   const root = PANE_EL.vault;
   const E = VLT.edit;
   const status = h('span', { class: 'notes-status', role: 'status' }, E.status);
-  const say = (t) => { E.status = t; status.textContent = t; };
+  const say = (msg) => { E.status = msg; status.textContent = msg; };
   const save = async (force = false) => {
     try {
       const r = await api(`/api/vault/raw/${E.dir}/${encodeURIComponent(E.slug)}`, { method: 'PUT', body: { text: E.text, since: E.since, force } });
       Object.assign(E, { since: r.updated, dirty: false });
-      say('Guardado');
+      say(t('Guardado'));
       loadGraph().catch(() => {});
       if (S.note && S.note.slug === E.slug && E.dir === 'guias') openNote(E.slug, { quiet: true });
       if (S.concept && S.concept.slug === E.slug && E.dir === 'conceptos') openNote(E.slug, { quiet: true });
       if (E.dir === 'apuntes' && N.slug === E.slug) N.slug = ''; // reload the notes from the file next time
     } catch (err) {
-      if (/cambió/.test(err.message) && confirm('La nota cambió desde que la abriste (la app o Obsidian la reescribió). ¿Guardar tu versión encima?')) return save(true);
+      if (err.status === 409 && confirm(t('La nota cambió desde que la abriste (la app o Obsidian la reescribió). ¿Guardar tu versión encima?'))) return save(true);
       say(err.message);
     }
   };
   const back = () => {
-    if (E.dirty && !confirm('Tienes cambios sin guardar. ¿Salir sin guardarlos?')) return;
+    if (E.dirty && !confirm(t('Tienes cambios sin guardar. ¿Salir sin guardarlos?'))) return;
     VLT.edit = null;
     renderVault();
   };
   const mode = (m, label) => h('button', { type: 'button', 'aria-pressed': String(E.mode === m), onclick: () => { E.mode = m; drawEditor(); } }, label);
   let body;
   if (E.mode === 'edit') {
-    body = h('textarea', { class: 'v-text', spellcheck: 'false', 'aria-label': `Markdown de ${E.title}` });
+    body = h('textarea', { class: 'v-text', spellcheck: 'false', 'aria-label': t('Markdown de {title}', { title: E.title }) });
     body.value = E.text;
-    body.addEventListener('input', () => { E.text = body.value; E.dirty = true; say('Sin guardar'); });
+    body.addEventListener('input', () => { E.text = body.value; E.dirty = true; say(t('Sin guardar')); });
     body.addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); save(); } });
   } else {
     const md = E.text.replace(/^---\n[\s\S]*?\n---\n*/, '');
     body = h('div', { class: 'notes-view' }, E.dir === 'apuntes' ? notesMd(md) : mdBlock(md, { breaks: E.dir !== 'guias' && E.dir !== 'conceptos' }));
   }
   root.replaceChildren(h('div', { class: 'vault v-editor' },
-    h('button', { class: 'crumb', type: 'button', onclick: back }, icon('arrow-left'), 'Todas las notas'),
+    h('button', { class: 'crumb', type: 'button', onclick: back }, icon('arrow-left'), t('Todas las notas')),
     h('p', { class: 'eyebrow' }, `${DIRS[E.dir] || E.dir} · ${E.dir}/${E.slug}.md`),
     h('h2', {}, E.title),
     h('div', { class: 'notes-bar' },
-      h('div', { class: 'seg', role: 'group', 'aria-label': 'Modo' }, mode('edit', 'Editar'), mode('view', 'Ver')),
-      h('button', { class: 'btn small primary', type: 'button', onclick: () => save() }, icon('save'), 'Guardar'),
+      h('div', { class: 'seg', role: 'group', 'aria-label': t('Modo') }, mode('edit', t('Editar')), mode('view', t('Ver'))),
+      h('button', { class: 'btn small primary', type: 'button', onclick: () => save() }, icon('save'), t('Guardar')),
       h('button', { class: 'btn small ghost', type: 'button', onclick: () => openOutside('obsidian', E) }, icon('external-link'), 'Obsidian'),
       status),
     body,
     h('p', { class: 'hint notes-foot' }, E.dir === 'guias' || E.dir === 'conceptos'
-      ? 'Lo de arriba, entre las líneas ---, son las propiedades (YAML) que la app lee: cámbialas con cuidado. Si pides escribir esta nota de nuevo, la app la reemplaza; tus apuntes no se tocan. Ctrl+S guarda.'
-      : 'Ctrl+S guarda.')));
+      ? t('Lo de arriba, entre las líneas ---, son las propiedades (YAML) que la app lee: cámbialas con cuidado. Si pides escribir esta nota de nuevo, la app la reemplaza; tus apuntes no se tocan. Ctrl+S guarda.')
+      : t('Ctrl+S guarda.'))));
   if (E.mode === 'edit') body.focus({ preventScroll: true });
 }
 $('#btn-vault').addEventListener('click', () => { VLT.edit = null; show('vault'); });
@@ -1624,52 +1673,52 @@ function renderPractice() {
   root.replaceChildren();
   const n = S.note;
   if (!n) {
-    root.append(h('div', { class: 'panel-empty' }, h('h3', {}, 'Abre una guía para practicar'),
-      h('p', {}, 'Las preguntas, la explicación con tus palabras y el repaso de conceptos trabajan sobre la guía abierta.'), guideList() || ''));
+    root.append(h('div', { class: 'panel-empty' }, h('h3', {}, t('Abre una guía para practicar')),
+      h('p', {}, t('Las preguntas, la explicación con tus palabras y el repaso de conceptos trabajan sobre la guía abierta.')), guideList() || ''));
     return;
   }
   const m = n.meta;
   const rank = STEP_RANK[m.status || 'new'] ?? 0;
   const title = m.title || n.slug;
-  const nInput = h('input', { type: 'number', min: 1, max: 30, value: 5, 'aria-label': 'Número de preguntas' });
-  const diff = h('select', { 'aria-label': 'Dificultad' }, ['básica', 'media', 'avanzada'].map((d) => h('option', { value: d, selected: d === 'media' }, d)));
+  const nInput = h('input', { type: 'number', min: 1, max: 30, value: 5, 'aria-label': t('Número de preguntas') });
+  const diff = h('select', { 'aria-label': t('Dificultad') }, ['básica', 'media', 'avanzada'].map((d) => h('option', { value: d, selected: d === 'media' }, t(d))));
   const steps = [
-    { label: 'Leer la guía', done: rank >= 1 },
-    { label: 'Responder preguntas', done: rank >= 2 },
-    { label: 'Explicarlo con tus palabras', done: rank >= 3 },
+    { label: t('Leer la guía'), done: rank >= 1 },
+    { label: t('Responder preguntas'), done: rank >= 2 },
+    { label: t('Explicarlo con tus palabras'), done: rank >= 3 },
   ];
   const current = steps.findIndex((s) => !s.done);
   root.append(h('div', { class: 'practice' },
-    h('header', { class: 'c-head' }, h('p', { class: 'eyebrow' }, 'Practicar'), h('h2', {}, title),
-      m.mastery ? h('div', { class: 'mastery' }, h('div', { class: 'row' }, h('span', {}, 'Lo que llevas'), h('span', {}, `${m.mastery}/100`)), h('div', { class: 'bar' }, h('i', { style: `width:${m.mastery}%` }))) : null),
-    h('ol', { class: 'sequence', 'aria-label': 'Cómo afianzarlo' }, steps.map((s, i) => h('li', {},
+    h('header', { class: 'c-head' }, h('p', { class: 'eyebrow' }, t('Practicar')), h('h2', {}, title),
+      m.mastery ? h('div', { class: 'mastery' }, h('div', { class: 'row' }, h('span', {}, t('Lo que llevas')), h('span', {}, `${m.mastery}/100`)), h('div', { class: 'bar' }, h('i', { style: `width:${m.mastery}%` }))) : null),
+    h('ol', { class: 'sequence', 'aria-label': t('Cómo afianzarlo') }, steps.map((s, i) => h('li', {},
       h('span', { class: `step${i === current ? ' go' : ''}`, 'data-state': s.done ? 'done' : i === current ? 'current' : 'todo' }, h('span', { class: 'step-n' }, s.done ? '✓' : String(i + 1)), s.label)))),
     h('section', { class: 'p-card' },
-      h('h3', {}, 'Preguntas'),
-      h('p', { class: 'hint' }, 'Piden razonar o predecir, no memorizar. Se corrigen al final y el resultado queda en la guía.'),
+      h('h3', {}, t('Preguntas')),
+      h('p', { class: 'hint' }, t('Piden razonar o predecir, no memorizar. Se corrigen al final y el resultado queda en la guía.')),
       h('div', { class: 'quiz-opts' }, nInput, 'preguntas, dificultad', diff,
         h('button', { class: 'btn primary small', type: 'button', onclick: () => {
           const q = Number(nInput.value) || 5;
-          chatAction({ action: 'quiz', n: q, difficulty: diff.value }, `Quiz de «${title}»: ${q} preguntas, ${diff.value}`);
-        } }, 'Empezar'))),
+          chatAction({ action: 'quiz', n: q, difficulty: diff.value }, t('Quiz de «{title}»: {n} preguntas, {difficulty}', { title, n: q, difficulty: t(diff.value) }));
+        } }, t('Empezar')))),
     h('section', { class: 'p-card' },
-      h('h3', {}, 'Explícamelo tú'),
-      h('p', { class: 'hint' }, 'Me lo explicas como a alguien que no sabe nada. Te señalo los huecos y te pregunto lo que preguntaría un novato.'),
-      h('button', { class: 'btn primary small', type: 'button', onclick: () => chatAction({ action: 'feynman' }, `Quiero explicar «${title}»`) }, 'Empezar a explicar')),
+      h('h3', {}, t('Explícamelo tú')),
+      h('p', { class: 'hint' }, t('Me lo explicas como a alguien que no sabe nada. Te señalo los huecos y te pregunto lo que preguntaría un novato.')),
+      h('button', { class: 'btn primary small', type: 'button', onclick: () => chatAction({ action: 'feynman' }, t('Quiero explicar «{title}»', { title })) }, t('Empezar a explicar'))),
     flashcards(n),
     h('section', { class: 'p-card' },
-      h('h3', {}, 'Simulación'),
-      h('p', { class: 'hint' }, 'Una página interactiva para jugar con el tema, aparte de los visuales de la guía.'),
+      h('h3', {}, t('Simulación')),
+      h('p', { class: 'hint' }, t('Una página interactiva para jugar con el tema, aparte de los visuales de la guía.')),
       n.hasSimulation
-        ? h('button', { class: 'btn small', type: 'button', onclick: () => openSim(n.slug, title) }, 'Abrir simulación')
-        : h('button', { class: 'btn small', type: 'button', onclick: () => chatAction({ action: 'interactive', brief: '' }, `Simulación de «${title}»`) }, 'Generar simulación'))));
+        ? h('button', { class: 'btn small', type: 'button', onclick: () => openSim(n.slug, title) }, t('Abrir simulación'))
+        : h('button', { class: 'btn small', type: 'button', onclick: () => chatAction({ action: 'interactive', brief: '' }, t('Simulación de «{title}»', { title })) }, t('Generar simulación')))));
 }
 
 // Flashcards from the concept notes: the name on the front, "En una frase" on the back. No model call.
 function flashcards(n) {
   const list = (n.concepts || []).filter((c) => c.exists);
-  const sec = h('section', { class: 'p-card' }, h('h3', {}, 'Repaso de conceptos'));
-  if (!list.length) { sec.append(h('p', { class: 'hint' }, 'Cuando la guía tenga notas de concepto, aquí podrás repasarlas como tarjetas.')); return sec; }
+  const sec = h('section', { class: 'p-card' }, h('h3', {}, t('Repaso de conceptos')));
+  if (!list.length) { sec.append(h('p', { class: 'hint' }, t('Cuando la guía tenga notas de concepto, aquí podrás repasarlas como tarjetas.'))); return sec; }
   let i = 0, known = 0, seen = 0;
   const deck = [...list].sort(() => Math.random() - 0.5);
   const cache = new Map();
@@ -1678,9 +1727,9 @@ function flashcards(n) {
   const flip = () => { card.classList.remove('flip'); void card.offsetWidth; card.classList.add('flip'); };
   function show1() {
     const c = deck[i];
-    card.replaceChildren(h('p', { class: 'eyebrow' }, `Tarjeta ${i + 1} de ${deck.length}`), h('h4', {}, c.title),
-      h('button', { class: 'btn small yellow', type: 'button', onclick: reveal }, 'Dar la vuelta'));
-    score.textContent = seen ? `Sabías ${known} de ${seen}.` : '';
+    card.replaceChildren(h('p', { class: 'eyebrow' }, t('Tarjeta {n} de {total}', { n: i + 1, total: deck.length })), h('h4', {}, c.title),
+      h('button', { class: 'btn small yellow', type: 'button', onclick: reveal }, t('Dar la vuelta')));
+    score.textContent = seen ? t('Sabías {known} de {seen}.', { known, seen }) : '';
     async function reveal() {
       let text = cache.get(c.slug);
       if (text == null) {
@@ -1690,13 +1739,13 @@ function flashcards(n) {
       flip();
       card.replaceChildren(h('p', { class: 'eyebrow' }, c.title), mdBlock(text || '_Sin resumen._'),
         h('div', { class: 'actions' },
-          h('button', { class: 'btn small green', type: 'button', onclick: () => next(true) }, 'Lo sabía'),
-          h('button', { class: 'btn small', type: 'button', onclick: () => next(false) }, 'A repasar'),
-          h('button', { class: 'btn small ghost', type: 'button', onclick: () => openNote(c.slug) }, 'Abrir la nota')));
+          h('button', { class: 'btn small green', type: 'button', onclick: () => next(true) }, t('Lo sabía')),
+          h('button', { class: 'btn small', type: 'button', onclick: () => next(false) }, t('A repasar')),
+          h('button', { class: 'btn small ghost', type: 'button', onclick: () => openNote(c.slug) }, t('Abrir la nota'))));
     }
   }
   function next(ok) { seen++; if (ok) known++; i = (i + 1) % deck.length; flip(); show1(); }
-  sec.append(h('p', { class: 'hint' }, 'Di la idea en una frase antes de dar la vuelta a la tarjeta.'), card, score);
+  sec.append(h('p', { class: 'hint' }, t('Di la idea en una frase antes de dar la vuelta a la tarjeta.')), card, score);
   show1();
   return sec;
 }
@@ -1813,10 +1862,10 @@ async function drawMap() {
   for (const b of $$('#map-scope button')) b.setAttribute('aria-pressed', String(b.dataset.scope === S.mapScope));
   const emptyChat = S.mapScope === 'chat' && !g.nodes.length;
   $('#map-empty').hidden = g.nodes.length > 0;
-  $('#map-empty-title').textContent = emptyChat ? 'Esta conversación aún no tiene guías' : 'Tu mapa está vacío';
+  $('#map-empty-title').textContent = emptyChat ? t('Esta conversación aún no tiene guías') : t('Tu mapa está vacío');
   $('#map-empty-text').textContent = emptyChat
-    ? 'Cuando esta conversación tenga una guía o explique un concepto, aparecerán aquí con lo que hay debajo.'
-    : 'Pide una guía en el chat. Cada guía y sus conceptos aparecerán aquí, conectados.';
+    ? t('Cuando esta conversación tenga una guía o explique un concepto, aparecerán aquí con lo que hay debajo.')
+    : t('Pide una guía en el chat. Cada guía y sus conceptos aparecerán aquí, conectados.');
   $('#map-see-all').hidden = !(emptyChat && S.graph.nodes.length);
   const sig = `${S.mapScope}:${chatID}:${graphSignature(g)}`;
   const same = S.mapSig === sig;
@@ -1876,7 +1925,7 @@ function renderChips() {
     style: key ? `--lc: ${lineColor(key)}` : null,
     onclick: () => { S.filter = S.filter === key ? '' : key; renderChips(); applyFilters(); },
   }, label);
-  box.append(chip('', 'Todas'), ...keys.map((k) => chip(k, groupTitle(k))));
+  box.append(chip('', t('Todas')), ...keys.map((k) => chip(k, groupTitle(k))));
 }
 
 function applyFilters() {
@@ -1906,12 +1955,12 @@ withAutoAnimate((aa) => {
 });
 
 function scrollDown() {
-  const t = $('#transcript');
-  if (T.auto) t.scrollTop = t.scrollHeight;
+  const box = $('#transcript');
+  if (T.auto) box.scrollTop = box.scrollHeight;
 }
 $('#transcript').addEventListener('scroll', () => {
-  const t = $('#transcript');
-  T.auto = t.scrollHeight - t.scrollTop - t.clientHeight < 80;
+  const box = $('#transcript');
+  T.auto = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
 });
 
 function resetTranscript() {
@@ -1926,7 +1975,7 @@ function emptyState() {
   return h('div', { class: 'chat-empty' },
     h('p', { class: 'eyebrow' }, 'StudyHomie'),
     h('h1', {}, Phrases.welcome()),
-    h('p', { class: 'lead' }, 'Pregunta lo que sea o pide una guía: te explico el tema y lo que da por sabido, hasta lo básico.'),
+    h('p', { class: 'lead' }, t('Pregunta lo que sea o pide una guía: te explico el tema y lo que da por sabido, hasta lo básico.')),
   );
 }
 
@@ -1934,17 +1983,17 @@ function emptyState() {
 function closePlus() { $('#plus-menu').hidden = true; $('#btn-plus').setAttribute('aria-expanded', 'false'); }
 function dailyForm() {
   // today's challenge: an optional theme; empty draws from your interests
-  const field = h('input', { type: 'text', name: 'field', list: 'daily-fields', autocomplete: 'off', placeholder: 'Cualquier tema, o vacío para sorprenderte', 'aria-label': 'Temática del reto' });
+  const field = h('input', { type: 'text', name: 'field', list: 'daily-fields', autocomplete: 'off', placeholder: t('Cualquier tema, o vacío para sorprenderte'), 'aria-label': t('Temática del reto') });
   const form = h('form', { class: 'daily-pick', onsubmit: (e) => {
     e.preventDefault();
     const f = field.value.trim();
     closePlus();
-    chatAction({ action: 'daily', field: f }, f ? `El reto de hoy, sobre ${f}` : 'El reto de hoy');
+    chatAction({ action: 'daily', field: f }, f ? t('El reto de hoy, sobre {field}', { field: f }) : t('El reto de hoy'));
   } },
-    h('label', {}, 'Reto de hoy sobre'),
+    h('label', {}, t('Reto de hoy sobre')),
     field,
     h('datalist', { id: 'daily-fields' }, (S.info?.interests || []).map((i) => h('option', { value: i }))),
-    h('button', { class: 'btn small primary', type: 'submit' }, 'Sortear'));
+    h('button', { class: 'btn small primary', type: 'submit' }, t('Sortear')));
   $('#plus-menu').replaceChildren(form);
   field.focus();
 }
@@ -1953,9 +2002,9 @@ $('#btn-plus').addEventListener('click', (e) => {
   const menu = $('#plus-menu');
   if (!menu.hidden) { closePlus(); return; }
   menu.replaceChildren(
-    h('button', { type: 'button', onclick: (ev) => { ev.stopPropagation(); dailyForm(); } }, icon('sparkles'), 'El reto de hoy'),
-    h('button', { type: 'button', onclick: () => { closePlus(); askAbout('Quiero aprender toda una materia: '); } }, icon('map'), 'Planear una materia'),
-    h('button', { type: 'button', onclick: () => { closePlus(); $('#material-input').click(); } }, icon('file'), 'Subir apuntes'));
+    h('button', { type: 'button', onclick: (ev) => { ev.stopPropagation(); dailyForm(); } }, icon('sparkles'), t('El reto de hoy')),
+    h('button', { type: 'button', onclick: () => { closePlus(); askAbout(t('Quiero aprender toda una materia:') + ' '); } }, icon('map'), t('Planear una materia')),
+    h('button', { type: 'button', onclick: () => { closePlus(); $('#material-input').click(); } }, icon('file'), t('Subir apuntes')));
   menu.hidden = false;
   $('#btn-plus').setAttribute('aria-expanded', 'true');
 });
@@ -2008,18 +2057,18 @@ function setWorking(on, text) {
 
 // Questions with a closed set of answers are asked with buttons instead of a text box.
 function quickOptions(e) {
-  const label = e.label || '';
+  const label = e.key || e.label || ''; // the Spanish question tells which one it is
   if (e.kind !== 'line') return null;
   if (/\(s\/n\)\s*$/i.test(label)) {
-    const [yes, no] = /aceptas/i.test(label) ? ['Aceptar', 'Otro tema']
-      : /respondemos|comprobamos|prueba/i.test(label) ? ['Responder preguntas', 'Ahora no']
-        : /explicas|feynman/i.test(label) ? ['Explicar', 'Terminar aquí']
-          : /genero/i.test(label) ? ['Generar', 'Omitir']
-            : /empezamos/i.test(label) ? ['Empezar', 'Ahora no'] : ['Sí', 'No'];
+    const [yes, no] = /aceptas/i.test(label) ? [t('Aceptar'), t('Otro tema')]
+      : /respondemos|comprobamos|prueba/i.test(label) ? [t('Responder preguntas'), t('Ahora no')]
+        : /explicas|feynman/i.test(label) ? [t('Explicar'), t('Terminar aquí')]
+          : /genero/i.test(label) ? [t('Generar'), t('Omitir')]
+            : /empezamos/i.test(label) ? [t('Empezar'), t('Ahora no')] : [t('Sí'), t('No')];
     return [{ label: yes, reply: 's', primary: true }, { label: no, reply: 'n' }];
   }
-  if (/dificultad/i.test(label)) return ['básica', 'media', 'avanzada'].map((d) => ({ label: d[0].toUpperCase() + d.slice(1), reply: d, primary: d === 'media' }));
-  if (/cuántas preguntas/i.test(label)) return [3, 5, 8, 10].map((n) => ({ label: `${n} preguntas`, reply: String(n), primary: n === 5 }));
+  if (/dificultad/i.test(label)) return ['básica', 'media', 'avanzada'].map((d) => ({ label: t(d)[0].toUpperCase() + t(d).slice(1), reply: d, primary: d === 'media' }));
+  if (/cuántas preguntas/i.test(label)) return [3, 5, 8, 10].map((n) => ({ label: t('{n} preguntas', { n }), reply: String(n), primary: n === 5 }));
   return null;
 }
 
@@ -2027,7 +2076,8 @@ function quickOptions(e) {
 function setComposer(mode, e = {}) {
   const form = $('#composer'), ta = $('#reply');
   form.dataset.kind = mode;
-  const label = (e.label || '').replace(/\s*\(s\/n\)\s*$/i, '').trim();
+  // a yes/no question gets buttons: its "(s/n)" ending, in whatever language, is not shown
+  const label = (e.label || '').replace(/\s*\([^()]{1,9}\)\s*$/, (m) => (/\(s\/n\)\s*$/i.test(e.key || e.label || '') ? '' : m)).trim();
   const opts = mode === 'line' ? quickOptions(e) : null;
   $('#composer-label').textContent = mode === 'line' ? label : '';
   $('#composer-label').hidden = mode !== 'line' || !label;
@@ -2044,12 +2094,12 @@ function setComposer(mode, e = {}) {
   ta.disabled = $('#btn-send').disabled = mode === 'busy';
   ta.rows = mode === 'block' ? 6 : 2;
   ta.placeholder = {
-    chat: 'Pregunta lo que quieras, o pide una guía: «Explícame la transformada de Fourier, enfocada en audio»',
-    line: e.def ? `Enter para usar «${e.def}»` : 'Escribe tu respuesta',
-    block: 'Explícalo con tus palabras, como si el otro no supiera nada…',
-    busy: 'Espera a que termine, o detenlo.',
+    chat: t('Pregunta lo que quieras, o pide una guía: «Explícame la transformada de Fourier, enfocada en audio»'),
+    line: e.def ? t('Enter para usar «{answer}»', { answer: e.def }) : t('Escribe tu respuesta'),
+    block: t('Explícalo con tus palabras, como si el otro no supiera nada…'),
+    busy: t('Espera a que termine, o detenlo.'),
   }[mode];
-  $('#composer-hint').textContent = mode === 'block' ? 'Ctrl + Enter para enviar' : '';
+  $('#composer-hint').textContent = mode === 'block' ? t('Ctrl + Enter para enviar') : '';
   if (mode !== 'busy' && !isPhone() && ta.isConnected) (opts ? $('#quick .primary') : ta)?.focus({ preventScroll: true });
 }
 
@@ -2065,7 +2115,7 @@ async function chatSend(body) {
       toast(err.message); run.waiting = 'chat'; setComposer('chat'); setWorking(false); return false;
     }
   }
-  if (run && !run.done) { toast('Espera a que termine lo que está en curso, o detenlo.'); return false; }
+  if (run && !run.done) { toast(t('Espera a que termine lo que está en curso, o detenlo.')); return false; }
   try {
     const req = { cmd: 'chat', chat: body, guide: S.guide || '' };
     if (run && run.done) req.resume = run.id;
@@ -2107,7 +2157,7 @@ $('#composer').addEventListener('submit', async (e) => {
     if (!(await chatSend(files.length ? { text, files } : { text }))) ta.value = text;
     return;
   }
-  if (mode === 'block' && !text.trim()) { toast('Escribe tu explicación antes de enviar.'); return; }
+  if (mode === 'block' && !text.trim()) { toast(t('Escribe tu explicación antes de enviar.')); return; }
   ta.value = '';
   sendReply(text, false);
 });
@@ -2116,7 +2166,7 @@ $('#reply').addEventListener('keydown', (e) => {
   const block = $('#composer').dataset.kind === 'block';
   if (block ? (e.ctrlKey || e.metaKey) : !e.shiftKey) { e.preventDefault(); $('#composer').requestSubmit(); }
 });
-$('#btn-finish').addEventListener('click', () => { const t = $('#reply').value; $('#reply').value = ''; sendReply(t, true); });
+$('#btn-finish').addEventListener('click', () => { const text = $('#reply').value; $('#reply').value = ''; sendReply(text, true); });
 $('#btn-cancel').addEventListener('click', async () => {
   if (!S.run || S.run.done) return;
   try { await api(`/api/runs/${S.run.id}/cancel`, { method: 'POST', body: {} }); } catch (err) { toast(err.message); }
@@ -2154,7 +2204,7 @@ async function stageFiles(files) {
   drawStaged();
 }
 function takeStaged() {
-  if (STAGED.some((f) => !f.id)) { toast('Espera a que terminen de subir los adjuntos.'); return null; }
+  if (STAGED.some((f) => !f.id)) { toast(t('Espera a que terminen de subir los adjuntos.')); return null; }
   const ids = STAGED.map((f) => f.id);
   for (const f of STAGED) if (f.url) URL.revokeObjectURL(f.url);
   STAGED.length = 0;
@@ -2182,7 +2232,7 @@ $('#material-input').addEventListener('change', async (e) => {
   try {
     setWorking(true, Phrases.pick('uploading'));
     const up = await api('/api/upload', { method: 'POST', body: fd });
-    await chatSend({ text: '', files: up.files, material: true, label: `Mis apuntes: ${[...files].map((f) => f.name).join(', ')}` });
+    await chatSend({ text: '', files: up.files, material: true, label: t('Mis apuntes: {files}', { files: [...files].map((f) => f.name).join(', ') }) });
   } catch (err) { toast(err.message); setWorking(false); } finally { e.target.value = ''; }
 });
 
@@ -2190,7 +2240,7 @@ $('#material-input').addEventListener('change', async (e) => {
 function renderDepth() {
   $('#depth-stations').replaceChildren(...DEPTH.map((label, d) => h('button', {
     type: 'button', role: 'radio', 'aria-checked': String(d === S.depth), class: d <= S.depth ? 'on' : null,
-    title: `${d}: ${label}`, 'aria-label': `Escribir ahora: ${label}`,
+    title: `${d}: ${label}`, 'aria-label': t('Escribir ahora: {label}', { label }),
     onclick: () => { S.depth = d; store.set('depth', d); renderDepth(); },
   }, String(d))));
   $('#depth-text').textContent = DEPTH[S.depth];
@@ -2208,11 +2258,11 @@ function renderCard(c, run) {
     case 'guide':
       T.progress = null;
       addMsg('card', h('div', { class: 'rich rich-guide' },
-        h('div', { class: 'rich-eyebrow' }, 'Guía lista'),
+        h('div', { class: 'rich-eyebrow' }, t('Guía lista')),
         h('h3', {}, c.topic),
         h('div', { class: 'actions' },
-          h('button', { class: 'btn small primary', type: 'button', onclick: () => openNote(c.slug) }, icon('book-open'), 'Leer la guía'),
-          h('button', { class: 'btn small', type: 'button', onclick: async () => { await openNote(c.slug, { quiet: true }); show('concepts'); } }, icon('mountain-snow'), 'Ver el iceberg'))));
+          h('button', { class: 'btn small primary', type: 'button', onclick: () => openNote(c.slug) }, icon('book-open'), t('Leer la guía')),
+          h('button', { class: 'btn small', type: 'button', onclick: async () => { await openNote(c.slug, { quiet: true }); show('concepts'); } }, icon('mountain-snow'), t('Ver el iceberg')))));
       if (!run.replay) loadGraph().catch(() => {}).then(() => openNote(c.slug));
       break;
     case 'roadmap': {
@@ -2220,34 +2270,34 @@ function renderCard(c, run) {
       addMsg('card', h('div', { class: 'rich rich-roadmap' },
         h('div', { class: 'rich-eyebrow' }, icon('map'), `Ruta · ${rm.steps.length} temas`),
         h('h3', {}, rm.title),
-        h('p', { class: 'hint' }, `Se estudia en orden: cada tema se desbloquea con ${rm.pass}/100 en el anterior, y su guía se escribe entonces.`),
+        h('p', { class: 'hint' }, t('Se estudia en orden: cada tema se desbloquea con {pass}/100 en el anterior, y su guía se escribe entonces.', { pass: rm.pass })),
         roadmapPath(rm, { open: false })));
       if (!run.replay) loadGraph().catch(() => {});
       break;
     }
     case 'concept':
-      addMsg('card', h('div', { class: 'rich' }, h('div', { class: 'rich-eyebrow' }, 'Nota de concepto'), h('h3', {}, c.topic),
-        h('button', { class: 'btn small', type: 'button', onclick: () => openNote(c.slug) }, 'Abrir la nota')));
+      addMsg('card', h('div', { class: 'rich' }, h('div', { class: 'rich-eyebrow' }, t('Nota de concepto')), h('h3', {}, c.topic),
+        h('button', { class: 'btn small', type: 'button', onclick: () => openNote(c.slug) }, t('Abrir la nota'))));
       if (!run.replay) loadGraph().catch(() => {}).then(() => reloadGuide());
       break;
     case 'daily':
       addMsg('card', h('div', { class: 'rich' },
-        h('div', { class: 'rich-eyebrow' }, 'Para descubrir hoy', c.field && h('span', { class: 'chip' }, c.field)),
+        h('div', { class: 'rich-eyebrow' }, t('Para descubrir hoy'), c.field && h('span', { class: 'chip' }, c.field)),
         h('h3', {}, c.topic), c.hook && h('p', { class: 'hint' }, c.hook)));
       break;
     case 'question': addMsg('card', questionCard(c, run)); break;
     case 'score': {
       const tone = scoreTone(c.score);
-      const verdict = tone === 'good' ? 'Lo entendiste bien' : tone === 'mid' ? 'Vas por buen camino' : 'Buen punto de partida: quedan cosas por aclarar';
+      const verdict = tone === 'good' ? t('Lo entendiste bien') : tone === 'mid' ? t('Vas por buen camino') : t('Buen punto de partida: quedan cosas por aclarar');
       addMsg('card', h('div', { class: `rich rich-score tone-${tone}` },
-        h('div', { class: 'score-ring', style: `--p:${Math.max(0, Math.min(100, c.score))}`, role: 'img', 'aria-label': `${c.score} de 100` }, h('span', {}, c.score)),
+        h('div', { class: 'score-ring', style: `--p:${Math.max(0, Math.min(100, c.score))}`, role: 'img', 'aria-label': t('{score} de 100', { score: c.score }) }, h('span', {}, c.score)),
         h('div', {}, h('strong', {}, `${c.label}: ${verdict}`), c.detail && h('div', { class: 'hint' }, c.detail))));
       if (!run.replay) loadGraph().catch(() => {}).then(() => reloadGuide()); // the score may unlock the next topic
       break;
     }
     case 'resources':
       addMsg('card', h('details', { class: 'rich rich-resources' },
-        h('summary', { class: 'rich-eyebrow' }, `Para seguir explorando (${(c.resources || []).length})`),
+        h('summary', { class: 'rich-eyebrow' }, t('Para seguir explorando ({n})', { n: (c.resources || []).length })),
         h('ul', { class: 'res-list' }, (c.resources || []).map((r) => resourceCard(r)))));
       break;
   }
@@ -2260,12 +2310,12 @@ function planCard(p, run) {
   const boxes = new Map(), promote = new Map();
   const added = [];
   const addList = h('ul', { class: 'plan-added' });
-  const addInput = h('input', { type: 'text', maxlength: 80, placeholder: 'Añadir un concepto…', 'aria-label': 'Añadir un concepto' });
+  const addInput = h('input', { type: 'text', maxlength: 80, placeholder: t('Añadir un concepto…'), 'aria-label': t('Añadir un concepto') });
   const add = () => {
-    const t = addInput.value.trim();
-    if (!t) return;
-    added.push(t);
-    addList.append(h('li', {}, `+ ${t}`));
+    const name = addInput.value.trim();
+    if (!name) return;
+    added.push(name);
+    addList.append(h('li', {}, `+ ${name}`));
     addInput.value = '';
     update();
   };
@@ -2275,41 +2325,41 @@ function planCard(p, run) {
   const fresh = (p.concepts || []).filter((c) => !c.exists);
   function update() {
     const kept = fresh.filter((c) => boxes.get(c.id).checked).length + [...promote.values()].filter((cb) => cb.checked).length + added.length;
-    go.textContent = kept ? `Escribir la guía y ${kept} ${kept === 1 ? 'nota' : 'notas'}` : 'Escribir solo la guía';
+    go.textContent = kept ? tn(kept, 'Escribir la guía y {n} nota', 'Escribir la guía y {n} notas') : t('Escribir solo la guía');
     const linked = (p.concepts || []).filter((c) => c.exists && boxes.get(c.id).checked).length;
     const under = (p.pending || []).length - [...promote.values()].filter((cb) => cb.checked).length;
-    count.textContent = [linked ? `${linked} ya ${linked === 1 ? 'está' : 'están'} en tu vault: se enlazan.` : '',
-      under > 0 ? `${under} quedan bajo el agua: en gris, para explicar cuando quieras.` : ''].filter(Boolean).join(' ');
+    count.textContent = [linked ? tn(linked, '{n} ya está en tu vault: se enlaza.', '{n} ya están en tu vault: se enlazan.') : '',
+      under > 0 ? tn(under, '{n} queda bajo el agua: en gris, para explicar cuando quieras.', '{n} quedan bajo el agua: en gris, para explicar cuando quieras.') : ''].filter(Boolean).join(' ');
   }
   const item = (c, checked, map, underWater) => {
     const cb = h('input', { type: 'checkbox', checked: checked || null });
     cb.addEventListener('change', update);
     map.set(c.id, cb);
     return h('li', {}, h('label', { class: `plan-item${c.exists ? ' exists' : ''}${underWater ? ' under' : ''}` }, cb,
-      h('span', {}, h('strong', {}, c.title), c.exists ? h('em', {}, ' · ya en tu vault') : null, c.summary ? h('small', {}, c.summary) : null)));
+      h('span', {}, h('strong', {}, c.title), c.exists ? h('em', {}, t(' · ya en tu vault')) : null, c.summary ? h('small', {}, c.summary) : null)));
   };
   const levelRows = (levels, under) => levels.map((lv, i) => lv && h('li', { class: under ? 'under' : null },
-    h('span', { class: 'plan-level' }, i === 0 ? 'Directo' : `Nivel ${i + 1}`),
+    h('span', { class: 'plan-level' }, i === 0 ? t('Directo') : t('Nivel {n}', { n: i + 1 })),
     h('ul', {}, lv.map((c) => item(c, !under, under ? promote : boxes, under)))));
   const el = h('div', { class: 'rich rich-plan' },
-    h('div', { class: 'rich-eyebrow' }, icon('mountain-snow'), `Plan · escribir ahora ${p.depth} ${p.depth === 1 ? 'nivel' : 'niveles'}`),
+    h('div', { class: 'rich-eyebrow' }, icon('mountain-snow'), tn(p.depth, 'Plan · escribir ahora {n} nivel', 'Plan · escribir ahora {n} niveles')),
     h('h3', {}, p.topic),
-    h('p', { class: 'hint' }, 'Desmarca lo que ya sabes; marca algo de abajo si lo quieres escrito ya.'),
+    h('p', { class: 'hint' }, t('Desmarca lo que ya sabes; marca algo de abajo si lo quieres escrito ya.')),
     h('ol', { class: 'plan-levels' }, levelRows(above, false)),
-    (p.pending || []).length ? h('p', { class: 'plan-water' }, 'Bajo el agua: mapeado, sin escribir') : null,
+    (p.pending || []).length ? h('p', { class: 'plan-water' }, t('Bajo el agua: mapeado, sin escribir')) : null,
     (p.pending || []).length ? h('ol', { class: 'plan-levels' }, levelRows(below, true)) : null,
     addList,
-    h('div', { class: 'plan-add' }, addInput, h('button', { class: 'btn small', type: 'button', onclick: add }, icon('plus'), 'Añadir')),
+    h('div', { class: 'plan-add' }, addInput, h('button', { class: 'btn small', type: 'button', onclick: add }, icon('plus'), t('Añadir'))),
     h('div', { class: 'actions' }, go,
-      h('button', { class: 'btn', type: 'button', onclick: () => answer('g', 'Solo la guía') }, 'Solo la guía'),
-      h('button', { class: 'btn ghost small', type: 'button', onclick: () => answer('n', 'Cancelar') }, 'Cancelar')),
+      h('button', { class: 'btn', type: 'button', onclick: () => answer('g', t('Solo la guía')) }, t('Solo la guía')),
+      h('button', { class: 'btn ghost small', type: 'button', onclick: () => answer('n', t('Cancelar')) }, t('Cancelar'))),
     count);
   const state = { el, live: false, answered: false };
   // once answered the plan folds to its title: what matters next is the guide being written
   const fold = () => {
     el.classList.add('answered');
     el.querySelector('.rich-eyebrow').after(h('button', { class: 'btn small ghost plan-toggle', type: 'button',
-      onclick: (e) => { const open = el.classList.toggle('expanded'); e.currentTarget.textContent = open ? 'Ocultar el plan' : 'Ver el plan'; } }, 'Ver el plan'));
+      onclick: (e) => { const open = el.classList.toggle('expanded'); e.currentTarget.textContent = open ? t('Ocultar el plan') : t('Ver el plan'); } }, t('Ver el plan')));
   };
   function answer(reply, label) {
     if (state.answered || S.run !== run || run.done || !state.live) return;
@@ -2334,26 +2384,26 @@ function planCard(p, run) {
 function writtenSummary(items) {
   const guide = items.some((i) => i.kind === 'guide');
   const notes = items.filter((i) => i.kind !== 'guide').length;
-  const parts = [guide ? 'guía' : '', notes ? `${notes} ${notes === 1 ? 'nota' : 'notas'}` : ''].filter(Boolean);
-  return `Listo · ${parts.join(' y ')}`;
+  const parts = [guide ? t('guía') : '', notes ? tn(notes, '{n} nota', '{n} notas') : ''].filter(Boolean);
+  return t('Listo · {what}', { what: parts.join(` ${t('y')} `) });
 }
 
 // One card per guide being written, redrawn in place as each note finishes.
 function progressCard(items) {
-  const state = { pending: 'en cola', working: 'escribiendo…', done: 'lista', linked: 'ya estaba', error: 'falló' };
+  const state = { pending: t('en cola'), working: t('escribiendo…'), done: t('lista'), linked: t('ya estaba'), error: t('falló') };
   const done = items.filter((i) => i.state !== 'pending' && i.state !== 'working').length;
   const failed = items.filter((i) => i.state === 'error').length;
   const list = h('ul', { class: 'progress-list' }, items.map((it) => h('li', { 'data-state': it.state, class: it.kind },
     h('span', { class: 'p-dot', 'aria-hidden': 'true' }),
-    h('span', { class: 'p-title' }, it.title, it.kind === 'guide' ? h('small', {}, ' · guía') : null),
+    h('span', { class: 'p-title' }, it.title, it.kind === 'guide' ? h('small', {}, t(' · guía')) : null),
     h('small', { class: 'p-state' }, state[it.state] || it.state))));
   // once everything is written the card folds to one line; it stays open if something failed
   const body = done === items.length
     ? [h('details', { open: failed ? true : null },
       h('summary', { class: 'rich-eyebrow' }, icon(failed ? 'x' : 'check'),
-        failed ? `Escrito · ${failed} ${failed === 1 ? 'falló' : 'fallaron'}` : writtenSummary(items)),
+        failed ? tn(failed, 'Escrito · {n} falló', 'Escrito · {n} fallaron') : writtenSummary(items)),
       list)]
-    : [h('div', { class: 'rich-eyebrow' }, `Escribiendo · ${done} de ${items.length}`),
+    : [h('div', { class: 'rich-eyebrow' }, t('Escribiendo · {done} de {total}', { done, total: items.length })),
       h('div', { class: 'bar' }, h('i', { style: `width:${Math.round((100 * done) / items.length)}%` })),
       list];
   if (T.progress && T.progress.isConnected) { T.progress.replaceChildren(...body); return; }
@@ -2363,11 +2413,11 @@ function progressCard(items) {
 
 function questionCard(c, run) {
   const card = h('div', { class: 'rich rich-question' },
-    h('div', { class: 'rich-eyebrow' }, c.total ? `Pregunta ${c.n} de ${c.total}` : 'Pregunta'),
+    h('div', { class: 'rich-eyebrow' }, c.total ? `Pregunta ${c.n} de ${c.total}` : t('Pregunta')),
     h('p', { class: 'q-text' }, c.question));
   if (!c.choices || !c.choices.length) return card;
   const state = { answered: false, buttons: [] };
-  const list = h('div', { class: 'choices', role: 'group', 'aria-label': 'Opciones' });
+  const list = h('div', { class: 'choices', role: 'group', 'aria-label': t('Opciones') });
   for (const choice of c.choices) {
     const b = h('button', { type: 'button', class: 'choice', disabled: run.replay || null, onclick: () => {
       if (state.answered || S.run !== run || run.done) return;
@@ -2395,7 +2445,7 @@ function closeChoices() {
 function attachRun(id, title, { replay = false } = {}) {
   if (S.run && S.run.es) S.run.es.close();
   resetTranscript();
-  const run = { id, done: false, replay, waiting: '', title: title || 'Chat', es: new EventSource(`/api/runs/${id}/events?from=0`) };
+  const run = { id, done: false, replay, waiting: '', title: title || t('Chat'), es: new EventSource(`/api/runs/${id}/events?from=0`) };
   S.run = run;
   $('#chat-title').textContent = run.title;
   if (S.mapScope === 'chat') drawMap();
@@ -2415,7 +2465,7 @@ function handleEvent(run, e) {
       // a button answers with a short code ("s", "media"); show what the learner actually clicked
       const known = (T.echo && T.echo.reply === e.text && T.echo) || ((run.lastAsk && quickOptions(run.lastAsk)) || []).find((o) => o.reply === e.text);
       T.echo = null;
-      const shown = known ? known.label : /^\{.*"go":true/.test(e.text) ? 'Escribir con estos cambios' : e.text;
+      const shown = known ? known.label : /^\{.*"go":true/.test(e.text) ? t('Escribir con estos cambios') : e.text;
       addMsg('user', mdBlock(shown, { breaks: true }));
       if (!run.replay) setWorking(true, Phrases.pick('thinking'));
       break;
@@ -2427,16 +2477,16 @@ function handleEvent(run, e) {
       run.waiting = e.kind;
       if (run.replay) break;
       setWorking(false);
-      if (e.kind === 'line' && T.plan && !T.plan.answered && /genero la guía/i.test(e.label || '')) {
+      if (e.kind === 'line' && T.plan && !T.plan.answered && /genero la guía/i.test(e.key || e.label || '')) {
         T.plan.live = true;
         setComposer('busy');
-        $('#reply').placeholder = 'Elige en el plan de arriba.';
+        $('#reply').placeholder = t('Elige en el plan de arriba.');
         T.plan.el.scrollIntoView({ behavior: smoothness(), block: 'nearest' });
         break;
       }
-      if (e.kind === 'line' && T.choiceCard && !T.choiceCard.answered && /^respuesta$/i.test(e.label || '')) {
+      if (e.kind === 'line' && T.choiceCard && !T.choiceCard.answered && /^respuesta$/i.test(e.key || e.label || '')) {
         setComposer('busy');
-        $('#reply').placeholder = 'Elige una opción de la pregunta.';
+        $('#reply').placeholder = t('Elige una opción de la pregunta.');
         break;
       }
       setComposer(e.kind, e);
@@ -2452,7 +2502,7 @@ function finishRun(run, e) {
   closeBubble();
   closeChoices();
   setWorking(false);
-  if (e.error) addMsg('bot error', e.error);
+  if (e.error) addMsg('bot error', t(e.error));
   if (!$('#transcript').children.length) $('#transcript').append(emptyState());
   setComposer('chat'); // writing again continues this chat
   if (!run.replay) { loadChats(); refresh(); }
@@ -2461,7 +2511,7 @@ function finishRun(run, e) {
 /* ---------- chat history ---------- */
 const when = (iso) => {
   const d = new Date(iso), now = new Date();
-  return d.toDateString() === now.toDateString() ? d.toLocaleTimeString('es', { timeStyle: 'short' }) : d.toLocaleDateString('es', { day: 'numeric', month: 'short' });
+  return d.toDateString() === now.toDateString() ? d.toLocaleTimeString(LOCALE, { timeStyle: 'short' }) : d.toLocaleDateString(LOCALE, { day: 'numeric', month: 'short' });
 };
 async function loadChats() {
   try { S.chats = await api('/api/sessions'); } catch { S.chats = []; }
@@ -2472,15 +2522,15 @@ function renderChats() {
   const q = slugify($('#chat-search').value);
   ul.replaceChildren();
   const list = S.chats.filter((r) => !q || slugify(r.title || '').includes(q));
-  if (!list.length) { ul.append(h('li', { class: 'hint' }, S.chats.length ? 'Ninguna conversación coincide.' : 'Tus conversaciones aparecerán aquí.')); return; }
+  if (!list.length) { ul.append(h('li', { class: 'hint' }, S.chats.length ? t('Ninguna conversación coincide.') : t('Tus conversaciones aparecerán aquí.'))); return; }
   for (const r of list) {
     const node = r.slug && nodeOf(r.slug);
     ul.append(h('li', { class: `chat-item${S.run && S.run.id === r.id ? ' on' : ''}`, 'data-id': r.id, style: node ? `--lc: ${lineColor(node.group)}` : null },
       h('button', { class: 'ci-open', type: 'button', onclick: () => openChat(r) },
-        h('span', { class: 'ci-title' }, r.title || 'Chat'),
-        h('span', { class: 'ci-meta' }, r.status === 'running' ? 'En curso' : when(r.started), node ? ` · ${node.label}` : '')),
-      r.status !== 'running' && h('button', { class: 'ci-del', type: 'button', 'aria-label': `Eliminar «${r.title}»`, title: 'Eliminar', onclick: async () => {
-        if (!confirm(`¿Eliminar la conversación «${r.title}»? Tus notas se conservan.`)) return;
+        h('span', { class: 'ci-title' }, r.title || t('Chat')),
+        h('span', { class: 'ci-meta' }, r.status === 'running' ? t('En curso') : when(r.started), node ? ` · ${node.label}` : '')),
+      r.status !== 'running' && h('button', { class: 'ci-del', type: 'button', 'aria-label': t('Eliminar «{title}»', { title: r.title }), title: t('Eliminar'), onclick: async () => {
+        if (!confirm(t('¿Eliminar la conversación «{title}»? Tus notas se conservan.', { title: r.title }))) return;
         try {
           await api(`/api/sessions/${r.id}`, { method: 'DELETE' });
           if (S.run && S.run.id === r.id) newChat();
@@ -2504,7 +2554,7 @@ function newChat() {
   if (S.mapScope === 'chat') drawMap();
   resetTranscript();
   $('#transcript').append(emptyState());
-  $('#chat-title').textContent = 'Nueva conversación';
+  $('#chat-title').textContent = t('Nueva conversación');
   setWorking(false);
   setComposer('chat');
   markActiveChat();
@@ -2519,14 +2569,26 @@ async function refresh() {
   renderChats();
 }
 
+// The first time, the app speaks the browser's language (one of those it knows) and remembers it.
+async function pickLanguage() {
+  if (!window.I18N || window.I18N.chosen) return;
+  const known = (window.I18N.langs || []).map((l) => l.code);
+  const want = (navigator.languages || [navigator.language || '']).map((l) => String(l).toLowerCase().split(/[-_]/)[0]).find((c) => known.includes(c)) || 'es';
+  try {
+    await api('/api/settings/language', { method: 'POST', body: { language: want } });
+    if (want !== LANG) location.reload();
+  } catch { /* it stays in the language it has */ }
+}
+
 async function boot() {
+  pickLanguage();
   createDock();
   applyTheme();
   renderDepth();
   newChat();
   try {
     S.info = await api('/api/state');
-    $('#btn-vault').title = `Vault: ${String(S.info.vault || '').split(/[\\/]/).filter(Boolean).pop() || 'vault'} (tus notas y tus vaults)`;
+    $('#btn-vault').title = t('Vault: {name} (tus notas y tus vaults)', { name: String(S.info.vault || '').split(/[\\/]/).filter(Boolean).pop() || 'vault' });
     $('#provider-badge').textContent = S.info.provider;
     if (S.info.warning) { $('#banner').textContent = S.info.warning; $('#banner').hidden = false; }
     checkUpdate();
@@ -2535,7 +2597,7 @@ async function boot() {
     await loadChats();
     if (S.info.activeRun) {
       const me = S.chats.find((r) => r.id === S.info.activeRun);
-      attachRun(S.info.activeRun, me ? me.title : 'Chat');
+      attachRun(S.info.activeRun, me ? me.title : t('Chat'));
     }
     // a link straight to a note: #open/<slug>[/<panel>]
     const m = /^#open\/([^/]+)(?:\/(guide|concepts|map|practice))?$/.exec(location.hash);

@@ -2,8 +2,6 @@ package session
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"strings"
 
 	"github.com/krilinxito/studyhomie/internal/prompts"
@@ -15,20 +13,6 @@ const (
 	baseHeading   = "Conceptos base"
 	doubtsHeading = "Dudas"
 )
-
-// inputError is a mistake of the request, not a failure: no guide yet, an empty question.
-// A caller that talks to a person shows it as it is.
-type inputError struct{ msg string }
-
-func (e *inputError) Error() string { return e.msg }
-
-// IsInputError reports whether err is something the learner can fix by changing what they asked.
-func IsInputError(err error) bool {
-	var e *inputError
-	return errors.As(err, &e)
-}
-
-func inputErrorf(format string, a ...any) error { return &inputError{fmt.Sprintf(format, a...)} }
 
 // maxQuestion bounds a doubt, so a pasted document is not sent as a question.
 const maxQuestion = 1500
@@ -76,16 +60,16 @@ func (s *Session) Extend(ctx context.Context, slug string) (string, error) {
 		return "", err
 	}
 	prompt := "Topic: " + title + "\n\nGUIDE SUMMARY (what the learner already has):\n" + s.noteContext(slug, note)
-	resp, err := s.quickConvo(prompts.Get("extend", s.Cfg.Language)).Say(ctx, prompt, nil)
+	resp, err := s.quickConvo(prompts.Get("extend", s.aiLang())).Say(ctx, prompt, nil)
 	if err != nil {
 		return "", err
 	}
 	text := strings.TrimSpace(resp.Text)
 	if text == "" {
-		return "", fmt.Errorf("la respuesta salió vacía")
+		return "", failf("la respuesta salió vacía")
 	}
 	err = s.V.Update(slug, func(n *vault.Note) error {
-		n.Body = vault.PlaceSection(n.Body, baseHeading, text, "Guía")
+		n.Body = vault.PlaceSection(n.Body, s.h(baseHeading), text, "Guía")
 		return nil
 	})
 	return text, err
@@ -126,7 +110,7 @@ func (s *Session) Doubt(ctx context.Context, slug, question string) (Answer, err
 		prompt += "\n\nDOUBTS ALREADY ANSWERED:\n" + earlier
 	}
 	prompt += "\n\nNEW QUESTION:\n" + question
-	resp, err := s.quickConvo(prompts.Get("ask", s.Cfg.Language)).Say(ctx, prompt, nil)
+	resp, err := s.quickConvo(prompts.Get("ask", s.aiLang())).Say(ctx, prompt, nil)
 	if err != nil {
 		return Answer{}, err
 	}
@@ -134,7 +118,7 @@ func (s *Session) Doubt(ctx context.Context, slug, question string) (Answer, err
 	text, payload := splitJSON(resp.Text)
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return Answer{}, fmt.Errorf("la respuesta salió vacía")
+		return Answer{}, failf("la respuesta salió vacía")
 	}
 	var out struct {
 		Concepts []Concept `json:"concepts"`
@@ -143,7 +127,7 @@ func (s *Session) Doubt(ctx context.Context, slug, question string) (Answer, err
 		_ = decodeJSON(payload, &out) // the answer is still good without its list of concepts
 	}
 
-	entry := doubtEntry(question, text)
+	entry := s.doubtEntry(question, text)
 	err = s.V.Update(slug, func(n *vault.Note) error {
 		after := "Guía"
 		if vault.Section(n.Body, baseHeading) != "" {
@@ -153,7 +137,7 @@ func (s *Session) Doubt(ctx context.Context, slug, question string) (Answer, err
 		if prev := vault.Section(n.Body, doubtsHeading); prev != "" {
 			all = prev + "\n\n" + entry
 		}
-		n.Body = vault.PlaceSection(n.Body, doubtsHeading, all, after)
+		n.Body = vault.PlaceSection(n.Body, s.h(doubtsHeading), all, after)
 		return nil
 	})
 	if err != nil {
@@ -184,7 +168,7 @@ func (s *Session) offers(parent string, in []Concept) []Concept {
 
 // doubtEntry is one question and its answer as Markdown. The question is the heading, and a long
 // one is kept whole in a callout below it.
-func doubtEntry(question, answer string) string {
+func (s *Session) doubtEntry(question, answer string) string {
 	var b strings.Builder
 	short := head(question, 90)
 	if short != question {
@@ -192,7 +176,7 @@ func doubtEntry(question, answer string) string {
 	}
 	b.WriteString("### " + short + "\n\n")
 	if short != question {
-		b.WriteString("> [!question] Tu duda\n> " + question + "\n\n")
+		b.WriteString("> [!question] " + s.tr("Tu duda") + "\n> " + question + "\n\n")
 	}
 	b.WriteString(strings.TrimSpace(answer) + "\n")
 	return b.String()
@@ -221,7 +205,7 @@ func (s *Session) AddConcept(parent, title, summary string) (slug string, create
 	note := vault.Note{
 		Slug: slug,
 		Meta: vault.Meta{Title: title, Status: "new", Source: "adhoc", Summary: strings.TrimSpace(summary), Field: from.Meta.Field},
-		Body: "## Conexiones\n\nSurgió de una duda en [[" + fromTitle + "]].\n",
+		Body: "## " + s.h("Conexiones") + "\n\n" + s.trf("Surgió de una duda en [[%s]].", fromTitle) + "\n",
 	}
 	if err := s.V.Save(note); err != nil {
 		return "", false, err

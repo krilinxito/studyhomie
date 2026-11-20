@@ -327,7 +327,7 @@ Todo es opcional; sin el archivo se usan estos valores. `studyhomie init` lo cre
 | `quick_model` | vacío | Modelo para respuestas cortas; vacío = `model` |
 | `base_url` | vacío | URL de un servidor local o compatible con OpenAI |
 | `port` | `8765` | Puerto de la interfaz web |
-| `language` | `"español"` | Idioma de guías, pruebas y tutor |
+| `language` | vacío | Idioma de la interfaz y de lo que escribe la IA: `es`, `en`, `fr`, `zh` o `pt` (también se cambia en Ajustes). Vacío: la primera vez se toma el del navegador. Otro nombre de idioma («Deutsch») hace que la IA escriba en él y la interfaz quede en inglés |
 | `vault` | `"vault"` | El vault en uso |
 | `vaults` | `[]` | Todos los vaults agregados, para cambiar entre ellos |
 | `interests` | lista amplia | Campos de los que sale el reto diario |

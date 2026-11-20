@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/krilinxito/studyhomie/internal/i18n"
 )
 
 // saveDelay batches the writes of a running session: it grows by one event per streamed chunk.
@@ -23,7 +25,7 @@ const (
 	statusInterrupted = "interrupted" // the app closed while it was running
 )
 
-const interruptedMsg = "La sesión se interrumpió al cerrar la aplicación."
+var interruptedMsg = i18n.N("La sesión se interrumpió al cerrar la aplicación.")
 
 // sessionFile is one session as stored in vault/.studyhomie/sessions/<id>.json.
 type sessionFile struct {

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/krilinxito/studyhomie/internal/i18n"
 	"github.com/krilinxito/studyhomie/internal/session"
 	"github.com/krilinxito/studyhomie/internal/vault"
 )
@@ -60,7 +61,7 @@ func (s *Server) message(b chatBody) (session.ChatMsg, error) {
 		m.Files = append(m.Files, p)
 	}
 	if len([]rune(m.Text)) > 8000 {
-		return m, errors.New("el mensaje es demasiado largo (máximo 8000 caracteres)")
+		return m, errors.New(i18n.N("el mensaje es demasiado largo (máximo 8000 caracteres)"))
 	}
 	return m, nil
 }
@@ -92,7 +93,7 @@ func (r *Run) sendChat(m session.ChatMsg, shown string) error {
 	r.mu.Lock()
 	if r.askKind != "chat" {
 		r.mu.Unlock()
-		return errors.New("el chat está ocupado; espera a que termine o detenlo")
+		return errors.New(i18n.N("el chat está ocupado; espera a que termine o detenlo"))
 	}
 	r.askKind = ""
 	r.mu.Unlock()

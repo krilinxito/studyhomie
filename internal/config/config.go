@@ -13,12 +13,12 @@ import (
 const FileName = "studyhomie.toml"
 
 type Config struct {
-	Provider      string   `toml:"provider"`    // see providers.Catalog: claude-cli, codex, agy, anthropic-api, openai, gemini, openrouter, ollama…
-	BaseURL       string   `toml:"base_url"`    // local servers and other OpenAI-compatible services
-	Model         string   `toml:"model"`       // empty = the provider's default
-	QuickModel    string   `toml:"quick_model"` // for short answers (base concepts, doubts); empty = Model
-	Port          int      `toml:"port"`        // local web UI
-	Language      string   `toml:"language"`
+	Provider      string   `toml:"provider"`       // see providers.Catalog: claude-cli, codex, agy, anthropic-api, openai, gemini, openrouter, ollama…
+	BaseURL       string   `toml:"base_url"`       // local servers and other OpenAI-compatible services
+	Model         string   `toml:"model"`          // empty = the provider's default
+	QuickModel    string   `toml:"quick_model"`    // for short answers (base concepts, doubts); empty = Model
+	Port          int      `toml:"port"`           // local web UI
+	Language      string   `toml:"language"`       // interface and AI language: es, en, fr, zh, pt, or any language name for the AI alone
 	Vault         string   `toml:"vault"`          // the vault in use
 	Vaults        []string `toml:"vaults"`         // every vault you added, to switch between them
 	Interests     []string `toml:"interests"`      // fields the Daily draws from
@@ -43,7 +43,7 @@ func Default() Config {
 	return Config{
 		Provider:      "claude-cli",
 		Port:          8765,
-		Language:      "español",
+		Language:      "", // the web app picks the browser's language the first time
 		Vault:         "vault",
 		ContextWindow: 200000,
 		CompactAt:     0.6,

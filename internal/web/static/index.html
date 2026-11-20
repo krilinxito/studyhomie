@@ -11,7 +11,7 @@
 </head>
 <body>
   <header class="top">
-    <a class="brand" href="#" id="brand" aria-label="StudyHomie, nueva conversación">
+    <a class="brand" href="#" id="brand" aria-label="StudyHomie, nueva conversación" data-i18n-aria-label="StudyHomie, nueva conversación">
       <svg class="logo" viewBox="0 0 64 64" aria-hidden="true">
         <path class="logo-tip" d="M17 27 L25 15 L30 19 L37 7 L47 27 Z"/>
         <path class="logo-facet" d="M37 7 L47 27 H39.5 Z"/>
@@ -21,16 +21,16 @@
       <span>StudyHomie</span>
     </a>
     <div class="top-meta">
-      <span class="dot" id="session-dot" hidden title="Hay algo en curso"></span>
-      <span class="badge" id="provider-badge" title="Proveedor de IA"></span>
-      <button class="icon-btn" id="btn-panel" type="button" aria-pressed="false" title="Abrir el panel de estudio (guía, conceptos, mapa, apuntes)"><svg class="ic"><use href="icons.svg#i-panel-right-open"/></svg></button>
+      <span class="dot" id="session-dot" hidden title="Hay algo en curso" data-i18n-title="Hay algo en curso"></span>
+      <span class="badge" id="provider-badge" title="Proveedor de IA" data-i18n-title="Proveedor de IA"></span>
+      <button class="icon-btn" id="btn-panel" type="button" aria-pressed="false" title="Abrir el panel de estudio (guía, conceptos, mapa, apuntes)" data-i18n-title="Abrir el panel de estudio (guía, conceptos, mapa, apuntes)"><svg class="ic"><use href="icons.svg#i-panel-right-open"/></svg></button>
       <div class="menu">
-        <button class="icon-btn" id="btn-layout" type="button" aria-haspopup="true" aria-expanded="false" title="Paneles y layout"><svg class="ic"><use href="icons.svg#i-layout-dashboard"/></svg></button>
+        <button class="icon-btn" id="btn-layout" type="button" aria-haspopup="true" aria-expanded="false" title="Paneles y layout" data-i18n-title="Paneles y layout"><svg class="ic"><use href="icons.svg#i-layout-dashboard"/></svg></button>
         <div class="menu-pop" id="layout-menu" hidden></div>
       </div>
-      <button class="icon-btn" id="btn-vault" type="button" title="Vault: tus notas y tus vaults"><svg class="ic"><use href="icons.svg#i-library-big"/></svg></button>
-      <button class="icon-btn" id="btn-settings" type="button" title="Ajustes: elegir la IA"><svg class="ic"><use href="icons.svg#i-settings"/></svg></button>
-      <button class="icon-btn" id="btn-theme" type="button" title="Cambiar tema"><svg class="ic"><use href="icons.svg#i-moon"/></svg></button>
+      <button class="icon-btn" id="btn-vault" type="button" title="Vault: tus notas y tus vaults" data-i18n-title="Vault: tus notas y tus vaults"><svg class="ic"><use href="icons.svg#i-library-big"/></svg></button>
+      <button class="icon-btn" id="btn-settings" type="button" title="Ajustes: elegir la IA" data-i18n-title="Ajustes: elegir la IA"><svg class="ic"><use href="icons.svg#i-settings"/></svg></button>
+      <button class="icon-btn" id="btn-theme" type="button" title="Cambiar tema" data-i18n-title="Cambiar tema"><svg class="ic"><use href="icons.svg#i-moon"/></svg></button>
     </div>
   </header>
 
@@ -38,60 +38,60 @@
 
   <div class="edit-bar" id="edit-bar" hidden>
     <svg class="ic"><use href="icons.svg#i-lock-open"/></svg>
-    <span><strong>Editando el diseño.</strong> Arrastra una pestaña para moverla, dividir la pantalla o apilarla en otro grupo.</span>
-    <button class="btn small" type="button" id="edit-reset">Restablecer</button>
-    <button class="btn small primary" type="button" id="edit-done"><svg class="ic"><use href="icons.svg#i-lock"/></svg>Listo</button>
+    <span><strong data-i18n="Editando el diseño.">Editando el diseño.</strong> <span data-i18n="Arrastra una pestaña para moverla, dividir la pantalla o apilarla en otro grupo.">Arrastra una pestaña para moverla, dividir la pantalla o apilarla en otro grupo.</span></span>
+    <button class="btn small" type="button" id="edit-reset" data-i18n="Restablecer">Restablecer</button>
+    <button class="btn small primary" type="button" id="edit-done"><svg class="ic"><use href="icons.svg#i-lock"/></svg><span data-i18n="Listo">Listo</span></button>
   </div>
 
   <div class="update-bar" id="update-bar" role="status" hidden>
     <svg class="ic"><use href="icons.svg#i-circle-arrow-up"/></svg>
     <span id="update-text"></span>
-    <button class="btn small ghost" type="button" id="update-notes">Ver cambios</button>
-    <button class="btn small ghost" type="button" id="update-later">Más tarde</button>
-    <button class="btn small primary" type="button" id="update-go"><svg class="ic"><use href="icons.svg#i-download"/></svg><span>Actualizar</span></button>
+    <button class="btn small ghost" type="button" id="update-notes" data-i18n="Ver cambios">Ver cambios</button>
+    <button class="btn small ghost" type="button" id="update-later" data-i18n="Más tarde">Más tarde</button>
+    <button class="btn small primary" type="button" id="update-go"><svg class="ic"><use href="icons.svg#i-download"/></svg><span data-i18n="Actualizar">Actualizar</span></button>
   </div>
 
   <main class="dock" id="dock"></main>
 
   <!-- the panels; the dock mounts each of them -->
   <div id="panes" hidden>
-    <section class="pane sidebar" data-pane="chats" aria-label="Conversaciones">
-      <button class="btn primary new-chat" id="btn-new" type="button"><svg class="ic"><use href="icons.svg#i-square-pen"/></svg>Nueva conversación</button>
-      <label class="sr-only" for="chat-search">Buscar conversaciones</label>
-      <input id="chat-search" type="search" placeholder="Buscar conversaciones…" autocomplete="off">
+    <section class="pane sidebar" data-pane="chats" aria-label="Conversaciones" data-i18n-aria-label="Conversaciones">
+      <button class="btn primary new-chat" id="btn-new" type="button"><svg class="ic"><use href="icons.svg#i-square-pen"/></svg><span data-i18n="Nueva conversación">Nueva conversación</span></button>
+      <label class="sr-only" for="chat-search" data-i18n="Buscar conversaciones">Buscar conversaciones</label>
+      <input id="chat-search" type="search" placeholder="Buscar conversaciones…" data-i18n-placeholder="Buscar conversaciones…" autocomplete="off">
       <ul class="chat-list" id="chat-list"></ul>
     </section>
 
-    <section class="pane chat" data-pane="chat" aria-label="Chat">
+    <section class="pane chat" data-pane="chat" aria-label="Chat" data-i18n-aria-label="Chat">
       <div class="chat-head">
-        <h2 id="chat-title">Nueva conversación</h2>
-        <button class="btn small red" id="btn-cancel" type="button" hidden>Detener</button>
+        <h2 id="chat-title" data-i18n="Nueva conversación">Nueva conversación</h2>
+        <button class="btn small red" id="btn-cancel" type="button" hidden data-i18n="Detener">Detener</button>
       </div>
       <div id="transcript" class="transcript" aria-live="polite"></div>
-      <div class="working" id="working" hidden><span class="pulse"></span><span id="working-text">Pensando…</span></div>
+      <div class="working" id="working" hidden><span class="pulse"></span><span id="working-text" data-i18n="Pensando…">Pensando…</span></div>
       <form class="composer" id="composer">
         <div class="composer-label" id="composer-label" hidden></div>
         <div class="quick" id="quick" hidden></div>
         <div class="freeform" id="freeform">
           <div class="composer-box">
-            <ul class="staged" id="staged" aria-label="Adjuntos del mensaje" hidden></ul>
-            <label class="sr-only" for="reply">Tu mensaje</label>
-            <textarea id="reply" rows="2" placeholder="Pregunta lo que quieras, o pide una guía"></textarea>
+            <ul class="staged" id="staged" aria-label="Adjuntos del mensaje" data-i18n-aria-label="Adjuntos del mensaje" hidden></ul>
+            <label class="sr-only" for="reply" data-i18n="Tu mensaje">Tu mensaje</label>
+            <textarea id="reply" rows="2" placeholder="Pregunta lo que quieras, o pide una guía" data-i18n-placeholder="Pregunta lo que quieras, o pide una guía"></textarea>
             <div class="composer-row">
               <div class="menu plus">
-                <button class="icon-btn" type="button" id="btn-plus" aria-haspopup="true" aria-expanded="false" title="Más: el reto de hoy, planear una materia, subir apuntes" aria-label="Más acciones"><svg class="ic"><use href="icons.svg#i-plus"/></svg></button>
+                <button class="icon-btn" type="button" id="btn-plus" aria-haspopup="true" aria-expanded="false" title="Más: el reto de hoy, planear una materia, subir apuntes" data-i18n-title="Más: el reto de hoy, planear una materia, subir apuntes" aria-label="Más acciones" data-i18n-aria-label="Más acciones"><svg class="ic"><use href="icons.svg#i-plus"/></svg></button>
                 <div class="menu-pop up" id="plus-menu" hidden></div>
               </div>
-              <button class="icon-btn" type="button" id="btn-attach" title="Adjuntar una imagen o un archivo a tu mensaje (también puedes pegarlo o arrastrarlo)" aria-label="Adjuntar"><svg class="ic"><use href="icons.svg#i-paperclip"/></svg></button>
-              <div class="depth" id="depth" role="radiogroup" aria-label="Niveles de conceptos que se escriben ahora">
-                <span class="depth-label" title="Lo que quede más abajo se mapea igual y se explica cuando lo pidas">Escribir ahora</span>
+              <button class="icon-btn" type="button" id="btn-attach" title="Adjuntar una imagen o un archivo a tu mensaje (también puedes pegarlo o arrastrarlo)" data-i18n-title="Adjuntar una imagen o un archivo a tu mensaje (también puedes pegarlo o arrastrarlo)" aria-label="Adjuntar" data-i18n-aria-label="Adjuntar"><svg class="ic"><use href="icons.svg#i-paperclip"/></svg></button>
+              <div class="depth" id="depth" role="radiogroup" aria-label="Niveles de conceptos que se escriben ahora" data-i18n-aria-label="Niveles de conceptos que se escriben ahora">
+                <span class="depth-label" title="Lo que quede más abajo se mapea igual y se explica cuando lo pidas" data-i18n-title="Lo que quede más abajo se mapea igual y se explica cuando lo pidas" data-i18n="Escribir ahora">Escribir ahora</span>
                 <span class="depth-line" id="depth-stations"></span>
                 <span class="depth-text" id="depth-text"></span>
               </div>
               <input type="file" id="attach-input" multiple hidden accept=".txt,.md,.markdown,.pdf,.pptx,.docx,.csv,.json,.png,.jpg,.jpeg,.webp,.gif">
               <input type="file" id="material-input" multiple hidden accept=".txt,.md,.markdown,.pdf,.pptx,.docx,.png,.jpg,.jpeg,.webp,.gif">
-              <button class="btn small" type="button" id="btn-finish" hidden>Terminar y evaluar</button>
-              <button class="send-btn" type="submit" id="btn-send" aria-label="Enviar"><svg class="ic"><use href="icons.svg#i-send"/></svg></button>
+              <button class="btn small" type="button" id="btn-finish" hidden data-i18n="Terminar y evaluar">Terminar y evaluar</button>
+              <button class="send-btn" type="submit" id="btn-send" aria-label="Enviar" data-i18n-aria-label="Enviar"><svg class="ic"><use href="icons.svg#i-send"/></svg></button>
             </div>
           </div>
           <span class="hint" id="composer-hint"></span>
@@ -99,56 +99,57 @@
       </form>
     </section>
 
-    <section class="pane" data-pane="guide" id="p-guide" aria-label="Guía"><div class="reader" id="reader"></div></section>
-    <section class="pane" data-pane="concepts" id="p-concepts" aria-label="Conceptos"></section>
-    <section class="pane map-view" data-pane="map" id="p-map" aria-label="Mapa">
+    <section class="pane" data-pane="guide" id="p-guide" aria-label="Guía" data-i18n-aria-label="Guía"><div class="reader" id="reader"></div></section>
+    <section class="pane" data-pane="concepts" id="p-concepts" aria-label="Conceptos" data-i18n-aria-label="Conceptos"></section>
+    <section class="pane map-view" data-pane="map" id="p-map" aria-label="Mapa" data-i18n-aria-label="Mapa">
       <div class="toolbar">
-        <label class="sr-only" for="search">Buscar en el mapa</label>
-        <input id="search" type="search" placeholder="Buscar…" autocomplete="off">
-        <div class="map-scope" id="map-scope" role="group" aria-label="Qué mapa ver">
-          <button type="button" data-scope="chat">Esta conversación</button>
-          <button type="button" data-scope="all">Todas</button>
+        <label class="sr-only" for="search" data-i18n="Buscar en el mapa">Buscar en el mapa</label>
+        <input id="search" type="search" placeholder="Buscar…" data-i18n-placeholder="Buscar…" autocomplete="off">
+        <div class="map-scope" id="map-scope" role="group" aria-label="Qué mapa ver" data-i18n-aria-label="Qué mapa ver">
+          <button type="button" data-scope="chat" data-i18n="Esta conversación">Esta conversación</button>
+          <button type="button" data-scope="all" data-i18n="Todas">Todas</button>
         </div>
-        <div class="line-chips" id="filter-rm" role="group" aria-label="Filtrar por guía"></div>
+        <div class="line-chips" id="filter-rm" role="group" aria-label="Filtrar por guía" data-i18n-aria-label="Filtrar por guía"></div>
       </div>
       <div class="map-wrap">
-        <div id="cy" role="img" aria-label="Mapa: cada guía con los conceptos en que se apoya"></div>
+        <div id="cy" role="img" aria-label="Mapa: cada guía con los conceptos en que se apoya" data-i18n-aria-label="Mapa: cada guía con los conceptos en que se apoya"></div>
         <div class="empty" id="map-empty" hidden>
-          <h3 id="map-empty-title">Tu mapa está vacío</h3>
-          <p id="map-empty-text">Pide una guía en el chat. Cada guía y sus conceptos aparecerán aquí, conectados.</p>
-          <button class="btn small" type="button" id="map-see-all" hidden>Ver el mapa de todas tus conversaciones</button>
+          <h3 id="map-empty-title" data-i18n="Tu mapa está vacío">Tu mapa está vacío</h3>
+          <p id="map-empty-text" data-i18n="Pide una guía en el chat. Cada guía y sus conceptos aparecerán aquí, conectados.">Pide una guía en el chat. Cada guía y sus conceptos aparecerán aquí, conectados.</p>
+          <button class="btn small" type="button" id="map-see-all" hidden data-i18n="Ver el mapa de todas tus conversaciones">Ver el mapa de todas tus conversaciones</button>
         </div>
       </div>
-      <ul class="legend" aria-label="Leyenda">
-        <li><i class="st st-new"></i>Por descubrir</li>
-        <li><i class="st st-prepared"></i>Guía lista</li>
-        <li><i class="st st-tested"></i>Comprobado</li>
-        <li><i class="st st-explained"></i>Explicado</li>
-        <li><i class="st st-concept"></i>Concepto</li>
-        <li><i class="st st-pending"></i>Por explicar</li>
+      <ul class="legend" aria-label="Leyenda" data-i18n-aria-label="Leyenda">
+        <li><i class="st st-new"></i><span data-i18n="Por descubrir">Por descubrir</span></li>
+        <li><i class="st st-prepared"></i><span data-i18n="Guía lista">Guía lista</span></li>
+        <li><i class="st st-tested"></i><span data-i18n="Comprobado">Comprobado</span></li>
+        <li><i class="st st-explained"></i><span data-i18n="Explicado">Explicado</span></li>
+        <li><i class="st st-concept"></i><span data-i18n="Concepto">Concepto</span></li>
+        <li><i class="st st-pending"></i><span data-i18n="Por explicar">Por explicar</span></li>
       </ul>
     </section>
-    <section class="pane" data-pane="practice" id="p-practice" aria-label="Practicar"></section>
-    <section class="pane" data-pane="notes" id="p-notes" aria-label="Apuntes"></section>
-    <section class="pane" data-pane="vault" id="p-vault" aria-label="Vault"></section>
-    <section class="pane" data-pane="settings" id="p-settings" aria-label="Ajustes"></section>
+    <section class="pane" data-pane="practice" id="p-practice" aria-label="Practicar" data-i18n-aria-label="Practicar"></section>
+    <section class="pane" data-pane="notes" id="p-notes" aria-label="Apuntes" data-i18n-aria-label="Apuntes"></section>
+    <section class="pane" data-pane="vault" id="p-vault" aria-label="Vault" data-i18n-aria-label="Vault"></section>
+    <section class="pane" data-pane="settings" id="p-settings" aria-label="Ajustes" data-i18n-aria-label="Ajustes"></section>
   </div>
 
-  <div class="explain-pop" id="explain-pop" role="dialog" aria-label="Explicar un concepto" hidden></div>
+  <div class="explain-pop" id="explain-pop" role="dialog" aria-label="Explicar un concepto" data-i18n-aria-label="Explicar un concepto" hidden></div>
 
-  <dialog id="sim-dialog" aria-label="Simulación interactiva">
-    <div class="dlg-head"><strong id="sim-title">Simulación</strong><button class="btn small" type="button" id="sim-close">Cerrar</button></div>
-    <iframe id="sim-frame" sandbox="allow-scripts" title="Simulación interactiva" referrerpolicy="no-referrer"></iframe>
+  <dialog id="sim-dialog" aria-label="Simulación interactiva" data-i18n-aria-label="Simulación interactiva">
+    <div class="dlg-head"><strong id="sim-title" data-i18n="Simulación">Simulación</strong><button class="btn small" type="button" id="sim-close" data-i18n="Cerrar">Cerrar</button></div>
+    <iframe id="sim-frame" sandbox="allow-scripts" title="Simulación interactiva" data-i18n-title="Simulación interactiva" referrerpolicy="no-referrer"></iframe>
   </dialog>
 
   <dialog id="update-dialog" aria-labelledby="update-title">
-    <div class="dlg-head"><strong id="update-title">Versión nueva</strong><button class="icon-btn" type="button" id="update-close" aria-label="Cerrar"><svg class="ic"><use href="icons.svg#i-x"/></svg></button></div>
+    <div class="dlg-head"><strong id="update-title" data-i18n="Versión nueva">Versión nueva</strong><button class="icon-btn" type="button" id="update-close" aria-label="Cerrar" data-i18n-aria-label="Cerrar"><svg class="ic"><use href="icons.svg#i-x"/></svg></button></div>
     <div class="update-body" id="update-body"></div>
     <div class="update-foot" id="update-foot"></div>
   </dialog>
 
   <div id="toast" role="status" aria-live="assertive" hidden></div>
 
+  <script src="i18n.js"></script>
   <script src="theme.js"></script>
   <script src="vendor/marked.min.js"></script>
   <script src="vendor/purify.min.js"></script>

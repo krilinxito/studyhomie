@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/krilinxito/studyhomie/internal/config"
+	"github.com/krilinxito/studyhomie/internal/i18n"
 	"github.com/krilinxito/studyhomie/internal/links"
 	"github.com/krilinxito/studyhomie/internal/prompts"
 	"github.com/krilinxito/studyhomie/internal/provider"
@@ -31,7 +32,9 @@ type Session struct {
 	Now  func() time.Time
 	Pick func(n int) int
 	// Ask, if set, is called right before the session waits for input, so a UI can
-	// show the right control: kind is "line" (one answer) or "block" (free text).
+	// show the right control: kind is "line" (one answer) or "block" (free text). label is in
+	// Spanish, the language the program is written in: a UI translates it with Label, and can
+	// still tell which question it is by the Spanish text.
 	Ask func(kind, label, def string)
 	// Card, if set, receives structured output a UI draws as rich elements. Where a
 	// card replaces text, the text is not printed; the terminal leaves this nil.
@@ -55,7 +58,7 @@ func (s *Session) pick(n int) int {
 // printf writes to the learner; a session without output (a short web request) stays quiet.
 func (s *Session) printf(format string, a ...any) {
 	if s.Out != nil {
-		fmt.Fprintf(s.Out, format, a...)
+		fmt.Fprintf(s.Out, s.tr(format), a...)
 	}
 }
 
@@ -73,7 +76,7 @@ func (s *Session) termf(format string, a ...any) {
 // status says what the session is busy with. The terminal prints it as a line ending in "...";
 // a UI shows it in its busy indicator, so the chat transcript is not filled with progress lines.
 func (s *Session) status(format string, a ...any) {
-	text := fmt.Sprintf(format, a...)
+	text := s.trf(format, a...)
 	if !s.card(Card{Kind: CardStatus, Detail: text + "…"}) {
 		s.printf("%s...\n", text)
 	}
@@ -81,7 +84,7 @@ func (s *Session) status(format string, a ...any) {
 
 func (s *Session) convo(system string, tools ...string) *Convo {
 	return &Convo{
-		P: s.P, System: system, Tools: tools, Model: s.Cfg.Model, Language: s.Cfg.Language,
+		P: s.P, System: system, Tools: tools, Model: s.Cfg.Model, Language: s.aiLang(),
 		Window: s.Cfg.ContextWindow, CompactAt: s.Cfg.CompactAt,
 	}
 }
@@ -91,9 +94,9 @@ func (s *Session) readLine(label, def string) (string, error) {
 	if s.Ask != nil {
 		s.Ask("line", label, def) // a UI shows the label next to its input, so it is not printed
 	} else if def != "" {
-		s.printf("%s [%s]: ", label, def)
+		s.printf("%s [%s]: ", Label(s.lang(), label), def)
 	} else {
-		s.printf("%s: ", label)
+		s.printf("%s: ", Label(s.lang(), label))
 	}
 	line, err := s.In.ReadString('\n')
 	if err != nil && line == "" {
@@ -157,10 +160,10 @@ func (s *Session) verified(ctx context.Context, in []vault.Resource) []vault.Res
 	return out
 }
 
-func guideBody(existing, guide string, res []vault.Resource) string {
-	body := vault.ReplaceSection(existing, "Guía", guide)
+func (s *Session) guideBody(existing, guide string, res []vault.Resource) string {
+	body := vault.ReplaceSection(existing, s.h("Guía"), guide)
 	if lines := resourceLines(res); lines != "" {
-		body = vault.ReplaceSection(body, "Recursos", lines)
+		body = vault.ReplaceSection(body, s.h("Recursos"), lines)
 	}
 	return body
 }
@@ -215,6 +218,9 @@ type grading struct {
 	Gaps []string `json:"gaps"`
 }
 
+// difficulties are the levels of a test, as the chat and the UI name them.
+var difficulties = []string{i18n.N("básica"), i18n.N("media"), i18n.N("avanzada")}
+
 // Quiz generates a test, collects answers and grades them. On a roadmap, passing it writes the
 // next topic's guide.
 func (s *Session) Quiz(ctx context.Context, slug string, n int, difficulty string) error {
@@ -227,9 +233,9 @@ func (s *Session) Quiz(ctx context.Context, slug string, n int, difficulty strin
 func (s *Session) quiz(ctx context.Context, slug string, n int, difficulty string) error {
 	note, err := s.V.Load(slug)
 	if err != nil {
-		return fmt.Errorf("no hay guía para «%s»; ejecuta primero la preparación: %w", slug, err)
+		return failf("no hay guía para «%s»; ejecuta primero la preparación: %w", slug, err)
 	}
-	system := prompts.Get("quiz", s.Cfg.Language)
+	system := prompts.Get("quiz", s.aiLang())
 	genPrompt := fmt.Sprintf("GENERATE a test.\nTopic: %s\nWhat the learner studied: %s\nNumber of questions: %d\nDifficulty: %s",
 		note.Meta.Title, s.V.LoadHandoff(slug), n, difficulty)
 	s.card(Card{Kind: CardPhase, Phase: "quiz"})
@@ -245,7 +251,7 @@ func (s *Session) quiz(ctx context.Context, slug string, n int, difficulty strin
 		return err
 	}
 	if len(gen.Questions) == 0 {
-		return fmt.Errorf("la prueba salió vacía")
+		return failf("la prueba salió vacía")
 	}
 
 	answers := make(map[int]string)
@@ -278,7 +284,7 @@ func (s *Session) quiz(ctx context.Context, slug string, n int, difficulty strin
 		return err
 	}
 
-	header := fmt.Sprintf("Puntaje: **%d/100** (dificultad: %s)\n\n", g.Score, difficulty)
+	header := s.trf("Puntaje: **%d/100** (dificultad: %s)", g.Score, s.tr(difficulty)) + "\n\n"
 	var rep strings.Builder
 	byID := map[int]question{}
 	for _, q := range gen.Questions {
@@ -289,18 +295,18 @@ func (s *Session) quiz(ctx context.Context, slug string, n int, difficulty strin
 		if r.Correct {
 			mark = "✓"
 		}
-		fmt.Fprintf(&rep, "- %s **%s**\n  - Tu respuesta: %s\n  - %s\n", mark, byID[r.ID].Question, answers[r.ID], r.Feedback)
+		fmt.Fprintf(&rep, "- %s **%s**\n  - %s %s\n  - %s\n", mark, byID[r.ID].Question, s.tr("Tu respuesta:"), answers[r.ID], r.Feedback)
 	}
 	if len(g.Gaps) > 0 {
-		rep.WriteString("\nPara repasar: " + strings.Join(g.Gaps, "; ") + "\n")
+		rep.WriteString("\n" + s.tr("Para repasar:") + " " + strings.Join(g.Gaps, "; ") + "\n")
 	}
-	if s.card(Card{Kind: CardScore, Label: "Preguntas", Score: g.Score, Detail: "dificultad " + difficulty}) {
+	if s.card(Card{Kind: CardScore, Label: s.tr("Preguntas"), Score: g.Score, Detail: s.trf("dificultad %s", s.tr(difficulty))}) {
 		s.printf("\n%s", rep.String()) // the card already shows the score
 	} else {
 		s.printf("\n%s%s", header, rep.String())
 	}
 
-	if err := s.V.AppendSection(slug, "Prueba", header+rep.String()); err != nil {
+	if err := s.V.AppendSection(slug, s.h("Prueba"), header+rep.String()); err != nil {
 		return err
 	}
 	note, _ = s.V.Load(slug)
@@ -328,9 +334,9 @@ func (s *Session) Feynman(ctx context.Context, slug string) error {
 func (s *Session) feynman(ctx context.Context, slug string) error {
 	note, err := s.V.Load(slug)
 	if err != nil {
-		return fmt.Errorf("no hay guía para «%s»; ejecuta primero la preparación: %w", slug, err)
+		return failf("no hay guía para «%s»; ejecuta primero la preparación: %w", slug, err)
 	}
-	c := s.convo(prompts.Get("feynman", s.Cfg.Language))
+	c := s.convo(prompts.Get("feynman", s.aiLang()))
 	header := fmt.Sprintf("Topic: %s\nStudy summary (ground truth): %s\n\n", note.Meta.Title, s.V.LoadHandoff(slug))
 
 	s.card(Card{Kind: CardPhase, Phase: "feynman"})
@@ -366,13 +372,13 @@ func (s *Session) feynman(ctx context.Context, slug string) error {
 		}
 		if !finished {
 			s.printf("\n%s\n\n", resp.Text)
-			fmt.Fprintf(&transcript, "**Tú:** %s\n\n**StudyHomie:** %s\n\n", text, resp.Text)
+			fmt.Fprintf(&transcript, "**%s** %s\n\n**StudyHomie:** %s\n\n", s.tr("Tú:"), text, resp.Text)
 			continue
 		}
 		score, body, ok := extractScore(resp.Text)
 		s.printf("\n%s\n", body)
-		fmt.Fprintf(&transcript, "**Evaluación final:** %s\n", body)
-		if ok && !s.card(Card{Kind: CardScore, Label: "Explicación", Score: score}) {
+		fmt.Fprintf(&transcript, "**%s** %s\n", s.tr("Evaluación final:"), body)
+		if ok && !s.card(Card{Kind: CardScore, Label: s.tr("Explicación"), Score: score}) {
 			s.printf("\nPuntaje Feynman: %d/100\n", score)
 		}
 		return s.saveFeynman(slug, transcript.String(), score, ok)
@@ -380,7 +386,7 @@ func (s *Session) feynman(ctx context.Context, slug string) error {
 }
 
 func (s *Session) saveFeynman(slug, transcript string, score int, scored bool) error {
-	if err := s.V.AppendSection(slug, "Feynman", transcript); err != nil {
+	if err := s.V.AppendSection(slug, s.h("Feynman"), transcript); err != nil {
 		return err
 	}
 	note, err := s.V.Load(slug)
@@ -455,10 +461,9 @@ func (s *Session) practice(ctx context.Context, slug string) error {
 }
 
 func (s *Session) confirm(label string) (bool, error) {
-	a, err := s.readLine(label+" (s/n)", "s")
+	a, err := s.readLine(label+yesNo, "s")
 	if err != nil {
 		return false, err
 	}
-	a = strings.ToLower(a)
-	return a == "s" || a == "si" || a == "sí" || a == "y", nil
+	return yes(a), nil
 }

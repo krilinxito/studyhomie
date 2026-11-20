@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/krilinxito/studyhomie/internal/config"
+	"github.com/krilinxito/studyhomie/internal/i18n"
 	"github.com/krilinxito/studyhomie/internal/update"
 )
 
@@ -70,7 +71,7 @@ func (s *Server) installUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.busy() && !body.Force {
-		writeJSON(w, http.StatusConflict, map[string]any{"error": "Hay algo en curso; si actualizas ahora se interrumpe.", "busy": true})
+		writeJSON(w, http.StatusConflict, map[string]any{"error": i18n.N("Hay algo en curso; si actualizas ahora se interrumpe."), "busy": true})
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)

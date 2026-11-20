@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/krilinxito/studyhomie/internal/config"
+	"github.com/krilinxito/studyhomie/internal/i18n"
 	"github.com/krilinxito/studyhomie/internal/provider"
 	"github.com/krilinxito/studyhomie/internal/roadmap"
 	"github.com/krilinxito/studyhomie/internal/session"
@@ -117,6 +118,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	static, _ := fs.Sub(staticFS, "static")
 	mux.Handle("GET /", pageHeaders(http.FileServerFS(static)))
+	mux.HandleFunc("GET /i18n.js", s.i18nScript)
 
 	mux.HandleFunc("GET /api/state", s.state)
 	mux.HandleFunc("GET /api/settings", s.getSettings)
@@ -124,6 +126,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/settings/models", s.listModels)
 	mux.HandleFunc("POST /api/settings/test", s.testSettings)
 	mux.HandleFunc("POST /api/settings/study", s.saveStudySettings)
+	mux.HandleFunc("POST /api/settings/language", s.setLanguage)
 	mux.HandleFunc("GET /api/update", s.getUpdate)
 	mux.HandleFunc("POST /api/update", s.installUpdate)
 	mux.HandleFunc("POST /api/update/skip", s.skipUpdate)
@@ -240,6 +243,12 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 // that has not replied by then is stuck.
 const answerTimeout = 3 * time.Minute
 
+// errText is a session error in the configured language.
+func (s *Server) errText(err error) string {
+	_, cfg, _ := s.backend()
+	return session.ErrorText(err, i18n.UI(cfg.Language))
+}
+
 // shortSession is a session for actions that do not need a conversation with the learner:
 // they take their input from the request and send the result back in the response.
 func (s *Server) shortSession() *session.Session {
@@ -273,7 +282,7 @@ func (s *Server) extend(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	text, err := s.shortSession().Extend(ctx, slug)
 	if err != nil {
-		fail(w, shortStatus(err), err.Error())
+		fail(w, shortStatus(err), s.errText(err))
 		return
 	}
 	writeJSON(w, 200, map[string]string{"text": text})
@@ -296,7 +305,7 @@ func (s *Server) doubt(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	ans, err := s.shortSession().Doubt(ctx, slug, body.Question)
 	if err != nil {
-		fail(w, shortStatus(err), err.Error())
+		fail(w, shortStatus(err), s.errText(err))
 		return
 	}
 	writeJSON(w, 200, ans)
@@ -317,7 +326,7 @@ func (s *Server) concept(w http.ResponseWriter, r *http.Request) {
 	}
 	got, created, err := s.shortSession().AddConcept(slug, body.Title, body.Summary)
 	if err != nil {
-		fail(w, shortStatus(err), err.Error())
+		fail(w, shortStatus(err), s.errText(err))
 		return
 	}
 	writeJSON(w, 200, map[string]any{"slug": got, "created": created})

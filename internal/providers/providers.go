@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/krilinxito/studyhomie/internal/config"
+	"github.com/krilinxito/studyhomie/internal/i18n"
 	"github.com/krilinxito/studyhomie/internal/provider"
 	"github.com/krilinxito/studyhomie/internal/provider/agycli"
 	"github.com/krilinxito/studyhomie/internal/provider/anthropicapi"
@@ -39,26 +40,26 @@ type Info struct {
 // Catalog lists every backend, in the order the settings page shows them.
 var Catalog = []Info{
 	{ID: "claude-cli", Name: "Claude Code", Kind: "cli", Bin: "claude", Search: true,
-		Note: "Usa tu plan de Claude. Instálalo con `irm https://claude.ai/install.ps1 | iex` y ejecuta `claude` una vez."},
+		Note: i18n.N("Usa tu plan de Claude. Instálalo con `irm https://claude.ai/install.ps1 | iex` y ejecuta `claude` una vez.")},
 	{ID: "codex", Name: "Codex CLI (OpenAI)", Kind: "cli", Bin: "codex", Search: true,
-		Note: "Usa tu cuenta de ChatGPT o una clave de OpenAI. Instálalo con `npm install -g @openai/codex` y ejecuta `codex login`."},
+		Note: i18n.N("Usa tu cuenta de ChatGPT o una clave de OpenAI. Instálalo con `npm install -g @openai/codex` y ejecuta `codex login`.")},
 	{ID: "agy", Name: "Antigravity CLI (Google)", Kind: "cli", Bin: "agy", Search: true, Experimental: true,
-		Note: "Usa tu cuenta de Google. Ejecuta `agy` una vez para iniciar sesión. Experimental: es un agente con herramientas propias."},
+		Note: i18n.N("Usa tu cuenta de Google. Ejecuta `agy` una vez para iniciar sesión. Experimental: es un agente con herramientas propias.")},
 	{ID: "anthropic-api", Name: "API de Anthropic", Kind: "api", KeyEnvs: []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"}, DefaultModel: anthropicapi.DefaultModel, Search: true},
 	{ID: "openai", Name: "API de OpenAI", Kind: "api", KeyEnvs: []string{openaiapi.KeyEnv}, Search: true},
 	{ID: "gemini", Name: "API de Gemini (Google)", Kind: "api", KeyEnvs: geminiapi.KeyEnvs, Search: true},
 	{ID: "openrouter", Name: "OpenRouter", Kind: "api", KeyEnvs: []string{"OPENROUTER_API_KEY"}, BaseURL: "https://openrouter.ai/api/v1", Search: true,
-		Note: "Un solo acceso a cientos de modelos (Gemini, Llama, Mistral, DeepSeek, Qwen…)."},
+		Note: i18n.N("Un solo acceso a cientos de modelos (Gemini, Llama, Mistral, DeepSeek, Qwen…).")},
 	{ID: "groq", Name: "Groq", Kind: "api", KeyEnvs: []string{"GROQ_API_KEY"}, BaseURL: "https://api.groq.com/openai/v1"},
 	{ID: "deepseek", Name: "DeepSeek", Kind: "api", KeyEnvs: []string{"DEEPSEEK_API_KEY"}, BaseURL: "https://api.deepseek.com/v1"},
 	{ID: "mistral", Name: "Mistral", Kind: "api", KeyEnvs: []string{"MISTRAL_API_KEY"}, BaseURL: "https://api.mistral.ai/v1"},
 	{ID: "xai", Name: "xAI (Grok)", Kind: "api", KeyEnvs: []string{"XAI_API_KEY"}, BaseURL: "https://api.x.ai/v1"},
 	{ID: "together", Name: "Together AI", Kind: "api", KeyEnvs: []string{"TOGETHER_API_KEY"}, BaseURL: "https://api.together.xyz/v1"},
 	{ID: "ollama", Name: "Ollama (local)", Kind: "local", BaseURL: "http://localhost:11434/v1", EditURL: true,
-		Note: "Modelos en tu PC. Los de 14B o más siguen mejor el formato de las guías."},
+		Note: i18n.N("Modelos en tu PC. Los de 14B o más siguen mejor el formato de las guías.")},
 	{ID: "lmstudio", Name: "LM Studio (local)", Kind: "local", BaseURL: "http://localhost:1234/v1", EditURL: true},
 	{ID: "openai-compatible", Name: "Otro compatible con OpenAI", Kind: "api", KeyEnvs: []string{"OPENAI_COMPAT_API_KEY"}, EditURL: true,
-		Note: "Cualquier servicio con la API de Chat Completions de OpenAI: pon su URL. La clave, si hace falta, en OPENAI_COMPAT_API_KEY."},
+		Note: i18n.N("Cualquier servicio con la API de Chat Completions de OpenAI: pon su URL. La clave, si hace falta, en OPENAI_COMPAT_API_KEY.")},
 }
 
 // Find returns the catalogue entry of a backend id.
@@ -157,14 +158,14 @@ func Statuses(ctx context.Context, cfg config.Config) []Status {
 		switch in.Kind {
 		case "cli":
 			if _, err := exec.LookPath(in.Bin); err != nil {
-				st.Ready, st.Reason = false, "no instalado"
+				st.Ready, st.Reason = false, i18n.N("no instalado")
 			}
 		case "api":
 			if len(in.KeyEnvs) > 0 && httpx.Key(in.KeyEnvs...) == "" && in.ID != "openai-compatible" {
 				st.Ready, st.Reason = false, "falta "+in.KeyEnvs[0]
 			}
 			if in.EditURL && in.BaseURL == "" && (cfg.Provider != in.ID || strings.TrimSpace(cfg.BaseURL) == "") {
-				st.Ready, st.Reason = false, "falta su URL (base_url)"
+				st.Ready, st.Reason = false, i18n.N("falta su URL (base_url)")
 			}
 		case "local":
 			url := in.BaseURL
@@ -177,7 +178,7 @@ func Statuses(ctx context.Context, cfg config.Config) []Status {
 				pctx, cancel := context.WithTimeout(ctx, 800*time.Millisecond)
 				defer cancel()
 				if _, err := httpx.ListModels(pctx, strings.TrimRight(url, "/")+"/models", nil); err != nil {
-					out[i].Ready, out[i].Reason = false, "no responde"
+					out[i].Ready, out[i].Reason = false, i18n.N("no responde")
 				}
 			}()
 		}

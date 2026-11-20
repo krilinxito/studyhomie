@@ -13,11 +13,12 @@ import (
 	"time"
 
 	"github.com/krilinxito/studyhomie/internal/config"
+	"github.com/krilinxito/studyhomie/internal/i18n"
 	"github.com/krilinxito/studyhomie/internal/vault"
 )
 
 // errVaultBusy: something is being written, and switching vaults would pull the folder from under it.
-var errVaultBusy = errors.New("hay algo en curso: espera a que termine o detenlo antes de cambiar de vault")
+var errVaultBusy = errors.New(i18n.N("hay algo en curso: espera a que termine o detenlo antes de cambiar de vault"))
 
 type vaultInfo struct {
 	Name    string `json:"name"`

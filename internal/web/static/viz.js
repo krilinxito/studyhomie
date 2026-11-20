@@ -5,6 +5,8 @@
  * plot and transform2d draw with JSXGraph, loaded the first time a note needs it.
  * steps, sample and predict are plain DOM/SVG. */
 const Viz = (() => {
+  // the page's t() (i18n.js), under a name the token and time variables below do not hide
+  const tr = (msg, vars) => window.t(msg, vars);
   /* ---------- expressions (same language as internal/viz/expr.go) ---------- */
   const FUNCS = {
     sin: Math.sin, cos: Math.cos, tan: Math.tan, asin: Math.asin, acos: Math.acos, atan: Math.atan,
@@ -23,7 +25,7 @@ const Viz = (() => {
       if (/\s/.test(s[i])) { i++; continue; }
       re.lastIndex = i;
       const m = re.exec(s);
-      if (!m) throw new Error(`símbolo inesperado en «${s}»`);
+      if (!m) throw new Error(tr('símbolo inesperado en «{text}»', { text: s }));
       out.push(m[1] !== undefined ? { num: parseFloat(m[1]) } : m[2] !== undefined ? { id: m[2] } : { op: m[3] === '**' ? '^' : m[3] });
       i = re.lastIndex;
     }
@@ -67,7 +69,7 @@ const Viz = (() => {
     }
     function primary() {
       const t = toks[p++];
-      if (!t) throw new Error('la expresión termina antes de tiempo');
+      if (!t) throw new Error(tr('la expresión termina antes de tiempo'));
       if (t.num !== undefined) return () => t.num;
       if (isOp(t, '(')) {
         const a = sum();
@@ -76,7 +78,7 @@ const Viz = (() => {
       }
       if (t.id !== undefined) {
         if (FUNCS[t.id]) {
-          if (!isOp(toks[p++], '(')) throw new Error(`${t.id} necesita paréntesis`);
+          if (!isOp(toks[p++], '(')) throw new Error(tr('{name} necesita paréntesis', { name: t.id }));
           const args = [sum()];
           while (isOp(peek(), ',')) { p++; args.push(sum()); }
           if (!isOp(toks[p++], ')')) throw new Error(`falta ) en ${t.id}`);
@@ -85,12 +87,12 @@ const Viz = (() => {
         }
         if (CONSTS[t.id] !== undefined) return () => CONSTS[t.id];
         if (names.includes(t.id)) return (v) => v[t.id];
-        throw new Error(`variable desconocida «${t.id}»`);
+        throw new Error(tr('variable desconocida «{name}»', { name: t.id }));
       }
-      throw new Error('símbolo inesperado');
+      throw new Error(tr('símbolo inesperado'));
     }
     const f = sum();
-    if (p !== toks.length) throw new Error('sobran símbolos');
+    if (p !== toks.length) throw new Error(tr('sobran símbolos'));
     return f;
   }
 
@@ -115,12 +117,12 @@ const Viz = (() => {
     const body = h('div', { class: 'viz-body' });
     const controls = h('div', { class: 'viz-controls' });
     const fig = h('figure', { class: `viz viz-${kind}` },
-      h('div', { class: 'viz-head' }, h('span', { class: 'viz-tag' }, KIND_LABEL[kind] || 'Interactivo'), spec.title ? h('strong', {}, inline(spec.title)) : null),
+      h('div', { class: 'viz-head' }, h('span', { class: 'viz-tag' }, KIND_LABEL[kind] || tr('Interactivo')), spec.title ? h('strong', {}, inline(spec.title)) : null),
       body, controls,
       spec.caption ? h('figcaption', {}, inline(spec.caption)) : null);
     return { fig, body, controls };
   }
-  const KIND_LABEL = { plot: 'Mueve los controles', transform2d: 'Transformación', steps: 'Paso a paso', sample: 'Experimento', predict: 'Predice', html: 'Interactivo' };
+  const KIND_LABEL = { plot: tr('Mueve los controles'), transform2d: tr('Transformación'), steps: tr('Paso a paso'), sample: tr('Experimento'), predict: tr('Predice'), html: tr('Interactivo') };
 
   // A slider styled as a metro line with a station for a thumb.
   function slider(p, value, onInput) {
@@ -251,7 +253,7 @@ const Viz = (() => {
       if (board) board.update();
     };
     for (const p of spec.params || []) controls.append(slider(p, p.value, (v) => { env[p.name] = v; refresh(); }).el);
-    const tSlider = slider({ name: 't', label: 'Cuánto se aplica', min: 0, max: 1, step: 0.01 }, 0, (v) => { t = v; refresh(); });
+    const tSlider = slider({ name: 't', label: tr('Cuánto se aplica'), min: 0, max: 1, step: 0.01 }, 0, (v) => { t = v; refresh(); });
     let anim = 0;
     const play = h('button', { class: 'btn small green', type: 'button', onclick: () => {
       cancelAnimationFrame(anim);
@@ -265,9 +267,9 @@ const Viz = (() => {
         if (k < 1) anim = requestAnimationFrame(step);
       };
       anim = requestAnimationFrame(step);
-    } }, 'Aplicar');
+    } }, tr('Aplicar'));
     controls.append(h('div', { class: 'viz-row' }, play, tSlider.el),
-      h('div', { class: 'viz-readouts' }, h('span', {}, 'Matriz ', matrixView), h('span', {}, 'Determinante (área del cuadrado amarillo) = ', det)),
+      h('div', { class: 'viz-readouts' }, h('span', {}, tr('Matriz '), matrixView), h('span', {}, tr('Determinante (área del cuadrado amarillo) = '), det)),
       ...((spec.readouts || []).length ? [ro.box] : []));
     refresh();
 
@@ -345,15 +347,15 @@ const Viz = (() => {
       prev.disabled = i === 0;
       next.disabled = i === frames.length - 1;
     }
-    function stop() { clearInterval(timer); timer = 0; playBtn.textContent = 'Reproducir'; }
-    const prev = h('button', { class: 'btn small', type: 'button', onclick: () => { stop(); go(i - 1); } }, 'Anterior');
-    const next = h('button', { class: 'btn small', type: 'button', onclick: () => { stop(); go(i + 1); } }, 'Siguiente');
+    function stop() { clearInterval(timer); timer = 0; playBtn.textContent = tr('Reproducir'); }
+    const prev = h('button', { class: 'btn small', type: 'button', onclick: () => { stop(); go(i - 1); } }, tr('Anterior'));
+    const next = h('button', { class: 'btn small', type: 'button', onclick: () => { stop(); go(i + 1); } }, tr('Siguiente'));
     const playBtn = h('button', { class: 'btn small green', type: 'button', onclick: () => {
       if (timer) { stop(); return; }
       if (i === frames.length - 1) go(0);
-      playBtn.textContent = 'Pausa';
+      playBtn.textContent = tr('Pausa');
       timer = setInterval(() => { if (i >= frames.length - 1) stop(); else go(i + 1); }, 2400);
-    } }, 'Reproducir');
+    } }, tr('Reproducir'));
     controls.append(h('div', { class: 'viz-row' }, prev, playBtn, next, counter), dots);
     go(0);
     return fig;
@@ -424,8 +426,8 @@ const Viz = (() => {
       });
       svg.append(ns('line', { x1: 0, x2: W, y1: H, y2: H, stroke: cssVar('--ink'), 'stroke-width': 2 }));
       stats.replaceChildren(
-        h('span', {}, 'Repeticiones: ', h('strong', {}, String(n))),
-        numeric ? h('span', {}, 'Promedio observado: ', h('strong', {}, n ? fmt(sumV / n) : '—'), ` (teórico ${fmt(expected)})`) : null,
+        h('span', {}, tr('Repeticiones: '), h('strong', {}, String(n))),
+        numeric ? h('span', {}, tr('Promedio observado: '), h('strong', {}, n ? fmt(sumV / n) : '—'), ' ' + tr('(teórico {value})', { value: fmt(expected) })) : null,
         h('span', { class: 'viz-key' }, h('i', { style: `background:${cssVar('--l1')}` }), 'observado', h('i', { class: 'line', style: `background:${cssVar('--l0')}` }), 'exacto'));
     }
     let anim = 0;
@@ -439,7 +441,7 @@ const Viz = (() => {
     };
     controls.append(h('div', { class: 'viz-row' },
       [1, 10, 100, 1000].map((c) => h('button', { class: `btn small${c === 100 ? ' green' : ''}`, type: 'button', onclick: () => run(c) }, `+${c}`)),
-      h('button', { class: 'btn small', type: 'button', onclick: () => { cancelAnimationFrame(anim); n = 0; sumV = 0; for (const key of keys) counts.set(key, 0); render(); } }, 'Reiniciar')), stats);
+      h('button', { class: 'btn small', type: 'button', onclick: () => { cancelAnimationFrame(anim); n = 0; sumV = 0; for (const key of keys) counts.set(key, 0); render(); } }, tr('Reiniciar'))), stats);
     render();
     return fig;
   }
@@ -452,7 +454,7 @@ const Viz = (() => {
       buttons.forEach((b, k) => { b.disabled = true; b.classList.toggle('right', k === spec.answer); });
       if (j !== spec.answer) buttons[j].classList.add('picked');
       reveal.replaceChildren(
-        h('strong', {}, j === spec.answer ? 'Bien visto.' : 'No era esa, y es una intuición muy común.'),
+        h('strong', {}, j === spec.answer ? tr('Bien visto.') : tr('No era esa, y es una intuición muy común.')),
         spec.explain ? mdBlock(spec.explain) : null);
       reveal.hidden = false;
     } }, inline(o)));
@@ -464,7 +466,7 @@ const Viz = (() => {
   function html(spec, ctx) {
     const { fig, body, controls } = frame(spec, 'html');
     const show = (src) => {
-      body.replaceChildren(h('iframe', { class: 'viz-frame', src: `/${src}`, sandbox: 'allow-scripts', title: spec.title || 'Visual interactivo', referrerpolicy: 'no-referrer', loading: 'lazy' }));
+      body.replaceChildren(h('iframe', { class: 'viz-frame', src: `/${src}`, sandbox: 'allow-scripts', title: spec.title || tr('Visual interactivo'), referrerpolicy: 'no-referrer', loading: 'lazy' }));
       controls.replaceChildren();
     };
     if (spec.src) { show(spec.src); return fig; }
@@ -472,10 +474,10 @@ const Viz = (() => {
     if (ctx && ctx.generate) {
       const btn = h('button', { class: 'btn small green', type: 'button', onclick: async () => {
         btn.disabled = true;
-        const wait = h('span', { class: 'hint' }, 'Construyendo el visual, puede tardar un par de minutos…');
+        const wait = h('span', { class: 'hint' }, tr('Construyendo el visual, puede tardar un par de minutos…'));
         controls.append(wait);
         try { show(await ctx.generate(spec)); } catch (err) { wait.remove(); btn.disabled = false; toast(err.message); }
-      } }, 'Construir este visual');
+      } }, tr('Construir este visual'));
       controls.append(btn);
     }
     return fig;
@@ -498,7 +500,7 @@ const Viz = (() => {
       try {
         const spec = parseSpec(code.textContent);
         const build = BUILD[spec.type];
-        if (!build) throw new Error(`tipo «${spec.type}» desconocido`);
+        if (!build) throw new Error(tr('tipo «{type}» desconocido', { type: spec.type }));
         el = build(spec, ctx);
       } catch (err) {
         el = h('p', { class: 'hint' }, `No pude mostrar un visual: ${err.message}`);
