@@ -115,7 +115,7 @@ const store = {
 const STATUS = { new: t('Por descubrir'), prepared: t('Guía lista'), tested: t('Comprobado'), explained: t('Explicado') };
 const SECTION = { 'Guía': t('La guía'), 'Conceptos base': t('Conceptos base'), 'Dudas': t('Dudas'), 'Prueba': t('Preguntas'), 'Feynman': t('Explicación'), 'Conexiones': t('Conexiones') };
 const TYPE = { video: t('Video'), web: t('Web'), book: t('Libro'), paper: t('Paper'), interactive: t('Interactivo') };
-const DEPTH = [t('solo la guía'), t('1 nivel de conceptos'), '2 niveles', '3 niveles', t('hasta lo básico')];
+const DEPTH = [t('solo la guía'), t('1 nivel de conceptos'), t('{n} niveles', { n: 2 }), t('{n} niveles', { n: 3 }), t('{n} niveles', { n: 4 })];
 const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 const smoothness = () => (reducedMotion() ? 'auto' : 'smooth');
@@ -1275,6 +1275,7 @@ const levelName = (l) => (l === 1 ? t('Lo que el tema usa directamente') : l ===
 function renderConcepts() {
   const root = PANE_EL.concepts;
   if (!root) return;
+  if (S.bergObs) { S.bergObs.disconnect(); S.bergObs = null; }
   root.replaceChildren();
   if (S.concept) { root.append(conceptReader(S.concept)); return; }
   const n = S.note;
@@ -1289,13 +1290,27 @@ function renderConcepts() {
     const keys = [...levels.keys()].sort((a, b) => a - b);
     let i = 0;
     const pill = (c, isPending) => {
+      const id = c.slug || c.id;
       const el = h('button', {
-        class: `ice-pill${isPending ? ' pending' : ''}${S.lit === (c.slug || c.id) ? ' lit' : ''}`, type: 'button', style: `--i:${i++}`,
+        class: `ice-pill${isPending ? ' pending' : ''}${S.lit === id ? ' lit' : ''}`, type: 'button', style: `--i:${i++}`,
+        'data-id': id, 'data-requires': (c.requires || []).join(' '),
         title: isPending ? t('Aún sin nota: pulsa para explicarlo') : t('Abrir la nota'),
         onclick: () => (isPending ? explainConcept(c.id, { guide: n.slug, title: c.title, el }) : openNote(c.slug)),
-      }, h('strong', {}, c.title), c.summary ? h('small', {}, c.summary) : null, isPending ? h('span', { class: 'go' }, t('Explicar')) : null);
+      }, h('strong', {}, c.title), c.summary ? h('small', {}, c.summary) : null,
+      (c.guides || 0) > 1 ? h('span', { class: 'shared' }, tn(c.guides - 1, 'también en otra guía', 'también en {n} guías más')) : null,
+      isPending ? h('span', { class: 'go' }, t('Explicar')) : null);
       return el;
     };
+    const deepest = keys[keys.length - 1];
+    const berg = h('div', { class: 'berg', style: `--levels:${keys.length}` },
+      h('div', { class: 'berg-tip' }, h('span', { class: 'tip', 'data-id': n.slug, 'data-requires': (n.meta.base || []).join(' ') }, n.meta.title)),
+      h('ol', { class: 'berg-levels' }, keys.map((l) => {
+        const g = levels.get(l);
+        return h('li', { class: `berg-level${l > 1 ? ' deep' : ''}`, 'data-level': l, style: `--l:${l}; --water: var(--water-${Math.min(l, 5)})` },
+          h('h3', {}, levelName(l), h('small', {}, g.pending.length ? t('{n} por explicar', { n: g.pending.length }) : '')),
+          h('div', { class: 'ice-pills' }, g.written.map((c) => pill(c, !c.exists)), g.pending.map((p) => pill(p, true))));
+      })),
+      h('div', { class: 'berg-floor', style: `--l:${deepest + 1}` }, digButton(n, deepest)));
     box.append(
       h('header', { class: 'c-head' },
         h('p', { class: 'eyebrow' }, t('Lo que hay debajo')),
@@ -1303,21 +1318,17 @@ function renderConcepts() {
         h('p', { class: 'hint' }, pending.length
           ? t('Lo blanco ya tiene nota. Lo punteado está mapeado pero sin escribir: explícalo solo si lo necesitas.')
           : t('Cada nivel sostiene al de arriba. Si algo no se entiende, baja un nivel.'))),
-      h('div', { class: 'iceberg' },
-        h('div', { class: 'ice-tip' }, h('span', { class: 'tip' }, n.meta.title), h('span', { class: 'ice-wave', 'aria-hidden': 'true' })),
-        h('ol', { class: 'ice-levels' }, keys.map((l) => {
-          const g = levels.get(l);
-          return h('li', { class: `ice-level${l > 1 ? ' deep' : ''}`, style: `--fade:${Math.max(0, 1 - (l - 1) * 0.22)}` },
-            h('h3', {}, levelName(l), h('small', {}, g.pending.length ? t('{n} por explicar', { n: g.pending.length }) : '')),
-            h('div', { class: 'ice-pills' }, g.written.map((c) => pill(c, !c.exists)), g.pending.map((p) => pill(p, true))));
-        }))),
+      berg,
       h('div', { class: 'ice-legend' },
         h('span', {}, h('i', { class: 'st st-concept' }), t('Con nota')),
         h('span', {}, h('i', { class: 'st st-pending' }), t('Por explicar (se escribe al pulsarlo)'))));
     S.lit = '';
+    S.bergObs = new ResizeObserver(() => drawBerg(berg));
+    S.bergObs.observe(berg);
   } else if (n) {
     box.append(h('div', { class: 'panel-empty' }, h('h3', {}, t('Esta guía no tiene conceptos mapeados')),
-      h('p', {}, t('Las guías nuevas mapean todo lo que dan por sabido. También puedes pedir en el chat la nota de un concepto concreto.'))));
+      h('p', {}, t('Las guías nuevas mapean lo que dan por sabido, hasta la profundidad que elijas. Puedes mapearlo ahora, nivel por nivel.')),
+      digButton(n, 0)));
   }
   const all = ((S.graph && S.graph.nodes) || []).filter((x) => x.kind === 'concept');
   if (all.length) {
@@ -1331,6 +1342,104 @@ function renderConcepts() {
     box.append(h('div', { class: 'panel-empty' }, h('h3', {}, t('Aún no hay conceptos')), h('p', {}, t('Cuando pidas una guía, aquí verás su iceberg: lo que tiene nota y lo que queda por explicar.'))));
   }
   root.append(box);
+}
+
+// The button at the bottom of the iceberg: maps one more level under the deepest concepts.
+function digButton(n, deepest) {
+  const label = deepest ? t('Bajar un nivel más') : t('Mapear lo que da por sabido');
+  const btn = h('button', { class: 'btn small dig', type: 'button', onclick: async () => {
+    btn.disabled = true;
+    btn.replaceChildren(icon('loader'), t('Mapeando…'));
+    btn.classList.add('working');
+    try {
+      const r = await api(`/api/notes/${encodeURIComponent(n.slug)}/dig`, { method: 'POST', body: {} });
+      const added = r.added || [];
+      if (added.length) S.lit = added[0].id;
+      await loadGraph().catch(() => {});
+      if (S.guide === n.slug) await reloadGuide(); else renderConcepts();
+      toast(added.length ? tn(added.length, 'Mapeé un concepto más abajo.', 'Mapeé {n} conceptos más abajo.')
+        : t('Llegaste al fondo: lo que hay debajo ya es lo básico.'));
+    } catch (err) {
+      toast(err.message);
+      btn.disabled = false;
+      btn.classList.remove('working');
+      btn.replaceChildren(icon('chevrons-down'), label);
+    }
+  } }, icon('chevrons-down'), label);
+  return h('div', { class: 'dig-box' }, btn,
+    deepest ? h('small', {}, t('Mapea lo que necesita el nivel {n}. Se queda por explicar hasta que lo pulses.', { n: deepest })) : null);
+}
+
+// position of an element inside the iceberg box, ignoring the pills' entrance transforms
+function offsetIn(el, root) {
+  let x = 0, y = 0;
+  for (let e = el; e && e !== root; e = e.offsetParent) { x += e.offsetLeft; y += e.offsetTop; }
+  return { x, y, w: el.offsetWidth, h: el.offsetHeight };
+}
+
+// Draws the iceberg behind the pills: sky, the tip above the water, bands of water that darken
+// with depth, the ice under them widening like the levels do, and the lines from each concept to
+// what it stands on.
+function drawBerg(berg) {
+  if (!berg.isConnected || !berg.offsetWidth) return;
+  const NS = 'http://www.w3.org/2000/svg';
+  const el = (tag, attrs) => { const e = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); return e; };
+  const W = berg.offsetWidth, H = berg.offsetHeight;
+  const tip = offsetIn(berg.querySelector('.tip'), berg);
+  const bands = [...berg.querySelectorAll('.berg-level')];
+  const floor = offsetIn(berg.querySelector('.berg-floor'), berg);
+  const waterY = tip.y + tip.h - 2;
+  const cx = W / 2;
+  const svg = el('svg', { class: 'berg-art', width: W, height: H, viewBox: `0 0 ${W} ${H}`, 'aria-hidden': 'true' });
+  svg.append(el('rect', { x: 0, y: 0, width: W, height: waterY, style: 'fill: var(--sky)' }));
+  // a band of water per level, darker the deeper it is
+  const tops = bands.map((b, i) => (i ? (offsetIn(b, berg).y + offsetIn(bands[i - 1], berg).y + bands[i - 1].offsetHeight) / 2 : waterY));
+  bands.forEach((b, i) => {
+    const y = tops[i], y2 = i + 1 < bands.length ? tops[i + 1] : floor.y;
+    svg.append(el('rect', { x: 0, y, width: W, height: y2 - y + 1, style: `fill: var(--water-${Math.min(+b.dataset.level, 5)})` }));
+  });
+  svg.append(el('rect', { x: 0, y: floor.y, width: W, height: H - floor.y, style: `fill: var(--water-${Math.min(bands.length + 1, 5)})` }));
+  // the ice under water: as wide as each level's pills, with a ragged edge
+  const jag = (k) => ((k * 37) % 11) - 5;
+  const left = [], right = [];
+  bands.forEach((b, i) => {
+    const pills = [...b.querySelectorAll('.ice-pill')].map((p) => offsetIn(p, berg));
+    const lo = Math.min(...pills.map((p) => p.x), cx - 60), hi = Math.max(...pills.map((p) => p.x + p.w), cx + 60);
+    const y = i ? tops[i] : waterY, y2 = i + 1 < bands.length ? tops[i + 1] : floor.y;
+    left.push([lo - 18 + jag(i), y + 6], [lo - 22 + jag(i + 3), (y + y2) / 2], [lo - 14 + jag(i + 5), y2 - 4]);
+    right.push([hi + 18 + jag(i + 1), y + 6], [hi + 22 + jag(i + 4), (y + y2) / 2], [hi + 14 + jag(i + 2), y2 - 4]);
+  });
+  const bottom = Math.min(H - 8, floor.y + 26);
+  const body = [[tip.x - 6, waterY], ...left, [cx - 40, bottom - 6], [cx + 8, bottom], [cx + 46, bottom - 10], ...right.reverse(), [tip.x + tip.w + 6, waterY]];
+  svg.append(el('path', { class: 'berg-body', d: `M${body.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join('L')}Z` }));
+  // the tip above water
+  const peak = Math.max(4, tip.y - 14);
+  svg.append(el('path', { class: 'berg-peak', d: `M${tip.x - 6},${waterY} L${tip.x + tip.w * .18},${tip.y + 4} L${tip.x + tip.w * .42},${peak} L${tip.x + tip.w * .6},${tip.y + 2} L${tip.x + tip.w * .8},${tip.y + 8} L${tip.x + tip.w + 6},${waterY} Z` }));
+  svg.append(el('path', { class: 'berg-wave', d: `M0,${waterY} ${Array.from({ length: Math.ceil(W / 24) + 1 }, (_, k) => `q6,-4 12,0 t12,0`).join(' ')}` }));
+  // lines from each concept to what it stands on
+  const at = new Map([...berg.querySelectorAll('[data-id]')].map((e) => [e.dataset.id, e]));
+  const edges = el('g', { class: 'berg-edges' });
+  for (const [id, e] of at) {
+    const a = offsetIn(e, berg);
+    for (const r of (e.dataset.requires || '').split(' ').filter(Boolean)) {
+      const t2 = at.get(r);
+      if (!t2) continue;
+      const b = offsetIn(t2, berg);
+      if (b.y <= a.y) continue; // only downwards: a loop or a sibling would cross the pills
+      const x1 = a.x + a.w / 2, y1 = a.y + a.h, x2 = b.x + b.w / 2, y2 = b.y, my = (y1 + y2) / 2;
+      edges.append(el('path', { d: `M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}`, 'data-from': id, 'data-to': r, class: t2.classList.contains('pending') ? 'pend' : '' }));
+    }
+  }
+  svg.append(edges);
+  berg.querySelector('.berg-art')?.remove();
+  berg.prepend(svg);
+  if (!berg.dataset.hover) {
+    berg.dataset.hover = '1';
+    const lightUp = (id) => { for (const p of berg.querySelectorAll('.berg-edges path')) p.classList.toggle('hot', !!id && (p.dataset.from === id || p.dataset.to === id)); };
+    berg.addEventListener('pointerover', (e) => lightUp(e.target.closest('[data-id]')?.dataset.id));
+    berg.addEventListener('pointerleave', () => lightUp(''));
+    berg.addEventListener('focusin', (e) => lightUp(e.target.closest('[data-id]')?.dataset.id));
+  }
 }
 
 function conceptReader(c) {
@@ -1775,11 +1884,16 @@ function cyStyle() {
       'z-index-compare': 'manual', 'z-index': 10, 'overlay-opacity': 0, 'transition-property': 'opacity, background-color', 'transition-duration': '200ms' } },
     { selector: 'node[kind = "concept"]', style: { width: 12, height: 12, 'border-width': 2, 'font-size': 11.5, 'font-weight': 500 } },
     { selector: 'node[kind = "pending"]', style: { width: 10, height: 10, 'border-width': 1.5, 'border-style': 'dashed', 'border-color': muted, 'background-color': surface, color: muted, 'font-size': 11, 'font-weight': 400 } },
+    // a concept several guides stand on: one node, ringed, with an edge to each guide
+    { selector: 'node[shared > 1]', style: { width: 15, height: 15, 'outline-width': 2, 'outline-color': muted, 'outline-offset': 2, 'outline-opacity': .8 } },
+    { selector: '.gone', style: { display: 'none' } },
     { selector: 'edge', style: {
       width: 3, 'line-color': lineOf(-1), 'curve-style': 'bezier', 'line-cap': 'round', opacity: .75,
       'z-index-compare': 'manual', 'z-index': 1, 'overlay-opacity': 0 } },
     { selector: 'edge[kind="related"]', style: { 'line-style': 'dashed', width: 1.2, opacity: .45, 'line-color': muted } },
     { selector: 'edge[pend = 1]', style: { 'line-style': 'dotted', width: 1.5, 'line-color': line, opacity: 1 } },
+    // from a concept to a guide drawn in another block: bowed, so it does not run over the nodes between
+    { selector: 'edge[cross = 1]', style: { 'curve-style': 'unbundled-bezier', 'control-point-distances': 70, 'control-point-weights': .5 } },
     { selector: 'node.grouplabel', style: {
       width: 1, height: 1, 'background-opacity': 0, 'border-width': 0, label: 'data(label)', 'font-size': 15, 'font-weight': 700,
       color: ink, 'text-halign': 'right', 'text-valign': 'center', 'text-margin-x': 6, 'text-wrap': 'none', 'text-background-opacity': 0, events: 'no' } },
@@ -1872,6 +1986,7 @@ async function drawMap() {
     if ((S.run && S.run.id) !== chatID) return; // the chat changed meanwhile
   }
   for (const b of $$('#map-scope button')) b.setAttribute('aria-pressed', String(b.dataset.scope === S.mapScope));
+  renderMapHide();
   const emptyChat = S.mapScope === 'chat' && !g.nodes.length;
   $('#map-empty').hidden = g.nodes.length > 0;
   $('#map-empty-title').textContent = emptyChat ? t('Esta conversación aún no tiene guías') : t('Tu mapa está vacío');
@@ -1885,6 +2000,7 @@ async function drawMap() {
   const lineOf = (k) => (S.lines.has(k) ? S.lines.get(k) : -1);
   const lineOfNode = new Map(g.nodes.map((n) => [n.id, lineOf(n.group)]));
   const kindOf = new Map(g.nodes.map((n) => [n.id, n.kind]));
+  const groupOf = new Map(g.nodes.map((n) => [n.id, n.group]));
   if (!S.cy) {
     S.cy = cytoscape({ container: $('#cy'), elements: [], style: cyStyle(), minZoom: .15, maxZoom: 3 });
     S.cy.on('tap', 'node', (ev) => {
@@ -1896,14 +2012,14 @@ async function drawMap() {
     new ResizeObserver(() => fitMap()).observe($('#cy'));
   }
   if (same) {
-    for (const n of g.nodes) S.cy.getElementById(n.id).data({ status: n.status, label: n.label, line: lineOfNode.get(n.id) });
+    for (const n of g.nodes) S.cy.getElementById(n.id).data({ status: n.status, label: n.label, line: lineOfNode.get(n.id), shared: n.shared || 0, foreign: n.foreign ? 1 : 0 });
   } else {
     S.cy.elements().remove();
     const { pos, labels } = layeredLayout(g);
     S.cy.add([
-      ...g.nodes.map((n) => ({ group: 'nodes', data: { id: n.id, label: n.label, status: n.status, kind: n.kind, grp: n.group, line: lineOfNode.get(n.id) }, position: pos[n.id] })),
+      ...g.nodes.map((n) => ({ group: 'nodes', data: { id: n.id, label: n.label, status: n.status, kind: n.kind, grp: n.group, line: lineOfNode.get(n.id), shared: n.shared || 0, foreign: n.foreign ? 1 : 0 }, position: pos[n.id] })),
       ...labels.map((l) => ({ group: 'nodes', data: { id: `gl:${l.group}`, label: l.label, grp: l.group, line: lineOf(l.group) }, position: { x: l.x, y: l.y }, classes: 'grouplabel', selectable: false, grabbable: false })),
-      ...g.edges.map((e, i) => ({ group: 'edges', data: { id: `e${i}`, source: e.from, target: e.to, kind: e.kind, line: lineOfNode.get(e.to), pend: kindOf.get(e.from) === 'pending' || kindOf.get(e.to) === 'pending' ? 1 : 0 } })),
+      ...g.edges.map((e, i) => ({ group: 'edges', data: { id: `e${i}`, source: e.from, target: e.to, kind: e.kind, line: lineOfNode.get(e.to), pend: kindOf.get(e.from) === 'pending' || kindOf.get(e.to) === 'pending' ? 1 : 0, cross: groupOf.get(e.from) !== groupOf.get(e.to) ? 1 : 0 } })),
     ]);
     S.needsFit = g.nodes.length > 0;
     fitMap();
@@ -1917,6 +2033,24 @@ for (const b of $$('#map-scope button')) {
   b.addEventListener('click', () => { S.mapScope = b.dataset.scope; store.set('mapScope', S.mapScope); drawMap(); });
 }
 $('#map-see-all').addEventListener('click', () => { S.mapScope = 'all'; store.set('mapScope', 'all'); drawMap(); });
+
+// What the map leaves out: the concepts still to explain, and (in a chat's map) the concepts
+// another conversation wrote that this one only links.
+S.mapHide = { pending: false, foreign: false, ...store.get('mapHide', {}) };
+function renderMapHide() {
+  for (const b of $$('#map-hide button')) {
+    b.setAttribute('aria-pressed', String(!!S.mapHide[b.dataset.hide]));
+    if (b.dataset.hide === 'foreign') b.hidden = S.mapScope !== 'chat';
+  }
+}
+for (const b of $$('#map-hide button')) {
+  b.addEventListener('click', () => {
+    S.mapHide[b.dataset.hide] = !S.mapHide[b.dataset.hide];
+    store.set('mapHide', S.mapHide);
+    renderMapHide();
+    applyFilters();
+  });
+}
 
 // Cytoscape cannot fit a graph into a hidden panel, so a new layout waits until the map is on screen.
 function fitMap() {
@@ -1948,6 +2082,7 @@ function applyFilters() {
       const okQ = !q || slugify(n.data('label')).includes(q) || n.id().includes(q);
       const okR = !S.filter || n.data('grp') === S.filter;
       n.toggleClass('dim', !(okQ && okR));
+      n.toggleClass('gone', (S.mapHide.pending && n.data('kind') === 'pending') || (S.mapHide.foreign && S.mapScope === 'chat' && n.data('foreign') === 1));
     });
     S.cy.edges().forEach((e) => e.toggleClass('dim', e.source().hasClass('dim') || e.target().hasClass('dim')));
   });
@@ -2248,7 +2383,7 @@ $('#material-input').addEventListener('change', async (e) => {
   } catch (err) { toast(err.message); setWorking(false); } finally { e.target.value = ''; }
 });
 
-// "write now": 0 (the guide alone) to 4 (down to the basics); the rest is mapped either way
+// "write now": 0 (the guide alone) to 4 levels of concept notes; the iceberg maps that far, and digging goes further
 function renderDepth() {
   $('#depth-stations').replaceChildren(...DEPTH.map((label, d) => h('button', {
     type: 'button', role: 'radio', 'aria-checked': String(d === S.depth), class: d <= S.depth ? 'on' : null,

@@ -22,6 +22,8 @@ type gNode struct {
 	Field    string `json:"field,omitempty"`
 	Category string `json:"category,omitempty"`
 	Summary  string `json:"summary,omitempty"`
+	Shared   int    `json:"shared,omitempty"`  // a concept several guides stand on: how many
+	Foreign  bool   `json:"foreign,omitempty"` // in a chat's map: a concept another conversation wrote
 }
 
 type gEdge struct {
@@ -51,9 +53,35 @@ func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
 	}
 	exists := map[string]bool{}
 	group := map[string]string{}
+	usedBy := map[string]map[string]bool{} // concept -> guides that stand on it
+	use := func(id, guide string) {
+		if usedBy[id] == nil {
+			usedBy[id] = map[string]bool{}
+		}
+		usedBy[id][guide] = true
+	}
 	for _, n := range notes {
 		exists[n.Slug] = true
 		group[n.Slug] = guideGroup(n)
+		for _, id := range n.Meta.Concepts {
+			use(id, n.Slug)
+		}
+		for _, p := range n.Meta.Pending {
+			use(p.ID, n.Slug)
+		}
+	}
+	for _, c := range concepts {
+		for _, g := range c.Meta.Guides {
+			if group[g] != "" {
+				use(c.Slug, g)
+			}
+		}
+	}
+	shared := func(id string) int {
+		if n := len(usedBy[id]); n > 1 {
+			return n
+		}
+		return 0
 	}
 	nodes := []gNode{}
 	edges := []gEdge{}
@@ -99,29 +127,32 @@ func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
 		if title == "" {
 			title = c.Slug
 		}
-		nodes = append(nodes, gNode{ID: c.Slug, Label: title, Kind: "concept", Status: "concept", Group: g, Category: c.Meta.Category, Summary: c.Meta.Summary})
+		nodes = append(nodes, gNode{ID: c.Slug, Label: title, Kind: "concept", Status: "concept", Group: g, Category: c.Meta.Category, Summary: c.Meta.Summary, Shared: shared(c.Slug)})
 	}
-	// the iceberg under each guide: mapped concepts with no note yet
-	type pend struct {
-		id       string
-		requires []string
-	}
-	var pendings []pend
+	// the iceberg under each guide: mapped concepts with no note yet, once even when several
+	// guides map the same one, with what each of them says it stands on
+	var pendings []string
+	pendReqs := map[string][]string{}
 	for _, n := range notes {
 		for _, p := range n.Meta.Pending {
+			if _, ok := pendReqs[p.ID]; ok {
+				pendReqs[p.ID] = append(pendReqs[p.ID], p.Requires...)
+				continue
+			}
 			if exists[p.ID] {
 				continue
 			}
 			exists[p.ID] = true
 			group[p.ID] = group[n.Slug]
-			pendings = append(pendings, pend{p.ID, p.Requires})
-			nodes = append(nodes, gNode{ID: p.ID, Label: p.Title, Kind: "pending", Status: "pending", Group: group[n.Slug], Category: p.Category, Summary: p.Summary})
+			pendings = append(pendings, p.ID)
+			pendReqs[p.ID] = append([]string{}, p.Requires...)
+			nodes = append(nodes, gNode{ID: p.ID, Label: p.Title, Kind: "pending", Status: "pending", Group: group[n.Slug], Category: p.Category, Summary: p.Summary, Shared: shared(p.ID)})
 		}
 	}
-	for _, p := range pendings {
-		for _, req := range p.requires {
+	for _, id := range pendings {
+		for _, req := range pendReqs[id] {
 			if exists[req] {
-				add(req, p.id, "requires")
+				add(req, id, "requires")
 			}
 		}
 	}
@@ -176,6 +207,10 @@ func (s *Server) chatGraph(id int, notes []vault.Note, concepts []vault.Concept,
 			keep[slug] = true
 		}
 	}
+	mine := map[string]bool{} // what this chat wrote or asked for itself
+	for slug := range keep {
+		mine[slug] = true
+	}
 	guides := map[string]bool{}
 	for _, n := range notes {
 		if keep[n.Slug] {
@@ -191,16 +226,22 @@ func (s *Server) chatGraph(id int, notes []vault.Note, concepts []vault.Concept,
 			}
 		}
 	}
+	foreign := map[string]bool{}
 	for _, c := range concepts {
 		for _, g := range c.Meta.Guides {
 			if guides[g] {
 				keep[c.Slug] = true
 			}
 		}
+		// written for a guide of another conversation, and only linked here
+		if keep[c.Slug] && !mine[c.Slug] && len(c.Meta.Guides) > 0 && !guides[c.Meta.Guides[0]] {
+			foreign[c.Slug] = true
+		}
 	}
 	outN := []gNode{}
 	for _, n := range nodes {
 		if keep[n.ID] {
+			n.Foreign = n.Kind == "concept" && foreign[n.ID]
 			outN = append(outN, n)
 		}
 	}
@@ -226,6 +267,7 @@ type conceptRef struct {
 	Category string   `json:"category,omitempty"`
 	Requires []string `json:"requires,omitempty"`
 	Exists   bool     `json:"exists"`
+	Guides   int      `json:"guides,omitempty"` // how many guides stand on it
 }
 
 // titleOf names a guide or a concept.
@@ -259,7 +301,7 @@ func (s *Server) note(w http.ResponseWriter, r *http.Request) {
 		for _, id := range n.Meta.Concepts {
 			ref := conceptRef{Slug: id, Title: id}
 			if c, err := s.vault().LoadConcept(id); err == nil {
-				ref = conceptRef{Slug: id, Title: c.Meta.Title, Summary: c.Meta.Summary, Category: c.Meta.Category, Requires: c.Meta.Requires, Exists: true}
+				ref = conceptRef{Slug: id, Title: c.Meta.Title, Summary: c.Meta.Summary, Category: c.Meta.Category, Requires: c.Meta.Requires, Exists: true, Guides: len(c.Meta.Guides)}
 			}
 			notes = append(notes, ref)
 		}
@@ -308,6 +350,23 @@ func (s *Server) explain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]string{"slug": id})
+}
+
+// dig maps one more level under a guide's iceberg and answers with the concepts it added.
+func (s *Server) dig(w http.ResponseWriter, r *http.Request) {
+	slug, ok := noteSlug(w, r)
+	if !ok {
+		return
+	}
+	drain(r)
+	ctx, cancel := context.WithTimeout(r.Context(), answerTimeout)
+	defer cancel()
+	added, err := s.shortSession().Dig(ctx, slug)
+	if err != nil {
+		fail(w, shortStatus(err), s.errText(err))
+		return
+	}
+	writeJSON(w, 200, map[string]any{"added": added})
 }
 
 // vizTimeout bounds building a page for an html widget: a whole document, so longer than a short answer.

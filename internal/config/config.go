@@ -26,7 +26,7 @@ type Config struct {
 	CompactAt     float64  `toml:"compact_at"`     // fraction of the window that triggers compaction
 	Depth         int      `toml:"depth"`          // levels of prerequisite concept notes a guide gets by default (0-4)
 	Parallel      int      `toml:"parallel"`       // concept notes written at the same time
-	Iceberg       bool     `toml:"iceberg"`        // map the prerequisites down to the basics even when writing fewer
+	Iceberg       bool     `toml:"iceberg"`        // with depth 0, still map the first level of prerequisites (to explain or dig from)
 	Updates       string   `toml:"updates"`        // new versions: "ask" (default), "auto" or "never"
 	PassScore     int      `toml:"pass_score"`     // mastery (0-100) a roadmap topic needs to unlock the next one
 	Timeout       int      `toml:"timeout"`        // minutes one AI call may take before it is cut (three times that when it searches the web); 0 = no limit

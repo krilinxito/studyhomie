@@ -353,6 +353,11 @@ func (s *Session) ConceptNote(ctx context.Context, title, summary, guide string)
 		return s.Explain(ctx, guide, title, summary)
 	}
 	gTitle := ""
+	if !s.V.ConceptExists(id) {
+		if k, ok := s.conceptIndex().find(title); ok && k.Written {
+			id = k.ID // the vault has it under another spelling
+		}
+	}
 	if s.V.ConceptExists(id) {
 		if gTitle != "" {
 			return id, s.linkConcept(id, guide, gTitle)

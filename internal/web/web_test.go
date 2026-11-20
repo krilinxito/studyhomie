@@ -783,7 +783,7 @@ func TestNoteEndpointServesConcepts(t *testing.T) {
 		t.Errorf("concept note: %d %s", res.StatusCode, body)
 	}
 	_, body = do(t, ts, "GET", "/api/notes/bayes", nil, nil)
-	if !strings.Contains(string(body), `"concepts":[{"slug":"probabilidad","title":"Probabilidad","exists":true}]`) {
+	if !strings.Contains(string(body), `"concepts":[{"slug":"probabilidad","title":"Probabilidad","exists":true,"guides":1}]`) {
 		t.Errorf("guide note: %s", body)
 	}
 	_, body = do(t, ts, "GET", "/api/graph", nil, nil)
@@ -1087,5 +1087,77 @@ func TestLanguageScriptAndSetting(t *testing.T) {
 	// a run's questions come translated, with the Spanish one alongside to tell which it is
 	if _, cfg, _ := s.backend(); cfg.Language != "fr" {
 		t.Errorf("config language = %q", cfg.Language)
+	}
+}
+
+func TestDigEndpointAndSharedConceptsInTheGraph(t *testing.T) {
+	dig := "```json\n{\"concepts\":[{\"id\":\"fraccion\",\"title\":\"Fracción\",\"for\":[\"probabilidad\"]}]}\n```"
+	s, ts := newTestServer(t, &scripted{replies: []string{dig}})
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(s.V.Save(vault.Note{Slug: "bayes", Meta: vault.Meta{Title: "Bayes", Concepts: []string{"probabilidad"}, Base: []string{"probabilidad"}}, Body: "## Guía\n\nx\n"}))
+	must(s.V.Save(vault.Note{Slug: "markov", Meta: vault.Meta{Title: "Markov", Concepts: []string{"probabilidad"}, Base: []string{"probabilidad", "matriz"},
+		Pending: []vault.PendingConcept{{ID: "matriz", Title: "Matriz", Level: 1}}}, Body: "## Guía\n\nx\n"}))
+	must(s.V.Save(vault.Note{Slug: "pca", Meta: vault.Meta{Title: "PCA", Base: []string{"matriz"},
+		Pending: []vault.PendingConcept{{ID: "matriz", Title: "Matriz", Level: 1, Requires: []string{"vector"}}, {ID: "vector", Title: "Vector", Level: 2}}}, Body: "## Guía\n\nx\n"}))
+	must(s.V.SaveConcept(vault.Concept{Slug: "probabilidad", Meta: vault.ConceptMeta{Title: "Probabilidad", Guides: []string{"bayes", "markov"}}, Body: "# Probabilidad\n"}))
+
+	res, body := do(t, ts, "POST", "/api/notes/bayes/dig", map[string]any{}, nil)
+	if res.StatusCode != 200 || !strings.Contains(string(body), `"id":"fraccion"`) {
+		t.Fatalf("dig: %d %s", res.StatusCode, body)
+	}
+
+	var g struct {
+		Nodes []gNode `json:"nodes"`
+		Edges []gEdge `json:"edges"`
+	}
+	_, body = do(t, ts, "GET", "/api/graph", nil, nil)
+	if err := json.Unmarshal(body, &g); err != nil {
+		t.Fatal(err)
+	}
+	nodes := map[string]gNode{}
+	count := map[string]int{}
+	for _, n := range g.Nodes {
+		nodes[n.ID] = n
+		count[n.ID]++
+	}
+	edges := map[string]bool{}
+	for _, e := range g.Edges {
+		edges[e.From+">"+e.To] = true
+	}
+	// one node per concept, with an edge to each guide that stands on it
+	if count["probabilidad"] != 1 || nodes["probabilidad"].Shared != 2 || !edges["probabilidad>bayes"] || !edges["probabilidad>markov"] {
+		t.Errorf("shared concept: %+v, edges %v", nodes["probabilidad"], edges)
+	}
+	if count["matriz"] != 1 || nodes["matriz"].Shared != 2 || !edges["matriz>markov"] || !edges["matriz>pca"] {
+		t.Errorf("shared pending concept: %+v, edges %v", nodes["matriz"], edges)
+	}
+	// what the second guide says a shared pending concept stands on is kept too
+	if !edges["vector>matriz"] {
+		t.Errorf("requires of a pending concept mapped by two guides: %v", edges)
+	}
+	if nodes["fraccion"].Kind != "pending" || !edges["fraccion>probabilidad"] {
+		t.Errorf("dug concept: %+v, edges %v", nodes["fraccion"], edges)
+	}
+
+	// a chat that wrote the Markov guide: probabilidad came from the Bayes guide, another chat
+	s.mu.Lock()
+	s.runs[42] = &Run{ID: 42, Slug: "markov"}
+	s.mu.Unlock()
+	_, body = do(t, ts, "GET", "/api/graph?chat=42", nil, nil)
+	g.Nodes = nil
+	if err := json.Unmarshal(body, &g); err != nil {
+		t.Fatal(err)
+	}
+	foreign := map[string]bool{}
+	for _, n := range g.Nodes {
+		foreign[n.ID] = n.Foreign
+	}
+	if !foreign["probabilidad"] || foreign["matriz"] || foreign["markov"] {
+		t.Errorf("foreign marks in the chat map: %v", foreign)
 	}
 }

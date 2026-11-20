@@ -3,7 +3,7 @@
 **Aprende con intuición y comprueba que puedes explicarlo.**
 Un asistente de estudio con IA que corre en tu computadora: un programa de consola con una interfaz web local, y tus notas en un vault de Markdown compatible con Obsidian.
 
-Le preguntas desde un **chat** (con archivos o imágenes adjuntas) y escribe una guía de estudio con visuales interactivos, mapea todo lo que ese tema da por sabido hasta lo básico (un «iceberg» de conceptos), guarda tus propios apuntes en el vault y te hace practicar: preguntas que piden razonar y explicarlo con tus palabras. Funciona con la IA que ya tengas: Claude Code, Codex, Antigravity, cualquier API conocida o un modelo local.
+Le preguntas desde un **chat** (con archivos o imágenes adjuntas) y escribe una guía de estudio con visuales interactivos, mapea lo que ese tema da por sabido, nivel por nivel y hasta lo básico si quieres (un «iceberg» de conceptos), guarda tus propios apuntes en el vault y te hace practicar: preguntas que piden razonar y explicarlo con tus palabras. Funciona con la IA que ya tengas: Claude Code, Codex, Antigravity, cualquier API conocida o un modelo local.
 
 ![Chat de estudio con guía y visual interactivo](docs/img/nota.png)
 
@@ -244,7 +244,8 @@ En el plan de `guide`, `s` (o Enter) lo aprueba, `g` escribe solo la guía, `n` 
 
 ## Qué hace
 
-- **Un iceberg de conceptos.** Cada guía mapea todo lo que da por sabido, nivel por nivel, hasta lo básico. Mapear es barato: solo títulos y una frase. «Escribir ahora» (0 a 4) decide cuántos niveles se escriben de entrada como notas; lo de más abajo queda en gris y se escribe con un clic en **Explicar** solo si lo necesitas.
+- **Un iceberg de conceptos.** Cada guía mapea lo que da por sabido, nivel por nivel. «Escribir ahora» (0 a 4) decide cuántos niveles se mapean y se escriben de entrada como notas. En el panel Conceptos el iceberg está dibujado: la guía en la punta y un nivel por franja de agua. Al fondo, **Bajar un nivel más** mapea lo que necesita el último nivel (solo títulos y una frase, es barato); eso queda punteado y se escribe con un clic en **Explicar** solo si lo necesitas. Cuando lo de abajo ya es lo básico, te lo dice.
+- **Mapas conectados.** Antes de crear un concepto, el planner mira los que ya tienes y reutiliza la nota aunque la nombre un poco distinto («Probabilidad condicionada» es tu «Probabilidad condicional»). En el mapa, un concepto que usan varias guías aparece una sola vez, con un anillo y una arista hacia cada una. Se pueden ocultar los conceptos por explicar y, en el mapa de una conversación, los que escribió otra.
 - **Nada se da por sabido en silencio.** La guía enlaza cada término que asume. Si ese concepto aún no tiene nota, el enlace sale en gris con «explicar».
 - **Plan editable.** Antes de escribir te muestra el árbol: desmarcas lo que ya sabes, agregas lo que falte, y decides si escribe guía y notas, solo la guía, o nada.
 - **Intuición sin plantillas.** Nada de «imagina que tienes…». Las guías arrancan con un problema concreto con números, reinventan la idea (el intento ingenuo, por qué falla y el arreglo), la llevan a los casos extremos y dejan la fórmula para el final.
@@ -332,7 +333,7 @@ Todo es opcional; sin el archivo se usan estos valores. `studyhomie init` lo cre
 | `vaults` | `[]` | Todos los vaults agregados, para cambiar entre ellos |
 | `interests` | lista amplia | Campos de los que sale el reto diario |
 | `depth` | `1` | Niveles de conceptos que se escriben de entrada fuera del chat |
-| `iceberg` | `true` | Mapear siempre los conceptos hasta lo básico |
+| `iceberg` | `true` | Con profundidad 0 (solo la guía), mapear igual el primer nivel de conceptos, para explicarlos o bajar desde ahí |
 | `parallel` | `3` | Notas de concepto que se escriben a la vez |
 | `context_window` / `compact_at` | `200000` / `0.6` | Cuándo se resume una conversación larga |
 | `pass_score` | `70` | Nota (0–100, prueba o Feynman) que necesita un tema de un roadmap para desbloquear el siguiente |

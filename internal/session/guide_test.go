@@ -9,7 +9,19 @@ import (
 	"github.com/krilinxito/studyhomie/internal/vault"
 )
 
-func noVault(string) (string, bool) { return "", false }
+func noVault(string) (known, bool) { return known{}, false }
+
+// inVault is a lookup over a few written concept notes, by id and by ConceptKey.
+func inVault(notes map[string]string) lookup {
+	return func(ref string) (known, bool) {
+		for id, title := range notes {
+			if vault.ConceptID(ref) == id || vault.ConceptKey(ref) == vault.ConceptKey(title) {
+				return known{ID: id, Title: title, Written: true}, true
+			}
+		}
+		return known{}, false
+	}
+}
 
 const fourierPlan = `{"title":"Transformada de Fourier","requires":["Números complejos","Integral","Función seno"],"concepts":[
  {"id":"numeros-complejos","title":"Números complejos","summary":"z = a + bi","category":"Álgebra","requires":["plano-cartesiano"]},
@@ -22,13 +34,20 @@ const fourierPlan = `{"title":"Transformada de Fourier","requires":["Números co
  {"id":"fantasma","title":"Nadie lo pide","requires":[]}
 ]}`
 
-func planFrom(t *testing.T, js string, depth int, vt func(string) (string, bool)) ConceptPlan {
+// planFrom normalizes a plan the way a guide does with the iceberg on: mapped down to depth, or
+// one level when depth is 0.
+func planFrom(t *testing.T, js string, depth int, find lookup) ConceptPlan {
+	t.Helper()
+	return planMapped(t, js, depth, mapDepth(depth, true), find)
+}
+
+func planMapped(t *testing.T, js string, depth, mapped int, find lookup) ConceptPlan {
 	t.Helper()
 	var raw rawPlan
 	if err := decodeJSON(js, &raw); err != nil {
 		t.Fatal(err)
 	}
-	return normalizePlan(raw, "Transformada de Fourier", depth, vt)
+	return normalizePlan(raw, "Transformada de Fourier", depth, mapped, find)
 }
 
 func ids(p ConceptPlan) map[string]int {
@@ -47,25 +66,33 @@ func pendingIDs(p ConceptPlan) map[string]int {
 	return m
 }
 
-func TestPlanWritesToDepthAndKeepsTheRestPending(t *testing.T) {
+func TestPlanStopsAtTheChosenDepth(t *testing.T) {
 	p := planFrom(t, fourierPlan, 1, noVault)
 	got := ids(p)
 	if len(got) != 3 || got["numeros-complejos"] != 1 || got["integral"] != 1 || got["funcion-seno"] != 1 {
 		t.Fatalf("depth 1 = %v", got)
 	}
-	// the iceberg: everything below is mapped, down to the basics, but not written
-	pend := pendingIDs(p)
-	if pend["plano-cartesiano"] != 2 || pend["funcion"] != 2 || pend["limite"] != 2 || pend["numeros-reales"] != 3 {
-		t.Errorf("pending at depth 1 = %v", pend)
+	// strict: nothing below the chosen depth is mapped; digging maps it later
+	if len(p.Pending) != 0 {
+		t.Errorf("pending at depth 1 = %v", pendingIDs(p))
+	}
+	// with the iceberg on, depth 0 maps level 1 to explain on demand
+	if p0 := planFrom(t, fourierPlan, 0, noVault); len(p0.Concepts) != 0 || len(pendingIDs(p0)) != 3 || pendingIDs(p0)["integral"] != 1 {
+		t.Errorf("depth 0: %d written, pending %v", len(p0.Concepts), pendingIDs(p0))
+	}
+	if p0 := planMapped(t, fourierPlan, 0, 0, noVault); len(p0.Concepts)+len(p0.Pending) != 0 {
+		t.Errorf("depth 0 without the iceberg maps nothing: %+v", p0)
+	}
+	// mapping deeper than what is written keeps the rest pending, with its level
+	p = planMapped(t, fourierPlan, 1, 3, noVault)
+	if pend := pendingIDs(p); pend["plano-cartesiano"] != 2 || pend["funcion"] != 2 || pend["limite"] != 2 || pend["numeros-reales"] != 3 {
+		t.Errorf("pending at depth 1 of 3 = %v", pend)
 	}
 	// a written concept still points at its pending prerequisites, so its links can be explained later
 	for _, c := range p.Concepts {
 		if c.ID == "integral" && strings.Join(c.Requires, ",") != "funcion,limite" {
 			t.Errorf("integral requires = %v", c.Requires)
 		}
-	}
-	if p0 := planFrom(t, fourierPlan, 0, noVault); len(p0.Concepts) != 0 || len(p0.Pending) != 7 {
-		t.Errorf("depth 0 writes nothing and maps everything: %d written, %d pending", len(p0.Concepts), len(p0.Pending))
 	}
 
 	p = planFrom(t, fourierPlan, 2, noVault)
@@ -96,7 +123,7 @@ func TestPlanWritesToDepthAndKeepsTheRestPending(t *testing.T) {
 }
 
 func TestApplyEditPromotesPending(t *testing.T) {
-	p := planFrom(t, fourierPlan, 1, noVault)
+	p := planMapped(t, fourierPlan, 1, 3, noVault)
 	e := parseEditLine("*limite -numeros-complejos")
 	if len(e.Write) != 1 || e.Write[0] != "limite" {
 		t.Fatalf("parsed edit = %+v", e)
@@ -114,11 +141,11 @@ func TestApplyEditPromotesPending(t *testing.T) {
 }
 
 func TestPlanReusesVaultConceptsWithoutExpandingThem(t *testing.T) {
-	vt := func(id string) (string, bool) {
-		if id == "integral" {
-			return "Integral definida", true
+	vt := func(ref string) (known, bool) {
+		if vault.ConceptID(ref) == "integral" {
+			return known{ID: "integral", Title: "Integral definida", Written: true}, true
 		}
-		return "", false
+		return known{}, false
 	}
 	p := planFrom(t, fourierPlan, 2, vt)
 	got := ids(p)
@@ -280,5 +307,54 @@ func TestExplainWritesAPendingConcept(t *testing.T) {
 	}
 	if c, _ := s.V.LoadConcept("transformada-rapida"); c.Meta.Title != "Transformada rapida" {
 		t.Errorf("title from a link = %q", c.Meta.Title)
+	}
+}
+
+func TestPlanMergesNearDuplicatesIntoTheVaultsConcept(t *testing.T) {
+	const js = `{"title":"Teorema de Bayes","requires":["probabilidad-condicionada","regla-del-producto"],"concepts":[
+	 {"id":"probabilidad-condicionada","title":"Probabilidad condicionada","requires":["sucesos"]},
+	 {"id":"regla-del-producto","title":"Regla del producto","requires":["probabilidades-condicionadas"]},
+	 {"id":"probabilidades-condicionadas","title":"Probabilidades condicionadas","requires":[]},
+	 {"id":"sucesos","title":"Sucesos","requires":[]}
+	]}`
+	var raw rawPlan
+	if err := decodeJSON(js, &raw); err != nil {
+		t.Fatal(err)
+	}
+	p := normalizePlan(raw, "Teorema de Bayes", 2, 2, inVault(map[string]string{"probabilidad-condicional": "Probabilidad condicional"}))
+	got := ids(p)
+	if got["probabilidad-condicional"] != 1 || got["regla-del-producto"] != 1 {
+		t.Fatalf("plan = %v", got)
+	}
+	for id := range got {
+		if strings.Contains(id, "condicionada") {
+			t.Errorf("a near-duplicate of a vault concept was kept: %v", got)
+		}
+	}
+	for _, c := range p.Concepts {
+		switch c.ID {
+		case "probabilidad-condicional":
+			if !c.Exists || c.Title != "Probabilidad condicional" {
+				t.Errorf("reused concept = %+v", c)
+			}
+		case "regla-del-producto":
+			// its reference to the plural spelling points at the one concept kept
+			if strings.Join(c.Requires, ",") != "probabilidad-condicional" {
+				t.Errorf("regla-del-producto requires = %v", c.Requires)
+			}
+		}
+	}
+	if _, ok := got["sucesos"]; ok {
+		t.Errorf("a vault concept is not expanded: %v", got)
+	}
+}
+
+func TestPlanDropsTheTopicItself(t *testing.T) {
+	const js = `{"title":"Fourier","requires":["la-transformada-de-fourier","integral"],"concepts":[
+	 {"id":"la-transformada-de-fourier","title":"La transformada de Fourier"},
+	 {"id":"integral","title":"Integral"}
+	]}`
+	if got := ids(planFrom(t, js, 1, noVault)); len(got) != 1 || got["integral"] != 1 {
+		t.Errorf("plan = %v", got)
 	}
 }

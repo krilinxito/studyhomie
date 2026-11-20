@@ -42,7 +42,8 @@ Para probarla a mano: `studyhomie init --provider claude-cli` en una carpeta tem
 
 ## Dos profundidades
 
-- **Profundidad de guía** (`GuideReq.Depth`, 0–4, selector «Escribir ahora» del chat): cuántos niveles de conceptos previos se escriben como notas. El planner (`prompts/plan.md`) mapea hasta lo básico (`maxMapDepth`), y lo que queda más abajo de `Depth` va a `pending`. Es **aglomerativo**: junta todo lo que el tema da por sabido.
+- **Profundidad de guía** (`GuideReq.Depth`, 0–4, selector «Escribir ahora» del chat): cuántos niveles de conceptos previos se mapean y se escriben como notas. El tope es **estricto**: el planner (`prompts/plan.md`) mapea `mapDepth(Depth, Iceberg)` niveles (con `Depth=0` e `iceberg`, el nivel 1 queda en `pending`). «Bajar un nivel más» (`Session.Dig`, `prompts/dig.md`, `POST /api/notes/{slug}/dig`) mapea el nivel siguiente bajo los conceptos más hondos y lo deja en `pending`. Es **aglomerativo**: junta todo lo que el tema da por sabido.
+- **Conceptos reutilizados:** `conceptIndex` (`session/iceberg.go`) busca en el vault por id y por `vault.ConceptKey` (sin acentos, artículos, plurales ni orden de palabras, raíz de 7 letras), así que el plan, `Dig` y `Explain` enlazan la nota que ya existe aunque la IA la escriba distinto. Al planner le llegan los conceptos existentes más relevantes (`relevant`, hasta 150).
 - **Profundidad de roadmap** (`reach`, 1–3: enfocado / con bases / desde cero): cuánto del campo abarca la ruta. El roadmap es **lineal**: una secuencia numerada. Solo se escribe la guía del tema 1. El tema N+1 se desbloquea cuando el N tiene `mastery ≥ pass_score` (70 por defecto, en Ajustes) con estado `tested` o `explained`. En ese momento `Session.advance` escribe su guía. `Guide()` rechaza los temas bloqueados (`checkUnlocked`), y las guías de roadmap no piden aprobar el plan (`GuideReq.Auto`).
 
 ## Idiomas (i18n)
