@@ -12,7 +12,7 @@ gofmt -l .                                    # CI falla si lista algo
 node --check internal/web/static/app.js       # sintaxis del frontend (no tiene build ni tests JS)
 ```
 
-**Después de cada cambio, recompila el exe** de la raíz del repo con `go build -o studyhomie.exe ./cmd/studyhomie`, para que el binario esté siempre al día con el código. Si la app está corriendo, ciérrala antes, porque Windows no deja sobrescribir un `.exe` en uso.
+**Después de cada cambio, recompila e instala:** `go build -o studyhomie.exe ./cmd/studyhomie` (el exe de la raíz del repo) y `go install ./cmd/studyhomie`. Este segundo es el que importa: el comando `studyhomie` del usuario es `%USERPROFILE%\go\bin\studyhomie.exe`, el del PATH, no el del repo. Windows no deja sobrescribir un `.exe` en uso, pero sí renombrarlo: si la app está abierta, mueve el de `go\bin` a `studyhomie.exe.old` antes del `go install` y avisa al usuario que reinicie la app.
 
 Para probarla a mano: `studyhomie init --provider claude-cli` en una carpeta temporal y después `studyhomie serve --port 8799 --no-open`. El frontend está embebido (`//go:embed static`), así que después de tocar `internal/web/static/` hay que **recompilar y reiniciar** el servidor.
 
