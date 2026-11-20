@@ -1,4 +1,5 @@
-// Package roadmap models a learning plan as a graph of topics.
+// Package roadmap models a learning plan: a numbered sequence of topics, each one unlocked when the
+// learner passes the one before it. Prerequisites and related topics connect them in the vault graph.
 package roadmap
 
 import (
@@ -14,6 +15,7 @@ type Node struct {
 	Summary  string   `json:"summary"`
 	Requires []string `json:"requires"`
 	Related  []string `json:"related"`
+	Block    string   `json:"block"` // the field it belongs to ("Linux", "Redes"…), to group the sequence
 }
 
 // Plan is the model's roadmap for a subject.
@@ -121,30 +123,61 @@ func topoOrder(nodes []Node) ([]Node, error) {
 	return out, nil
 }
 
-// Next returns the first topic, in study order, that is not done and whose
-// prerequisites are all done. ok is false when everything is done or blocked.
-func Next(notes []vault.Note) (vault.Note, bool) {
-	done := map[string]bool{}
-	for _, n := range notes {
-		if n.Meta.Status == "explained" {
-			done[n.Slug] = true
-		}
-	}
+// Reach is how much of the field a roadmap covers.
+const (
+	ReachFocused = 1 // only the subject's own topics: the bases are taken as known
+	ReachBases   = 2 // the direct bases enter as topics of their own
+	ReachScratch = 3 // each base splits into several topics, and supporting fields come in
+	MaxReach     = ReachScratch
+)
+
+// Passed reports whether the learner passed a topic: it was tested or explained with a mastery of
+// at least pass (0-100).
+func Passed(n vault.Note, pass int) bool {
+	return (n.Meta.Status == "tested" || n.Meta.Status == "explained") && n.Meta.Mastery >= pass
+}
+
+// Step is one topic of a roadmap and where the learner stands on it.
+type Step struct {
+	Note   vault.Note
+	Passed bool // tested or explained with the passing score
+	Open   bool // every topic before it is passed: it can be studied
+}
+
+// Steps returns the topics of one roadmap in study order. The sequence is linear: a topic opens
+// when every topic before it is passed.
+func Steps(notes []vault.Note, pass int) []Step {
 	sorted := append([]vault.Note(nil), notes...)
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Meta.Order < sorted[j].Meta.Order })
-	for _, n := range sorted {
-		if done[n.Slug] {
-			continue
+	out := make([]Step, len(sorted))
+	open := true
+	for i, n := range sorted {
+		out[i] = Step{Note: n, Passed: Passed(n, pass), Open: open}
+		open = open && out[i].Passed
+	}
+	return out
+}
+
+// Next returns the topic the learner is on: the first one, in study order, not passed yet.
+// ok is false when every topic is passed.
+func Next(notes []vault.Note, pass int) (vault.Note, bool) {
+	for _, st := range Steps(notes, pass) {
+		if !st.Passed {
+			return st.Note, true
 		}
-		ready := true
-		for _, r := range n.Meta.Requires {
-			if !done[r] {
-				ready = false
-				break
-			}
+	}
+	return vault.Note{}, false
+}
+
+// Blocker returns the topic that keeps slug locked: the first earlier topic not passed yet.
+// ok is false when slug is open (or not in the roadmap).
+func Blocker(notes []vault.Note, slug string, pass int) (vault.Note, bool) {
+	for _, st := range Steps(notes, pass) {
+		if st.Note.Slug == slug {
+			return vault.Note{}, false
 		}
-		if ready {
-			return n, true
+		if !st.Passed {
+			return st.Note, true
 		}
 	}
 	return vault.Note{}, false

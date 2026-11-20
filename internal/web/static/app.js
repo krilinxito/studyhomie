@@ -186,7 +186,7 @@ function markPending(root) {
   if (!S.graph) return;
   for (const a of $$('a[href^="#note/"]', root)) {
     const slug = decodeURIComponent(a.getAttribute('href').slice(6));
-    if (!writtenNode(slug)) a.classList.add('pending');
+    if (!writtenNode(slug) && !roadmapOf(slug)) a.classList.add('pending');
   }
 }
 
@@ -658,8 +658,31 @@ function drawSettings() {
       row('Modelo', model),
       row('Modelo rápido', quick, h('p', { class: 'set-facts' }, 'Para el chat, las notas de concepto y el plan.')),
       row('', h('div', { class: 'set-actions' }, save, test), result)),
+    studySection(row),
     updateSection(row),
     h('p', { class: 'set-foot' }, `Se guarda en ${SET.data.configPath || 'studyhomie.toml'}. Lo que esté en curso termina con la IA anterior.`)));
+}
+
+// the "Estudio" block of the settings page: the score a roadmap topic needs to unlock the next one
+function studySection(row) {
+  const study = SET.data.study || {};
+  const result = h('p', { class: 'set-result', role: 'status' });
+  const say = (cls, text) => { result.className = `set-result ${cls}`; result.textContent = text; };
+  const input = h('input', { type: 'number', min: 0, max: 100, step: 5, value: study.passScore ?? 70, class: 'set-num', 'aria-label': 'Nota para avanzar en un roadmap' });
+  input.addEventListener('change', async () => {
+    const v = Math.round(Number(input.value));
+    if (!Number.isFinite(v) || v < 0 || v > 100) { say('bad', 'Pon un número de 0 a 100.'); return; }
+    try {
+      const r = await api('/api/settings/study', { method: 'POST', body: { passScore: v } });
+      SET.data.study = r;
+      say('ok', 'Guardado.');
+      loadGraph().catch(() => {}).then(() => reloadGuide());
+    } catch (err) { say('bad', err.message); }
+  });
+  return h('section', { class: 'set-section' }, h('h3', {}, 'Estudio'),
+    row('Nota para avanzar', h('div', { class: 'set-inline' }, input, h('span', {}, '/ 100')),
+      h('p', { class: 'set-facts' }, 'En un roadmap, el tema siguiente se desbloquea (y se escribe su guía) cuando sacas esta nota o más en la prueba o explicándolo.')),
+    row('', result));
 }
 
 /* ---------- Actualizaciones ---------- */
@@ -912,6 +935,7 @@ document.addEventListener('click', (e) => {
   const href = a.getAttribute('href');
   if (href.startsWith('#sim/')) { openSim(decodeURIComponent(href.slice(5)), S.note && S.note.meta.title); return; }
   const slug = decodeURIComponent(href.slice(6));
+  if (roadmapOf(slug)) { closeGuide(); show('guide'); return; } // a roadmap lives in the list of guides
   const known = writtenNode(slug);
   if (known && !a.classList.contains('pending')) { openNote(known.id); return; }
   explainPop(a, slug);
@@ -983,6 +1007,50 @@ const vizCtx = (slug) => ({
   generate: async (spec) => (await api(`/api/notes/${encodeURIComponent(slug)}/viz`, { method: 'POST', body: { brief: spec.brief } })).src,
 });
 
+/* ---------- Roadmaps: a numbered path, each topic unlocked by passing the one before ---------- */
+const roadmapOf = (slug) => S.roadmaps.find((r) => r.slug === slug);
+
+// asks the chat to write (or open) the guide of the topic the learner is on
+function nextTopic(rm, step) {
+  chatAction({ action: 'next', roadmap: rm.slug }, `Siguiente tema: ${step.title}`);
+}
+
+// One roadmap as a numbered path: passed topics show their score, the current one opens (or gets
+// its guide written), the rest wait behind a lock until the topic before them is passed.
+function roadmapPath(rm, { open = true } = {}) {
+  const steps = rm.steps || [];
+  const list = h('ol', { class: 'rm-path' });
+  let block = '';
+  for (const st of steps) {
+    if (st.block && st.block !== block) {
+      block = st.block;
+      list.append(h('li', { class: 'rm-block' }, st.block));
+    }
+    const mark = st.state === 'passed' ? icon('check') : st.state === 'locked' ? icon('lock') : h('span', {}, String(st.n));
+    let side = null;
+    if (st.state === 'passed') side = h('small', { class: 'rm-score' }, `${st.mastery}/100`);
+    else if (st.state === 'locked') side = h('small', { class: 'rm-wait' }, 'Bloqueado');
+    else if (!st.ready && open) {
+      side = h('button', { class: 'btn small primary', type: 'button', onclick: (e) => { e.stopPropagation(); nextTopic(rm, st); } },
+        icon('sparkles'), 'Escribir la guía');
+    } else if (st.ready) side = h('small', { class: 'rm-now' }, st.mastery ? `${st.mastery}/100 · necesitas ${rm.pass}` : 'Ahora');
+    const canOpen = open && st.ready && st.state !== 'locked'; // a locked topic stays closed, even with a guide from before
+    const row = h(canOpen ? 'button' : 'div', {
+      class: 'rm-step', type: canOpen ? 'button' : null, title: st.summary || null,
+      onclick: canOpen ? () => openNote(st.slug) : null,
+    }, h('span', { class: 'rm-mark', 'aria-hidden': 'true' }, mark),
+    h('span', { class: 'rm-title' }, h('span', { class: 'sr-only' }, `${st.n}. `), st.title, st.summary ? h('small', {}, st.summary) : null),
+    side);
+    list.append(h('li', { 'data-state': st.state }, row));
+  }
+  return list;
+}
+
+function roadmapHint(rm) {
+  const done = (rm.steps || []).filter((s) => s.state === 'passed').length;
+  return `${done} de ${(rm.steps || []).length} · cada tema se desbloquea con ${rm.pass}/100 en el anterior`;
+}
+
 // every guide, grouped by roadmap: what the panel offers when no guide is open
 function guideList() {
   const guides = ((S.graph && S.graph.nodes) || []).filter((n) => n.kind === 'guide');
@@ -994,11 +1062,34 @@ function guideList() {
     groups.get(k).push(n);
   }
   const keys = [...groups.keys()].sort((a, b) => (!a) - (!b) || groupTitle(a).localeCompare(groupTitle(b)));
-  return h('div', { class: 'guide-list' }, keys.map((k) => h('section', { class: 'dg' },
+  return h('div', { class: 'guide-list' }, keys.map((k) => roadmapOf(k) ? h('section', { class: 'dg dg-roadmap' },
+    h('h3', {}, icon('map'), groupTitle(k)),
+    h('p', { class: 'rm-hint' }, roadmapHint(roadmapOf(k))),
+    roadmapPath(roadmapOf(k))) : h('section', { class: 'dg' },
     h('h3', {}, k ? groupTitle(k) : 'Tus guías'),
     h('ul', {}, groups.get(k).sort((a, b) => (a.order || 0) - (b.order || 0) || a.label.localeCompare(b.label)).map((n) => h('li', {},
       h('button', { class: 'dn', type: 'button', style: `--lc: ${lineColor(n.group)}`, onclick: () => openNote(n.id) },
         h('i', { class: `st st-${n.status}`, title: STATUS[n.status] || n.status }), n.label)))))));
+}
+
+// the end of a roadmap guide: what unlocks the next topic, or the way to it
+function pathSection(rm, st, title) {
+  const next = rm.steps[st.n]; // steps are numbered from 1
+  let line;
+  if (!next) line = h('p', {}, st.state === 'passed' ? `Completaste «${rm.title}».` : `Es el último tema de «${rm.title}».`);
+  else if (st.state !== 'passed') {
+    line = h('p', {}, `El tema ${next.n}, «${next.title}», se desbloquea cuando saques ${rm.pass}/100 o más en «${title}»`,
+      st.mastery ? ` (llevas ${st.mastery}).` : ', con la prueba o explicándolo.');
+  } else if (next.ready) {
+    line = h('button', { class: 'neighbor', type: 'button', onclick: () => openNote(next.slug) }, h('small', {}, `Tema ${next.n}`), h('strong', {}, next.title));
+  } else {
+    line = h('div', { class: 'actions' }, h('button', { class: 'btn small primary', type: 'button', onclick: () => nextTopic(rm, next) },
+      icon('sparkles'), `Escribir el tema ${next.n}: ${next.title}`));
+  }
+  return h('section', { class: 'r-path' }, h('h2', {}, 'En la ruta'),
+    h('p', { class: 'r-path-sub' }, `«${rm.title}» · ${roadmapHint(rm)}`), line,
+    st.state !== 'passed' && next ? h('div', { class: 'actions' },
+      h('button', { class: 'btn small', type: 'button', onclick: () => show('practice') }, icon('target'), 'Practicar')) : null);
 }
 
 function renderReader(n) {
@@ -1017,12 +1108,15 @@ function renderReader(n) {
   const node = nodeOf(n.slug);
   const concepts = n.concepts || [];
   const under = (m.pending || []).length;
+  const rm = m.roadmap ? roadmapOf(m.roadmap) : null;
+  const rmStep = rm ? (rm.steps || []).find((s) => s.slug === n.slug) : null;
   const wrap = h('div', { class: 'reader-wrap', style: `--line-c: ${lineColor(node ? node.group : '')}` });
   wrap.append(h('header', { class: 'r-head' },
     h('button', { class: 'crumb', type: 'button', onclick: closeGuide }, icon('arrow-left'), 'Todas las guías'),
     h('p', { class: 'r-line' }, m.roadmap ? groupTitle(m.roadmap) : 'Guía'),
     h('h1', {}, title),
     h('div', { class: 'chips' }, statusChip(status),
+      rmStep ? h('span', { class: 'chip' }, `Tema ${rmStep.n} de ${rm.steps.length}`) : null,
       m.focus ? h('span', { class: 'chip' }, `Foco: ${m.focus}`) : null,
       m.field ? h('span', { class: 'chip' }, m.field) : null),
     m.mastery ? h('div', { class: 'mastery' },
@@ -1056,6 +1150,7 @@ function renderReader(n) {
     article.append(h('section', { class: 'r-next' }, h('h2', {}, 'Relacionado'),
       before.map((l) => nb('Antes', l)), back.map((l) => nb('Enlaza aquí', l))));
   }
+  if (rmStep) article.append(pathSection(rm, rmStep, title));
   wrap.append(article);
   root.append(wrap);
 }
@@ -2120,6 +2215,16 @@ function renderCard(c, run) {
           h('button', { class: 'btn small', type: 'button', onclick: async () => { await openNote(c.slug, { quiet: true }); show('concepts'); } }, icon('mountain-snow'), 'Ver el iceberg'))));
       if (!run.replay) loadGraph().catch(() => {}).then(() => openNote(c.slug));
       break;
+    case 'roadmap': {
+      const rm = { slug: c.slug, title: c.topic, pass: c.score, steps: c.steps || [] };
+      addMsg('card', h('div', { class: 'rich rich-roadmap' },
+        h('div', { class: 'rich-eyebrow' }, icon('map'), `Ruta · ${rm.steps.length} temas`),
+        h('h3', {}, rm.title),
+        h('p', { class: 'hint' }, `Se estudia en orden: cada tema se desbloquea con ${rm.pass}/100 en el anterior, y su guía se escribe entonces.`),
+        roadmapPath(rm, { open: false })));
+      if (!run.replay) loadGraph().catch(() => {});
+      break;
+    }
     case 'concept':
       addMsg('card', h('div', { class: 'rich' }, h('div', { class: 'rich-eyebrow' }, 'Nota de concepto'), h('h3', {}, c.topic),
         h('button', { class: 'btn small', type: 'button', onclick: () => openNote(c.slug) }, 'Abrir la nota')));
@@ -2137,7 +2242,7 @@ function renderCard(c, run) {
       addMsg('card', h('div', { class: `rich rich-score tone-${tone}` },
         h('div', { class: 'score-ring', style: `--p:${Math.max(0, Math.min(100, c.score))}`, role: 'img', 'aria-label': `${c.score} de 100` }, h('span', {}, c.score)),
         h('div', {}, h('strong', {}, `${c.label}: ${verdict}`), c.detail && h('div', { class: 'hint' }, c.detail))));
-      if (!run.replay) reloadGuide();
+      if (!run.replay) loadGraph().catch(() => {}).then(() => reloadGuide()); // the score may unlock the next topic
       break;
     }
     case 'resources':

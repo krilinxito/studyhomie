@@ -123,6 +123,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/settings", s.saveSettings)
 	mux.HandleFunc("POST /api/settings/models", s.listModels)
 	mux.HandleFunc("POST /api/settings/test", s.testSettings)
+	mux.HandleFunc("POST /api/settings/study", s.saveStudySettings)
 	mux.HandleFunc("GET /api/update", s.getUpdate)
 	mux.HandleFunc("POST /api/update", s.installUpdate)
 	mux.HandleFunc("POST /api/update/skip", s.skipUpdate)
@@ -346,28 +347,39 @@ func (s *Server) roadmaps(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, err.Error())
 		return
 	}
+	_, cfg, _ := s.backend()
+	pass := max(0, min(cfg.PassScore, 100))
 	type item struct {
-		Slug   string   `json:"slug"`
-		Title  string   `json:"title"`
-		Total  int      `json:"total"`
-		Done   int      `json:"done"`
-		Next   *linkRef `json:"next"`
-		Source string   `json:"source,omitempty"`
+		Slug   string                `json:"slug"`
+		Title  string                `json:"title"`
+		Total  int                   `json:"total"`
+		Done   int                   `json:"done"` // topics passed
+		Next   *linkRef              `json:"next"` // the topic the learner is on
+		Source string                `json:"source,omitempty"`
+		Reach  int                   `json:"reach,omitempty"`
+		Pass   int                   `json:"pass"` // mastery a topic needs to unlock the next
+		Steps  []session.RoadmapStep `json:"steps"`
 	}
 	out := []item{}
 	for _, rm := range rms {
-		it := item{Slug: rm.Slug, Title: rm.Meta.Title, Source: rm.Meta.Source}
+		it := item{Slug: rm.Slug, Title: rm.Meta.Title, Source: rm.Meta.Source, Reach: rm.Meta.Reach, Pass: pass}
 		var in []vault.Note
 		for _, t := range topics {
 			if t.Meta.Roadmap == rm.Slug {
 				in = append(in, t)
-				if t.Meta.Status == "explained" {
-					it.Done++
-				}
 			}
 		}
+		it.Steps = session.RoadmapSteps(in, pass)
+		if it.Steps == nil {
+			it.Steps = []session.RoadmapStep{}
+		}
 		it.Total = len(in)
-		if n, ok := roadmap.Next(in); ok {
+		for _, st := range it.Steps {
+			if st.State == "passed" {
+				it.Done++
+			}
+		}
+		if n, ok := roadmap.Next(in, pass); ok {
 			it.Next = &linkRef{n.Slug, n.Meta.Title}
 		}
 		out = append(out, it)

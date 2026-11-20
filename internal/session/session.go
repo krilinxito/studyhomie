@@ -215,8 +215,16 @@ type grading struct {
 	Gaps []string `json:"gaps"`
 }
 
-// Quiz generates a test, collects answers and grades them.
+// Quiz generates a test, collects answers and grades them. On a roadmap, passing it writes the
+// next topic's guide.
 func (s *Session) Quiz(ctx context.Context, slug string, n int, difficulty string) error {
+	if err := s.quiz(ctx, slug, n, difficulty); err != nil {
+		return err
+	}
+	return s.advance(ctx, slug)
+}
+
+func (s *Session) quiz(ctx context.Context, slug string, n int, difficulty string) error {
 	note, err := s.V.Load(slug)
 	if err != nil {
 		return fmt.Errorf("no hay guía para «%s»; ejecuta primero la preparación: %w", slug, err)
@@ -308,8 +316,16 @@ func (s *Session) Quiz(ctx context.Context, slug string, n int, difficulty strin
 	return nil
 }
 
-// Feynman lets the learner explain the topic and critiques each round.
+// Feynman lets the learner explain the topic and critiques each round. On a roadmap, passing it
+// writes the next topic's guide.
 func (s *Session) Feynman(ctx context.Context, slug string) error {
+	if err := s.feynman(ctx, slug); err != nil {
+		return err
+	}
+	return s.advance(ctx, slug)
+}
+
+func (s *Session) feynman(ctx context.Context, slug string) error {
 	note, err := s.V.Load(slug)
 	if err != nil {
 		return fmt.Errorf("no hay guía para «%s»; ejecuta primero la preparación: %w", slug, err)
@@ -404,8 +420,16 @@ func (s *Session) Study(ctx context.Context, topic, source string) error {
 	return s.afterPrepare(ctx, slug)
 }
 
-// afterPrepare continues with the test and the Feynman phase of an already prepared topic.
+// afterPrepare continues with the test and the Feynman phase of an already prepared topic. On a
+// roadmap, the next topic is unlocked once both are over, not between them.
 func (s *Session) afterPrepare(ctx context.Context, slug string) error {
+	if err := s.practice(ctx, slug); err != nil {
+		return err
+	}
+	return s.advance(ctx, slug)
+}
+
+func (s *Session) practice(ctx context.Context, slug string) error {
 	if ok, _ := s.confirm("\n¿Respondemos unas preguntas?"); !ok {
 		return nil
 	}
@@ -421,13 +445,13 @@ func (s *Session) afterPrepare(ctx context.Context, slug string) error {
 	if err != nil {
 		return err
 	}
-	if err := s.Quiz(ctx, slug, n, diff); err != nil {
+	if err := s.quiz(ctx, slug, n, diff); err != nil {
 		return err
 	}
 	if ok, _ := s.confirm("\n¿Lo explicas con tus palabras?"); !ok {
 		return nil
 	}
-	return s.Feynman(ctx, slug)
+	return s.feynman(ctx, slug)
 }
 
 func (s *Session) confirm(label string) (bool, error) {

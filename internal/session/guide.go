@@ -19,6 +19,7 @@ type GuideReq struct {
 	Focus  string // what the learner wants out of it, free text
 	Source string // roadmap | material | daily | adhoc
 	Depth  int    // levels of prerequisites that get their own note; 0 is the guide alone
+	Auto   bool   // write the planned concept notes without asking (a roadmap topic: its depth was chosen already)
 }
 
 // MaxDepth bounds how far down the prerequisites a plan goes.
@@ -460,6 +461,9 @@ func (s *Session) Guide(ctx context.Context, req GuideReq) (string, error) {
 	} else {
 		note = vault.Note{Slug: slug, Meta: vault.Meta{Title: req.Topic, Source: req.Source}}
 	}
+	if err := s.checkUnlocked(note); err != nil {
+		return "", err
+	}
 
 	s.card(Card{Kind: CardPhase, Phase: "prepare"})
 	plan := ConceptPlan{Topic: req.Topic, Depth: req.Depth}
@@ -471,8 +475,8 @@ func (s *Session) Guide(ctx context.Context, req GuideReq) (string, error) {
 			return "", ctx.Err()
 		case err != nil:
 			s.printf("Aviso: no pude planear los conceptos (%v); escribo solo la guía.\n", err)
-		case !hasFresh(p.Concepts):
-			plan = p // nothing to write now: the map goes straight into the guide, to explain later
+		case !hasFresh(p.Concepts) || req.Auto:
+			plan = p // nothing to approve: the map goes straight into the guide
 		default:
 			var ok bool
 			if plan, ok, err = s.approvePlan(p); err != nil {

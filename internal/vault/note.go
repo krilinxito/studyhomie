@@ -29,6 +29,7 @@ type Meta struct {
 	Field     string     `yaml:"field,omitempty" json:"field,omitempty"`       // knowledge field (daily)
 	Roadmap   string     `yaml:"roadmap,omitempty" json:"roadmap,omitempty"`   // slug of the roadmap this topic belongs to
 	Order     int        `yaml:"order,omitempty" json:"order,omitempty"`       // position within the roadmap
+	Block     string     `yaml:"block,omitempty" json:"block,omitempty"`       // field of the roadmap it belongs to ("Linux", "Redes"…)
 	Requires  []string   `yaml:"requires,omitempty" json:"requires,omitempty"` // slugs of prerequisite topics
 	Material  string     `yaml:"material,omitempty" json:"material,omitempty"` // slug of the source material, if any
 	Created   string     `yaml:"created,omitempty" json:"created,omitempty"`
@@ -40,6 +41,10 @@ type Meta struct {
 	Base     []string `yaml:"base,omitempty" json:"base,omitempty"`         // the ones the topic needs directly
 	Depth    int      `yaml:"depth,omitempty" json:"depth,omitempty"`
 	Focus    string   `yaml:"focus,omitempty" json:"focus,omitempty"`
+	// A roadmap note: how much of the field it covers (roadmap.Reach*) and how many levels of concept
+	// notes each of its guides gets. nil means the configured depth.
+	Reach      int  `yaml:"reach,omitempty" json:"reach,omitempty"`
+	GuideDepth *int `yaml:"guide_depth,omitempty" json:"guideDepth,omitempty"`
 	// The part of the iceberg under water: concepts the guide stands on that have no note yet.
 	Pending []PendingConcept `yaml:"pending,omitempty" json:"pending,omitempty"`
 }
