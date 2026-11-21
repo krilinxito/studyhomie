@@ -2498,9 +2498,12 @@ function drawProgress() {
   const calDays = st.calendar || [];
   const cells = [];
   for (const d of calDays) {
-    const tip = d.frozen
+    let tip = d.frozen
       ? t('{date} · protegido con congelador', { date: d.date })
       : t('{date} · {xp} XP', { date: d.date, xp: d.xp });
+    // the grades of that day, one per line
+    for (const gd of d.grades || []) tip += `
+${gd.score}/100 · ${GR_KIND[gd.kind] || gd.kind} · ${gd.title}${gd.partial ? ` (${t('incompleta')})` : ''}`;
     cells.push(h('span', {
       class: `cal-cell l${d.level || 0}${d.frozen ? ' frozen' : ''}`,
       title: tip,
@@ -2597,8 +2600,217 @@ function drawProgress() {
     kpis,
     cardsSec,
     calendarSec,
+    gradesSection(),
     areasSec,
     recentSec));
+}
+
+/* ---------- Progreso → Calificaciones: every quiz and explanation, over time ---------- */
+const GR = { data: null, topic: '', kind: '', range: '90', all: false, loading: false, host: null, error: '' };
+const GR_KIND = { quiz: t('Preguntas'), feynman: t('Explicación') };
+const GR_RANGES = [['30', t('30 días')], ['90', t('90 días')], ['all', t('Todo')]];
+const SVGNS = 'http://www.w3.org/2000/svg';
+const svgEl = (tag, attrs = {}) => { const el = document.createElementNS(SVGNS, tag); for (const [k, v] of Object.entries(attrs)) if (v != null) el.setAttribute(k, v); return el; };
+const fmtDate = (iso) => new Date(iso).toLocaleDateString(LOCALE, { day: 'numeric', month: 'short' });
+const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+async function loadGrades() {
+  const q = new URLSearchParams();
+  if (GR.topic) q.set('topic', GR.topic);
+  if (GR.kind) q.set('kind', GR.kind);
+  if (GR.range !== 'all') { const d = new Date(); d.setDate(d.getDate() - Number(GR.range) + 1); q.set('from', isoDay(d)); }
+  GR.loading = true;
+  if (GR.host) GR.host.classList.add('refetch'); // the previous render stays, dimmed, while it reloads
+  try {
+    GR.data = await api(`/api/stats/grades?${q}`);
+    GR.error = '';
+  } catch (err) { GR.error = err.message; }
+  GR.loading = false;
+  if (GR.host && GR.host.isConnected) drawGrades(GR.host);
+}
+
+// the guide, scrolled to its test or its explanation
+async function openGrade(g) {
+  if (!nodeOf(g.topic)) { toast(t('Esa guía ya no está en tu vault.')); return; }
+  await openNote(g.topic, { quiet: true });
+  show('guide');
+  const want = SECTION[g.kind === 'feynman' ? 'Feynman' : 'Prueba'];
+  // the reader draws the note a moment later: wait for the heading, then bring it up
+  for (let i = 0; i < 20; i++) {
+    const hd = $$('#reader h2').find((x) => x.textContent === want);
+    if (hd && hd.offsetParent) { hd.scrollIntoView({ behavior: smoothness(), block: 'start' }); return; }
+    await sleep(50);
+  }
+}
+
+const gradeTone = (score, pass) => (score >= pass ? 'good' : score >= pass * 0.6 ? 'mid' : 'low');
+
+const grResize = new ResizeObserver(() => {
+  clearTimeout(GR.resizeTimer);
+  GR.resizeTimer = setTimeout(() => { if (GR.host && GR.host.isConnected && GR.data && GR.host.clientWidth !== GR.width) drawGrades(GR.host); }, 120);
+});
+function gradesSection() {
+  const host = h('div', { class: 'grades-host' });
+  GR.host = host;
+  grResize.observe(host);
+  drawGrades(host);
+  if (!GR.loading) loadGrades();
+  return h('section', { class: 'prog-sec grades' },
+    h('div', { class: 'prog-sec-head' }, h('h3', {}, t('Calificaciones')), h('span', { class: 'hint' }, t('Preguntas y explicaciones'))),
+    host);
+}
+
+function drawGrades(host) {
+  host.classList.remove('refetch');
+  GR.width = host.clientWidth;
+  const g = GR.data;
+  if (!g) { host.replaceChildren(h('p', { class: 'hint' }, GR.error || t('Cargando…'))); return; }
+  const everything = (g.topicOptions || []).reduce((n, o) => n + o.count, 0);
+  if (!everything) {
+    host.replaceChildren(h('p', { class: 'hint' }, t('Cuando respondas preguntas o expliques un tema, tus notas aparecerán aquí.')));
+    return;
+  }
+  // filters: one row, above everything they scope; the range first
+  const sel = (label, value, opts, on) => h('select', { 'aria-label': label, onchange: (e) => on(e.target.value) },
+    opts.map(([v, txt]) => h('option', { value: v, selected: v === value || null }, txt)));
+  const filters = h('div', { class: 'gr-filters' },
+    h('div', { class: 'seg', role: 'group', 'aria-label': t('Período') }, GR_RANGES.map(([v, txt]) => h('button', {
+      type: 'button', 'aria-pressed': String(GR.range === v), onclick: () => { GR.range = v; loadGrades(); },
+    }, txt))),
+    sel(t('Tema'), GR.topic, [['', t('Todos los temas')], ...(g.topicOptions || []).map((o) => [o.id, o.title])], (v) => { GR.topic = v; loadGrades(); }),
+    sel(t('Tipo'), GR.kind, [['', t('Preguntas y explicaciones')], ['quiz', GR_KIND.quiz], ['feynman', GR_KIND.feynman]], (v) => { GR.kind = v; loadGrades(); }));
+
+  if (!g.count) {
+    host.replaceChildren(filters, h('p', { class: 'hint' }, t('No hay notas con estos filtros.')));
+    return;
+  }
+  const trend = g.hasTrend
+    ? h('small', { class: `gr-trend ${g.trend > 0 ? 'up' : g.trend < 0 ? 'down' : ''}` }, g.trend > 0 ? '▲ ' : g.trend < 0 ? '▼ ' : '', t('{delta} frente a los 30 días anteriores', { delta: `${g.trend > 0 ? '+' : ''}${g.trend}` }))
+    : h('small', {}, t('Hace falta un mes de notas para ver la tendencia'));
+  const kpis = h('div', { class: 'gr-kpis' },
+    h('div', {}, h('span', { class: 'prog-label' }, t('Promedio')), h('strong', {}, `${g.average}`), h('small', {}, t('de 100'))),
+    h('div', {}, h('span', { class: 'prog-label' }, t('Mejor nota')), h('strong', {}, `${g.best}`), h('small', {}, t('de 100'))),
+    h('div', {}, h('span', { class: 'prog-label' }, t('Intentos')), h('strong', {}, `${g.count}`), h('small', {}, t('para avanzar: {pass}', { pass: g.passScore }))),
+    h('div', {}, h('span', { class: 'prog-label' }, t('Últimos 30 días')), h('strong', {}, g.last30 ? `${g.last30}` : '—'), trend));
+
+  host.replaceChildren(filters, kpis, gradeChart(g), gradeList(g), topicGrades(g));
+}
+
+// Scores over time: one series (the accent), a reference line at the pass score, round markers for
+// questions and diamonds for explanations, hollow when the attempt was left incomplete.
+function gradeChart(g) {
+  const pts = [...g.attempts].reverse(); // oldest first
+  // drawn at the width it gets, so its text stays at its real size on a phone too
+  const W = Math.max(280, Math.round((GR.host && GR.host.clientWidth) || 640)), H = W < 480 ? 180 : 220, L = 34, R = 14, T = 14, B = 26;
+  const t0 = new Date(pts[0].at).getTime(), t1 = new Date(pts[pts.length - 1].at).getTime();
+  const span = Math.max(1, t1 - t0);
+  const x = (p) => (pts.length === 1 ? (L + W - R) / 2 : L + ((new Date(p.at).getTime() - t0) / span) * (W - L - R));
+  const y = (s) => T + (1 - s / 100) * (H - T - B);
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, class: 'gr-chart', role: 'img', 'aria-label': t('Notas en el tiempo: promedio {avg}, mejor {best}, {n} intentos', { avg: g.average, best: g.best, n: g.count }) });
+  for (const v of [0, 25, 50, 75, 100]) {
+    svg.append(svgEl('line', { x1: L, x2: W - R, y1: y(v), y2: y(v), class: 'gr-grid' }));
+    if (Math.abs(v - g.passScore) < 8) continue; // the pass score takes this spot on the axis
+    const lab = svgEl('text', { x: L - 6, y: y(v) + 4, class: 'gr-axis', 'text-anchor': 'end' }); lab.textContent = String(v); svg.append(lab);
+  }
+  // the pass score: a reference line, its value marked on the axis (the key names it)
+  svg.append(svgEl('line', { x1: L, x2: W - R, y1: y(g.passScore), y2: y(g.passScore), class: 'gr-pass' }));
+  const passLab = svgEl('text', { x: L - 6, y: y(g.passScore) + 4, class: 'gr-pass-label', 'text-anchor': 'end' });
+  passLab.textContent = String(g.passScore);
+  svg.append(passLab);
+  // dates at both ends of the axis
+  for (const [p, anchor] of [[pts[0], 'start'], [pts[pts.length - 1], 'end']]) {
+    if (pts.length === 1 && anchor === 'end') break;
+    const d = svgEl('text', { x: pts.length === 1 ? x(p) : anchor === 'start' ? L : W - R, y: H - 6, class: 'gr-axis', 'text-anchor': pts.length === 1 ? 'middle' : anchor });
+    d.textContent = fmtDate(p.at); svg.append(d);
+  }
+  if (pts.length > 1) svg.append(svgEl('polyline', { points: pts.map((p) => `${x(p)},${y(p.score)}`).join(' '), class: 'gr-line' }));
+  const cross = svgEl('line', { y1: T, y2: H - B, class: 'gr-cross', visibility: 'hidden' });
+  svg.append(cross);
+  const marks = pts.map((p) => {
+    const cx = x(p), cy = y(p.score);
+    const m = p.kind === 'feynman'
+      ? svgEl('rect', { x: cx - 4.5, y: cy - 4.5, width: 9, height: 9, transform: `rotate(45 ${cx} ${cy})` })
+      : svgEl('circle', { cx, cy, r: 4.5 });
+    m.setAttribute('class', `gr-dot${p.partial ? ' partial' : ''}`);
+    svg.append(m);
+    return { p, cx, cy, m };
+  });
+  const tip = h('div', { class: 'gr-tip', hidden: true });
+  const box = h('div', { class: 'gr-chart-box' }, svg, tip);
+  // the crosshair finds the nearest attempt in time; the tooltip leads with the score
+  let on = null;
+  const showAt = (k) => {
+    if (on) on.m.classList.remove('on');
+    on = marks[k];
+    on.m.classList.add('on');
+    cross.setAttribute('x1', on.cx); cross.setAttribute('x2', on.cx); cross.setAttribute('visibility', 'visible');
+    const p = on.p;
+    tip.replaceChildren(
+      h('strong', {}, `${p.score}/100`, p.partial ? h('span', { class: 'gr-badge' }, t('incompleta')) : null),
+      h('span', {}, p.title),
+      h('small', {}, [GR_KIND[p.kind] || p.kind, p.difficulty ? t(p.difficulty) : '', p.questions ? t('{c} de {n} bien', { c: p.correct, n: p.questions }) : '', fmtDate(p.at)].filter(Boolean).join(' · ')));
+    tip.hidden = false;
+    const r = svg.getBoundingClientRect(), k2 = r.width / W;
+    const left = Math.min(Math.max(on.cx * k2 - 90, 0), Math.max(0, r.width - 180));
+    tip.style.left = `${left}px`;
+    tip.style.top = `${Math.max(0, on.cy * k2 - 74)}px`;
+  };
+  const hide = () => { if (on) on.m.classList.remove('on'); on = null; tip.hidden = true; cross.setAttribute('visibility', 'hidden'); };
+  svg.addEventListener('pointermove', (e) => {
+    const r = svg.getBoundingClientRect();
+    const px = ((e.clientX - r.left) / r.width) * W;
+    let best = 0;
+    marks.forEach((mk, i) => { if (Math.abs(mk.cx - px) < Math.abs(marks[best].cx - px)) best = i; });
+    showAt(best);
+  });
+  svg.addEventListener('pointerleave', hide);
+  svg.addEventListener('click', () => { if (on) openGrade(on.p); });
+  // the same details from the keyboard: arrows walk the attempts
+  svg.setAttribute('tabindex', '0');
+  svg.addEventListener('keydown', (e) => {
+    const i = on ? marks.indexOf(on) : marks.length;
+    if (e.key === 'ArrowLeft') { e.preventDefault(); showAt(Math.max(0, i - 1)); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); showAt(Math.min(marks.length - 1, on ? i + 1 : marks.length - 1)); }
+    else if (e.key === 'Enter' && on) openGrade(on.p);
+    else if (e.key === 'Escape') hide();
+  });
+  svg.addEventListener('blur', hide);
+  const key = h('div', { class: 'gr-key' },
+    h('span', {}, h('i', { class: 'gr-k-dot' }), GR_KIND.quiz),
+    h('span', {}, h('i', { class: 'gr-k-dia' }), GR_KIND.feynman),
+    h('span', {}, h('i', { class: 'gr-k-dot hollow' }), t('incompleta')),
+    h('span', {}, h('i', { class: 'gr-k-pass' }), t('nota para avanzar ({pass})', { pass: g.passScore })));
+  return h('div', { class: 'gr-chart-wrap' }, box, key);
+}
+
+// every attempt, newest first: the table view of the chart
+function gradeList(g) {
+  const list = GR.all ? g.attempts : g.attempts.slice(0, 8);
+  const rows = list.map((a) => h('li', {},
+    h('span', { class: `gr-score tone-${gradeTone(a.score, g.passScore)}` }, String(a.score)),
+    h('button', { class: 'gr-what', type: 'button', onclick: () => openGrade(a), title: t('Abrir en la guía') },
+      h('strong', {}, a.title),
+      h('small', {}, [GR_KIND[a.kind] || a.kind, a.difficulty ? t(a.difficulty) : '', a.questions ? t('{c} de {n} bien', { c: a.correct, n: a.questions }) : '', fmtDate(a.at)].filter(Boolean).join(' · '))),
+    a.partial ? h('span', { class: 'gr-badge' }, t('incompleta')) : null));
+  return h('div', { class: 'gr-block' },
+    h('h4', {}, t('Intentos')),
+    h('ul', { class: 'gr-list' }, rows),
+    g.attempts.length > 8 ? h('button', { class: 'btn small ghost', type: 'button', onclick: () => { GR.all = !GR.all; drawGrades(GR.host); } },
+      GR.all ? t('Ver menos') : t('Ver los {n}', { n: g.attempts.length })) : null);
+}
+
+// each topic: its last grade against the pass score, the best one and how many tries
+function topicGrades(g) {
+  if (!g.topics || !g.topics.length) return null;
+  return h('div', { class: 'gr-block' },
+    h('h4', {}, t('Por tema')),
+    h('ul', { class: 'gr-topics' }, g.topics.map((tp) => h('li', {},
+      h('button', { class: 'gr-what', type: 'button', onclick: () => openGrade({ topic: tp.topic, kind: 'quiz' }) },
+        h('strong', {}, tp.title),
+        h('small', {}, [t('última {n}', { n: tp.last }), t('mejor {n}', { n: tp.best }), tn(tp.attempts, '{n} intento', '{n} intentos')].join(' · '))),
+      tp.passed
+        ? h('span', { class: 'gr-status ok' }, icon('check'), t('Aprobado'))
+        : h('span', { class: 'gr-status' }, icon('clock'), t('Aún no'))))));
 }
 
 /* ---------- Practicar & Collectible FSRS Flashcards ---------- */

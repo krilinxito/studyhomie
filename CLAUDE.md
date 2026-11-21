@@ -29,7 +29,7 @@ Para probarla a mano: `studyhomie init --provider claude-cli` en una carpeta tem
 | `internal/provider/*`, `internal/providers` | Backends de IA intercambiables (Claude CLI, Codex, APIs, modelos locales) y su catálogo. |
 | `internal/web` | Servidor HTTP + SSE (`run.go`: un flujo principal —chat, roadmap…— y, al lado, varias prácticas; eventos `out`/`ask`/`card`/`done`), prácticas (`practice.go`), límite de llamadas a la IA (`slots.go`), API JSON (`server.go`, `settings.go`, `updates.go`…) y frontend en `static/`. |
 | `internal/viz` | Valida y limpia los widgets ` ```viz ` de las guías, el registro de librerías (`three`, `tone`, `jsxgraph`, `katex`, `leaflet`, `matter`, `p5`) y la validación HTML de los widgets interactivos. |
-| `internal/stats` | Gamificación por vault (`vault/.studyhomie/stats.json`): eventos de XP, racha diaria con congeladores, calendario de 18 semanas y progreso por área. |
+| `internal/stats` | Gamificación por vault (`vault/.studyhomie/stats.json`): eventos de XP, racha diaria con congeladores, calendario de 18 semanas, progreso por área y calificaciones (`grades.go`: `Grades` filtra quiz/Feynman por tema, área, tipo y fechas; `GET /api/stats/grades`). |
 | `internal/cards` | Flashcards coleccionables por rareza (`vault/flashcards/*.md`, compatible con Obsidian *Spaced Repetition*), planificador FSRS-4.5 e import/export Anki (TSV). |
 | `internal/update` | Autoactualización desde GitHub Releases. |
 | `internal/config` | `studyhomie.toml` (`Default()` tiene los valores por defecto). |

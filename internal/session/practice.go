@@ -278,7 +278,14 @@ func (s *Session) quizFrom(ctx context.Context, p *Practice) error {
 	}
 	p.Seconds = base + elapsed()
 	p.Score = score
-	ev := stats.Event{Kind: stats.KindQuiz, Topic: slug, Title: title, Area: area, Score: score, Seconds: p.Seconds, Practice: p.ID}
+	correct := 0
+	for _, r := range g.Results {
+		if r.Correct {
+			correct++
+		}
+	}
+	ev := stats.Event{Kind: stats.KindQuiz, Topic: slug, Title: title, Area: area, Score: score, Seconds: p.Seconds, Practice: p.ID,
+		Difficulty: p.Difficulty, Correct: correct, Questions: len(p.Questions)}
 	p.Outcome = OutcomeDone
 	if partial {
 		p.Outcome = OutcomePartial

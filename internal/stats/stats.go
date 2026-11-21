@@ -59,6 +59,10 @@ type Event struct {
 	// change the topic's mastery.
 	Partial  bool   `json:"partial,omitempty"`
 	Practice string `json:"practice,omitempty"` // id of the practice session it came from
+	// A quiz also keeps how it went: its difficulty, and how many questions it had and got right.
+	Difficulty string `json:"difficulty,omitempty"`
+	Correct    int    `json:"correct,omitempty"`
+	Questions  int    `json:"questions,omitempty"`
 }
 
 // Data is what gets persisted to vault/.studyhomie/stats.json.
@@ -80,11 +84,12 @@ type AreaStat struct {
 
 // CalendarDay is one cell in the activity heatmap.
 type CalendarDay struct {
-	Date   string `json:"date"`
-	XP     int    `json:"xp"`
-	Level  int    `json:"level"` // 0..4
-	Frozen bool   `json:"frozen,omitempty"`
-	Events int    `json:"events"`
+	Date   string     `json:"date"`
+	XP     int        `json:"xp"`
+	Level  int        `json:"level"` // 0..4
+	Frozen bool       `json:"frozen,omitempty"`
+	Events int        `json:"events"`
+	Grades []DayGrade `json:"grades,omitempty"` // the quizzes and explanations graded that day
 }
 
 // Summary is the full gamification snapshot served by GET /api/stats.
@@ -301,6 +306,7 @@ func Compute(d Data, notes []vault.Note, concepts []vault.Concept, dailyGoal, pa
 	// Bucket events by date and accumulate totals & area metrics.
 	dayXP := map[string]int{}
 	dayEvents := map[string]int{}
+	dayGrades := map[string][]DayGrade{}
 	type areaAcc struct {
 		xp           int
 		seconds      int
@@ -335,6 +341,10 @@ func Compute(d Data, notes []vault.Note, concepts []vault.Concept, dailyGoal, pa
 		}
 		dayXP[date] += ev.XP
 		dayEvents[date]++
+		if IsGrade(ev) {
+			g := gradeOf(ev)
+			dayGrades[date] = append(dayGrades[date], DayGrade{Kind: g.Kind, Title: g.Title, Score: g.Score, Partial: g.Partial})
+		}
 		totalXP += ev.XP
 		sec := ev.Seconds
 		if sec <= 0 {
@@ -458,6 +468,7 @@ func Compute(d Data, notes []vault.Note, concepts []vault.Concept, dailyGoal, pa
 			Level:  heatLevel(xp, goal),
 			Frozen: frozenDays[ds],
 			Events: dayEvents[ds],
+			Grades: dayGrades[ds],
 		})
 	}
 

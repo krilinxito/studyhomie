@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -71,5 +72,25 @@ func TestStatsEndpointAndReadDeduplication(t *testing.T) {
 	json.Unmarshal(body, &sum)
 	if !sum.TutorialSeen {
 		t.Error("tutorialSeen should be true after POST /api/tutorial/seen")
+	}
+}
+
+func TestGradesEndpoint(t *testing.T) {
+	s, ts := newTestServer(t, &scripted{})
+	at := s.Now()
+	for _, ev := range []stats.Event{
+		{At: at, Kind: stats.KindQuiz, Topic: "bayes", Title: "Bayes", Score: 80, Difficulty: "media", Correct: 4, Questions: 5},
+		{At: at, Kind: stats.KindFeynman, Topic: "bayes", Title: "Bayes", Score: 60, Partial: true},
+	} {
+		if _, err := stats.Record(s.V.Root, ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, body := do(t, ts, "GET", "/api/stats/grades?kind=quiz", nil, nil)
+	if res.StatusCode != 200 || !strings.Contains(string(body), `"count":1`) || !strings.Contains(string(body), `"correct":4`) || !strings.Contains(string(body), `"passScore":70`) {
+		t.Fatalf("grades: %d %s", res.StatusCode, body)
+	}
+	if res, _ := do(t, ts, "GET", "/api/stats/grades?from=ayer", nil, nil); res.StatusCode != 400 {
+		t.Errorf("a bad date must be 400, got %d", res.StatusCode)
 	}
 }
