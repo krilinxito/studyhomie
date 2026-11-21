@@ -323,7 +323,7 @@ func (s *Server) note(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, 200, map[string]any{
 			"slug": slug, "kind": "guide", "meta": n.Meta, "body": n.Body,
-			"backlinks": s.refs(back), "requires": s.refs(n.Meta.Requires), "concepts": notes, "hasSimulation": simErr == nil, "apunte": s.vault().HasApunte(slug),
+			"backlinks": s.refs(back), "requires": s.refs(n.Meta.Requires), "concepts": notes, "activities": vault.ParseActivities(n.Body), "hasSimulation": simErr == nil, "apunte": s.vault().HasApunte(slug),
 		})
 		return
 	}

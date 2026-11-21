@@ -1228,13 +1228,16 @@ function renderReader(n) {
       h('button', { class: 'btn small ghost', type: 'button', onclick: () => askAbout(t('Sobre «{title}»:', { title }) + ' ') }, icon('message-circle'), t('Preguntar')))));
 
   const article = h('article', { class: 'r-article' });
-  const bodySrc = stripEmoji(stripSection(stripSection(n.body, 'Recursos'), 'Material')).trim();
+  const bodySrc = stripEmoji(stripSection(stripSection(stripSection(n.body, 'Recursos'), 'Material'), 'Actividades')).trim();
   if (bodySrc) {
     const md = mdBlock(bodySrc, { viz: vizCtx(n.slug) });
     for (const hd of $$('h2', md)) hd.textContent = SECTION[sectionKey(hd.textContent)] || hd.textContent;
     article.append(md);
   } else {
     article.append(h('p', { class: 'r-empty' }, t('Esta nota aún no tiene guía. Pídela en el chat.')));
+  }
+  if (status !== 'new' || (n.activities && n.activities.length)) {
+    article.append(activitiesSection(n, { inPractice: false }));
   }
   const mats = m.materials || [];
   if (mats.length) {
@@ -2179,6 +2182,160 @@ const RARITY_LABEL = {
 const RARITY_XP = { common: 5, rare: 8, epic: 12, legendary: 18 };
 const CARDS = { data: null, scope: 'guide', revealed: false, busy: false, expanded: null };
 
+/* ---------- Practical Activities (checklist in note + optional AI feedback) ---------- */
+const ACT_LEVEL = { easy: t('Fácil'), medium: t('Media'), challenge: t('Reto') };
+const ACTS = { busySlug: '', openKey: '', sendingKey: '', drafts: {} };
+
+function syncActivities(slug, list) {
+  if (!S.note || S.note.slug !== slug) return;
+  S.note.activities = list || [];
+  renderReader(S.note);
+  renderPractice();
+}
+
+async function generateActivitiesFor(slug, { silent = false } = {}) {
+  if (!slug || ACTS.busySlug === slug) return;
+  ACTS.busySlug = slug;
+  if (S.note && S.note.slug === slug) { renderReader(S.note); renderPractice(); }
+  try {
+    const r = await api(`/api/notes/${encodeURIComponent(slug)}/activities`, { method: 'POST', body: {} });
+    const list = r.activities || [];
+    syncActivities(slug, list);
+    if (!silent) toast(tn(list.length, 'Se generó {n} actividad práctica.', 'Se generaron {n} actividades prácticas.'));
+  } catch (err) {
+    if (!silent) toast(err.message);
+  } finally {
+    if (ACTS.busySlug === slug) ACTS.busySlug = '';
+    if (S.note && S.note.slug === slug) { renderReader(S.note); renderPractice(); }
+  }
+}
+
+function activitiesSection(n, { inPractice = false } = {}) {
+  const list = n.activities || [];
+  const doneCount = list.filter((a) => a.done).length;
+  const busy = ACTS.busySlug === n.slug;
+  const cls = inPractice ? 'p-card act-sec' : 'r-activities act-sec';
+
+  const genBtn = h('button', {
+    class: `btn small${list.length ? ' ghost' : ' primary'}`, type: 'button', disabled: busy,
+    onclick: () => generateActivitiesFor(n.slug),
+  }, icon('sparkles'), busy ? t('Proponiendo actividades…') : list.length ? t('Regenerar actividades') : t('Proponer actividades'));
+
+  const head = h('div', { class: 'act-head' },
+    h('div', { class: 'act-title' },
+      inPractice ? h('h3', {}, t('Actividades prácticas')) : h('h2', {}, t('Actividades prácticas')),
+      list.length ? h('span', { class: 'chip act-prog' }, t('{done} de {total} hechas', { done: doneCount, total: list.length })) : null),
+    genBtn);
+
+  if (list.length === 0) {
+    return h('section', { class: cls },
+      head,
+      h('p', { class: 'hint' }, t('Propón 3–5 ejercicios prácticos, experimentos o mini-proyectos graduados para poner este tema a prueba. Se guardan como checklist en tu nota.')));
+  }
+
+  const updateItem = async (idx, payload, key) => {
+    ACTS.sendingKey = key;
+    if (S.note && S.note.slug === n.slug) { renderReader(S.note); renderPractice(); }
+    try {
+      const r = await api(`/api/notes/${encodeURIComponent(n.slug)}/activities/${idx}`, { method: 'POST', body: payload });
+      const all = r.activities || [];
+      if (payload.wantFeedback) ACTS.openKey = '';
+      delete ACTS.drafts[key];
+      syncActivities(n.slug, all);
+      loadStats();
+      const allDone = all.length > 0 && all.every((a) => a.done);
+      if (r.xpGained > 0) {
+        toast(allDone
+          ? t('¡Todas las actividades completadas! +{xp} XP', { xp: r.xpGained })
+          : t('¡Actividad completada! +{xp} XP', { xp: r.xpGained }));
+        flashNarval(allDone ? 'celebrando' : 'feliz', 5000);
+      } else if (payload.wantFeedback) {
+        toast(t('Feedback guardado.'));
+      } else if (payload.submission) {
+        toast(t('Resultado guardado.'));
+      }
+    } catch (err) {
+      toast(err.message);
+    } finally {
+      if (ACTS.sendingKey === key) ACTS.sendingKey = '';
+      if (S.note && S.note.slug === n.slug) { renderReader(S.note); renderPractice(); }
+    }
+  };
+
+  const itemsEl = h('ul', { class: 'act-list' }, list.map((a) => {
+    const key = `${n.slug}:${a.index}`;
+    const lvl = a.level || 'medium';
+    const isOpen = ACTS.openKey === key;
+    const sending = ACTS.sendingKey === key;
+
+    let drawer = null;
+    if (isOpen) {
+      const ta = h('textarea', {
+        class: 'act-input', rows: 3,
+        placeholder: t('Pega aquí lo que observaste, tu cálculo, código o conclusión…'),
+        oninput: (e) => { ACTS.drafts[key] = e.target.value; },
+      });
+      ta.value = ACTS.drafts[key] ?? a.submission ?? '';
+      drawer = h('div', { class: 'act-drawer' },
+        ta,
+        h('div', { class: 'actions' },
+          h('button', {
+            class: 'btn small primary', type: 'button', disabled: sending,
+            onclick: () => {
+              const sub = ta.value.trim();
+              if (!sub) { ta.focus(); return; }
+              updateItem(a.index, { done: true, submission: sub, wantFeedback: true }, key);
+            },
+          }, icon('sparkles'), sending ? t('Evaluando…') : t('Guardar y pedir feedback')),
+          h('button', {
+            class: 'btn small', type: 'button', disabled: sending,
+            onclick: () => {
+              const sub = ta.value.trim();
+              ACTS.openKey = '';
+              updateItem(a.index, { done: true, submission: sub, wantFeedback: false }, key);
+            },
+          }, t('Solo guardar')),
+          h('button', {
+            class: 'btn small ghost', type: 'button', disabled: sending,
+            onclick: () => { ACTS.openKey = ''; renderReader(n); renderPractice(); },
+          }, t('Cancelar'))));
+    }
+
+    return h('li', { class: `act-item lvl-${lvl}${a.done ? ' done' : ''}` },
+      h('div', { class: 'act-row' },
+        h('button', {
+          class: `act-check${a.done ? ' checked' : ''}`, type: 'button', disabled: sending,
+          role: 'checkbox', 'aria-checked': String(!!a.done),
+          'aria-label': a.title || a.prompt,
+          onclick: () => updateItem(a.index, { done: !a.done }, key),
+        }, a.done ? '✓' : ''),
+        h('div', { class: 'act-body' },
+          h('div', { class: 'act-meta' },
+            h('span', { class: `act-lvl lvl-${lvl}` }, ACT_LEVEL[lvl] || lvl),
+            a.kind ? h('span', { class: 'act-kind' }, a.kind) : null,
+            h('span', { class: 'act-xp' }, `+${a.xp || 20} XP`)),
+          h('strong', { class: 'act-name' }, a.title),
+          a.prompt && a.prompt !== a.title ? h('p', { class: 'act-prompt' }, mdInline(a.prompt)) : null),
+        h('button', {
+          class: 'btn small ghost act-reply-btn', type: 'button', disabled: sending,
+          onclick: () => {
+            ACTS.openKey = isOpen ? '' : key;
+            renderReader(n);
+            renderPractice();
+          },
+        }, icon('message-circle'), a.submission ? t('Editar resultado') : t('Enviar resultado'))),
+      a.submission ? h('div', { class: 'act-note act-sub' },
+        h('span', { class: 'act-note-lbl' }, t('Tu resultado')),
+        mdBlock(a.submission)) : null,
+      a.feedback ? h('div', { class: 'act-note act-fb' },
+        h('span', { class: 'act-note-lbl' }, icon('sparkles'), t('Feedback de la IA')),
+        mdBlock(a.feedback)) : null,
+      drawer);
+  }));
+
+  return h('section', { class: cls }, head, itemsEl);
+}
+
 function fmtInterval(mins) {
   if (!mins || mins < 60) return t('{m} min', { m: Math.max(1, Math.round(mins || 10)) });
   if (mins < 60 * 24) return t('{h} h', { h: Math.round(mins / 60) });
@@ -2217,6 +2374,7 @@ function renderPractice() {
     h('ol', { class: 'sequence', 'aria-label': t('Cómo afianzarlo') }, steps.map((s, i) => h('li', {},
       h('span', { class: `step${i === current ? ' go' : ''}`, 'data-state': s.done ? 'done' : i === current ? 'current' : 'todo' }, h('span', { class: 'step-n' }, s.done ? '✓' : String(i + 1)), s.label)))),
     fcHost,
+    activitiesSection(n, { inPractice: true }),
     h('section', { class: 'p-card' },
       h('h3', {}, t('Preguntas')),
       h('p', { class: 'hint' }, t('Piden razonar o predecir, no memorizar. Se corrigen al final y el resultado queda en la guía.')),
@@ -3057,7 +3215,12 @@ function renderCard(c, run) {
           h('button', { class: 'btn small', type: 'button', onclick: async () => { await openNote(c.slug, { quiet: true }); show('concepts'); } }, icon('mountain-snow'), t('Ver el iceberg')))));
       if (!run.replay) {
         flashNarval('celebrando', 7000);
-        loadGraph().catch(() => {}).then(() => openNote(c.slug));
+        loadGraph().catch(() => {}).then(async () => {
+          await openNote(c.slug);
+          if (S.note && S.note.slug === c.slug && !(S.note.activities && S.note.activities.length)) {
+            generateActivitiesFor(c.slug, { silent: true });
+          }
+        });
       }
       break;
     case 'roadmap': {

@@ -161,6 +161,7 @@ var headings = map[string][]string{
 	"Feynman":        {"Feynman", "Feynman", "Feynman", "费曼讲解", "Feynman"},
 	"Recursos":       {"Recursos", "Resources", "Ressources", "资源", "Recursos"},
 	"Material":       {"Material", "Material", "Matériel", "学习资料", "Material"},
+	"Actividades":    {"Actividades", "Activities", "Activités", "实践活动", "Atividades"},
 	"Aparece en":     {"Aparece en", "Appears in", "Apparaît dans", "出现于", "Aparece em"},
 	"Alcance":        {"Alcance", "Scope", "Portée", "范围", "Escopo"},
 	"Cómo avanzar":   {"Cómo avanzar", "How to move on", "Comment avancer", "如何推进", "Como avançar"},

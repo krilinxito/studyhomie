@@ -140,6 +140,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/notes/{slug}/viz", s.vizPage)
 	mux.HandleFunc("POST /api/notes/{slug}/explain", s.explain)
 	mux.HandleFunc("POST /api/notes/{slug}/dig", s.dig)
+	mux.HandleFunc("POST /api/notes/{slug}/activities", s.generateActivities)
+	mux.HandleFunc("POST /api/notes/{slug}/activities/{index}", s.updateActivity)
 	mux.HandleFunc("GET /api/vaults", s.vaults)
 	mux.HandleFunc("POST /api/vaults", s.addVault)
 	mux.HandleFunc("POST /api/vaults/use", s.useVault)
