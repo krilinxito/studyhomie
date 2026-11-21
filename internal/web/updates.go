@@ -179,7 +179,7 @@ func (s *Server) autoUpdate(ctx context.Context) {
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	st := s.Updater.Check(cctx, false)
 	cancel()
-	if mode != update.ModeAuto || !st.Available || st.Staged || st.Skipped {
+	if mode != update.ModeAuto || !st.Available || st.Staged || st.Skipped || st.Manager != "" {
 		return
 	}
 	ictx, cancel := context.WithTimeout(ctx, 10*time.Minute)

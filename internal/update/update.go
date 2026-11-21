@@ -97,6 +97,10 @@ type Status struct {
 	Staged    bool      `json:"staged"`  // already installed: it applies when the app restarts
 	Checked   time.Time `json:"checked,omitempty"`
 	Error     string    `json:"error,omitempty"`
+	// Manager is the package manager that installed this binary (Scoop, Homebrew…): it owns the
+	// updates, so the app tells the user Upgrade, the command to run, instead of installing.
+	Manager string `json:"manager,omitempty"`
+	Upgrade string `json:"upgrade,omitempty"`
 }
 
 type Updater struct {
@@ -109,6 +113,8 @@ type Updater struct {
 	GOARCH    string
 	Client    *http.Client
 	Now       func() time.Time
+	Manager   string // see Managed
+	Upgrade   string
 
 	mu     sync.Mutex
 	st     state
@@ -129,7 +135,26 @@ func New(current, exe string) *Updater {
 	if dir, err := os.UserConfigDir(); err == nil {
 		u.StatePath = filepath.Join(dir, "studyhomie", "update.json")
 	}
+	u.Manager, u.Upgrade = Managed(exe)
 	return u
+}
+
+// Managed tells whether exe was installed by a package manager, which then owns its updates:
+// it returns the manager's name and the command that updates it, or "" when the binary is the
+// user's own (go install, the install script, a downloaded zip).
+func Managed(exe string) (manager, upgrade string) {
+	p := strings.ToLower(strings.ReplaceAll(exe, `\`, "/"))
+	switch {
+	case strings.Contains(p, "/scoop/apps/"):
+		return "Scoop", "scoop update studyhomie"
+	case strings.Contains(p, "/chocolatey/lib/"):
+		return "Chocolatey", "choco upgrade studyhomie"
+	case strings.Contains(p, "/cellar/"), strings.Contains(p, "/homebrew/"), strings.Contains(p, "/linuxbrew/"):
+		return "Homebrew", "brew upgrade studyhomie"
+	case strings.Contains(p, "/node_modules/"):
+		return "npm", "npm install -g studyhomie@latest"
+	}
+	return "", ""
 }
 
 // Enabled reports whether this build can update itself: development builds cannot.
@@ -170,7 +195,7 @@ func (u *Updater) Status() Status {
 }
 
 func (u *Updater) status() Status {
-	s := Status{Current: u.Current, Enabled: Valid(u.Current), Checked: u.st.Checked}
+	s := Status{Current: u.Current, Enabled: Valid(u.Current), Checked: u.st.Checked, Manager: u.Manager, Upgrade: u.Upgrade}
 	r := u.st.Latest
 	if !s.Enabled || r == nil {
 		return s
@@ -278,6 +303,10 @@ func (u *Updater) Install(ctx context.Context) (string, error) {
 	if !st.Enabled {
 		u.mu.Unlock()
 		return "", errors.New("esta es una compilación de desarrollo: no se actualiza sola")
+	}
+	if u.Manager != "" {
+		u.mu.Unlock()
+		return "", fmt.Errorf("instalaste StudyHomie con %s: actualízalo con «%s»", u.Manager, u.Upgrade)
 	}
 	if st.Staged {
 		u.mu.Unlock()

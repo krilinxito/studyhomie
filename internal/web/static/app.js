@@ -856,11 +856,23 @@ function drawUpdateBar() {
   const show = !!st && st.enabled && st.available && !st.skipped && st.mode !== 'never' && !laterFor(st.latest);
   $('#update-bar').hidden = !show || UPD.busy;
   if (!show) return;
+  const managed = !!st.manager && !st.staged;
   $('#update-text').replaceChildren(st.staged
     ? h('span', {}, h('strong', {}, t('StudyHomie {version} ya está instalado.', { version: st.latest })), ' ', t('Se usa al reiniciar.'))
-    : h('span', {}, h('strong', {}, t('Hay una versión nueva')), ' ' + t('({latest}). Tienes la {current}.', { latest: st.latest, current: st.current })));
-  $('#update-go span').textContent = st.staged ? t('Reiniciar ahora') : t('Actualizar');
-  $('#update-go use').setAttribute('href', `icons.svg#i-${st.staged ? 'refresh-cw' : 'download'}`);
+    : h('span', {}, h('strong', {}, t('Hay una versión nueva')), ' ' + t('({latest}). Tienes la {current}.', { latest: st.latest, current: st.current }),
+      managed ? [' ', t('Instalaste StudyHomie con {manager}; actualízalo con', { manager: st.manager }), ' ', h('code', {}, st.upgrade)] : null));
+  $('#update-go span').textContent = st.staged ? t('Reiniciar ahora') : managed ? t('Copiar comando') : t('Actualizar');
+  $('#update-go use').setAttribute('href', `icons.svg#i-${st.staged ? 'refresh-cw' : managed ? 'copy' : 'download'}`);
+}
+
+// installed with Scoop, Homebrew, Chocolatey or npm: that manager updates it, so the app hands over its command
+async function copyUpgrade() {
+  const cmd = UPD.st && UPD.st.upgrade;
+  if (!cmd) return;
+  try {
+    await navigator.clipboard.writeText(cmd);
+    toast(t('Comando copiado: pégalo en una terminal.'));
+  } catch { toast(cmd); }
 }
 
 function fmtDay(iso) {
@@ -905,7 +917,9 @@ function updateFoot(state = {}) {
     st.staged ? null : btn('ghost', t('Omitir esta versión'), skipUpdate),
     h('span', { class: 'spacer' }),
     btn('', t('Más tarde'), () => { setLater(st.latest); drawUpdateBar(); $('#update-dialog').close(); }),
-    btn('primary', st.staged ? t('Reiniciar ahora') : t('Actualizar'), () => installUpdate(), st.staged ? 'refresh-cw' : 'download')));
+    st.manager && !st.staged
+      ? btn('primary', t('Copiar comando'), copyUpgrade, 'copy')
+      : btn('primary', st.staged ? t('Reiniciar ahora') : t('Actualizar'), () => installUpdate(), st.staged ? 'refresh-cw' : 'download')));
 }
 
 async function skipUpdate() {
@@ -920,6 +934,7 @@ async function skipUpdate() {
 async function installUpdate(force = false) {
   const st = UPD.st;
   if (!st || UPD.busy) return;
+  if (st.manager && !st.staged) { copyUpgrade(); return; }
   openUpdateDialog();
   UPD.busy = true;
   drawUpdateBar();

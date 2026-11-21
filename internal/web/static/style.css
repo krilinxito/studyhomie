@@ -143,6 +143,7 @@ body {
 .update-bar > span { flex: 1; min-width: 0; }
 .update-bar > .ic { color: var(--accent); flex: none; }
 .update-bar[hidden] { display: none; }
+.update-bar code { font: 12.5px var(--mono); padding: 1px 6px; border-radius: 6px; background: var(--surface); white-space: nowrap; }
 @media (max-width: 640px) { .update-bar { flex-wrap: wrap; } .update-bar > span { flex-basis: calc(100% - 30px); } }
 #update-dialog { width: min(620px, 94vw); max-height: min(640px, 88vh); padding: 0; border: 0; border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--shadow-lg); overflow: hidden; }
 #update-dialog[open] { display: flex; flex-direction: column; animation: pop .25s var(--ease); }
