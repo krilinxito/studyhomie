@@ -459,50 +459,84 @@ li[data-state="locked"] .rm-step { opacity: .75; }
 .explain-pop p { margin: 0 0 12px; color: var(--muted); font-size: 14px; }
 
 /* Conceptos: the iceberg */
-.concepts-wrap { width: min(860px, 100%); margin: 0 auto; padding: 22px 24px 64px; }
-.c-head { margin-bottom: 18px; }
-.c-head h2 { margin: 0 0 4px; font-size: 24px; line-height: 1.15; letter-spacing: -.03em; }
-/* the iceberg: pills laid out by level, drawn over an svg of sky, ice and water (drawBerg) */
-.berg { position: relative; border-radius: var(--r-lg); overflow: hidden; background: var(--water-1); box-shadow: inset 0 0 0 1px var(--line); isolation: isolate; }
+.concepts-wrap { width: min(860px, 100%); margin: 0 auto; padding: 20px 22px 56px; }
+.c-head { margin-bottom: 14px; }
+.c-head h2 { margin: 0 0 3px; font-size: 23px; line-height: 1.15; letter-spacing: -.03em; }
+/* compact illustrated iceberg: smooth ocean depth gradient, faceted ice, sleek uniform concept chips */
+.berg { position: relative; border-radius: var(--r-lg); overflow: hidden; background: var(--water-1); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--line) 85%, transparent), var(--shadow-sm); isolation: isolate; }
 .berg-art { position: absolute; inset: 0; z-index: -1; pointer-events: none; }
-.berg-body { fill: var(--ice); fill-opacity: .2; stroke: var(--ice); stroke-opacity: .35; stroke-width: 1; stroke-linejoin: round; }
-.berg-peak { fill: var(--ice); stroke: var(--water-3); stroke-opacity: .55; stroke-width: 1.5; stroke-linejoin: round; filter: drop-shadow(0 2px 6px rgba(60, 30, 110, .18)); }
-.berg-wave { fill: none; stroke: var(--water-2); stroke-width: 2; stroke-linecap: round; opacity: .9; animation: berg-wave 7s linear infinite; }
-.berg-edges path { fill: none; stroke: #ffffff; stroke-opacity: .45; stroke-width: 1.5; transition: stroke-opacity .2s, stroke-width .2s; }
-.berg-edges path.pend { stroke-dasharray: 3 4; stroke-opacity: .35; }
-.berg-edges path.hot { stroke-opacity: .95; stroke-width: 2.5; }
-.berg-tip { display: flex; justify-content: center; padding: 30px 16px 0; }
-.berg-tip .tip { max-width: min(80%, 420px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 10px 26px 12px; color: #2a1f4a; font-weight: 700; font-size: 15px; letter-spacing: -.01em; }
-.berg-levels { list-style: none; margin: 0; padding: 14px 14px 6px; display: flex; flex-direction: column; gap: 22px; }
-/* text on the water: dark near the surface of a light sea, white deeper down (and always in the dark theme) */
-.berg-level { --lvl-ink: var(--ice-ink-top); width: min(100%, calc(58% + var(--l, 1) * 12%)); min-width: min(100%, 300px); margin-inline: auto; color: var(--lvl-ink); text-align: center; }
-.berg-level.deep { --lvl-ink: #ffffff; }
-.berg-level h3 { margin: 0 0 8px; display: flex; justify-content: center; align-items: baseline; gap: 8px; font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .08em; color: var(--lvl-ink); }
-.berg-level h3 small { font-weight: 500; text-transform: none; letter-spacing: 0; opacity: .75; }
+.berg-body { stroke: var(--ice); stroke-opacity: .32; stroke-width: 1; stroke-linejoin: round; }
+.berg-facet { stroke: none; }
+.berg-peak { fill: var(--ice); stroke: color-mix(in srgb, var(--water-3) 50%, transparent); stroke-width: 1.25; stroke-linejoin: round; filter: drop-shadow(0 3px 10px rgba(42, 24, 88, .16)); }
+.berg-peak-lit { fill: #ffffff; fill-opacity: .55; }
+.berg-peak-shade { fill: var(--water-2); fill-opacity: .22; }
+.berg-divider { stroke: #ffffff; stroke-opacity: .14; stroke-width: 1; stroke-dasharray: 4 6; }
+.berg-wave { fill: none; stroke: color-mix(in srgb, var(--ice) 80%, var(--water-2)); stroke-width: 2; stroke-linecap: round; opacity: .82; animation: berg-wave 8s linear infinite; }
+.berg-edges path { fill: none; stroke: #ffffff; stroke-opacity: .18; stroke-width: 1.3; transition: stroke-opacity .18s, stroke-width .18s, stroke .18s; }
+.berg-edges path.pend { stroke-dasharray: 3 4; stroke-opacity: .14; }
+.berg-edges path.hot { stroke: #ffffff; stroke-opacity: .95; stroke-width: 2.2; filter: drop-shadow(0 0 4px rgba(255, 255, 255, .45)); }
+.berg-tip { display: flex; justify-content: center; padding: 30px 16px 6px; }
+.berg-tip .tip { max-width: min(84%, 440px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 8px 22px 10px; color: #241947; font-weight: 750; font-size: 14.5px; letter-spacing: -.015em; cursor: default; }
+.berg-levels { list-style: none; margin: 0; padding: 12px 18px 6px; display: flex; flex-direction: column; gap: 14px; }
+.berg-level { --lvl-ink: var(--ice-ink-top); width: min(100%, calc(78% + var(--l, 1) * 8%)); margin-inline: auto; color: var(--lvl-ink); text-align: center; }
+.berg-level.deep { --lvl-ink: #f6f3ff; }
+.berg-level h3 { margin: 0 0 7px; display: flex; justify-content: center; align-items: center; gap: 7px; font-size: 10.5px; font-weight: 650; text-transform: uppercase; letter-spacing: .07em; color: var(--lvl-ink); opacity: .92; }
+.berg-level h3 .lvl-tag { padding: 1px 6px; border-radius: 99px; font: 700 10px var(--mono); background: color-mix(in srgb, var(--lvl-ink) 14%, transparent); border: 1px solid color-mix(in srgb, var(--lvl-ink) 24%, transparent); letter-spacing: .04em; }
+.berg-level h3 small { font-weight: 550; text-transform: none; letter-spacing: 0; opacity: .78; padding: 1px 7px; border-radius: 99px; background: color-mix(in srgb, var(--lvl-ink) 10%, transparent); }
 .berg-level .ice-pills { justify-content: center; }
-/* opaque on its band of water, so the lines behind do not cross the text */
-.berg-level .ice-pill.pending { background: color-mix(in srgb, var(--lvl-ink) 9%, var(--water)); }
-.berg-floor { --lvl-ink: #ffffff; display: flex; justify-content: center; padding: 26px 16px 34px; color: var(--lvl-ink); }
-.dig-box { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
-.dig-box small { font-size: 12px; opacity: .8; max-width: 42ch; }
-.berg-floor .btn.dig { background: rgba(255, 255, 255, .14); color: #fff; border-color: rgba(255, 255, 255, .45); backdrop-filter: blur(2px); }
-.berg-floor .btn.dig:hover:not(:disabled) { background: rgba(255, 255, 255, .26); }
+.berg-floor { --lvl-ink: #ffffff; display: flex; justify-content: center; padding: 14px 16px 20px; color: var(--lvl-ink); }
+.dig-box { display: flex; flex-direction: column; align-items: center; gap: 5px; text-align: center; }
+.dig-box small { font-size: 11.5px; opacity: .75; max-width: 44ch; }
+.berg-floor .btn.dig { background: rgba(255, 255, 255, .14); color: #fff; border-color: rgba(255, 255, 255, .36); backdrop-filter: blur(6px); }
+.berg-floor .btn.dig:hover:not(:disabled) { background: rgba(255, 255, 255, .24); border-color: rgba(255, 255, 255, .6); }
 .btn.dig.working .ic { animation: spin 1s linear infinite; }
 .panel-empty .dig-box { margin-top: 12px; }
-.ice-pills { display: flex; flex-wrap: wrap; gap: 8px; }
-.ice-pill { display: inline-flex; flex-direction: column; align-items: flex-start; max-width: 100%; text-align: left; font: inherit; cursor: pointer; padding: 7px 12px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, .55); background: rgba(255, 255, 255, .92); color: #2a1f4a; box-shadow: 0 2px 8px rgba(40, 20, 70, .18); transition: transform .2s var(--ease), box-shadow .2s, background-color .3s, color .3s; animation: rise .4s var(--ease) both; animation-delay: calc(var(--i, 0) * 40ms); }
-.ice-pill:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(40, 20, 70, .28); }
-.ice-pill strong { font-size: 14px; font-weight: 650; }
-.ice-pill small { font-size: 12px; opacity: .75; line-height: 1.35; max-width: 34ch; }
-.ice-pill.pending { background: color-mix(in srgb, var(--lvl-ink) 8%, transparent); border: 1.5px dashed color-mix(in srgb, var(--lvl-ink) 50%, transparent); color: var(--lvl-ink); box-shadow: none; }
-.ice-pill.pending .go { margin-top: 5px; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; padding: 2px 8px; border-radius: 99px; background: color-mix(in srgb, var(--lvl-ink) 16%, transparent); transition: background-color .15s; }
-.ice-pill.pending:hover .go { background: #fff; color: #2a1f4a; }
-.ice-pill .shared { margin-top: 4px; font-size: 11px; font-weight: 600; opacity: .7; }
+
+/* compact uniform concept chips */
+.ice-pills { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
+.ice-pill { display: inline-flex; align-items: center; gap: 7px; max-width: 100%; min-height: 34px; text-align: left; font: inherit; cursor: pointer; padding: 5px 11px; border-radius: 10px; border: 1px solid rgba(124, 95, 211, .24); background: rgba(255, 255, 255, .94); color: #241947; box-shadow: 0 2px 6px rgba(42, 24, 88, .12), inset 0 1px 0 rgba(255, 255, 255, .9); transition: transform .16s var(--ease), box-shadow .16s, border-color .16s, background-color .16s, opacity .16s; animation: rise .35s var(--ease) both; animation-delay: calc(var(--i, 0) * 28ms); }
+.ice-pill:hover, .ice-pill:focus-visible { transform: translateY(-2px); border-color: var(--accent); box-shadow: 0 6px 16px rgba(42, 24, 88, .22), 0 0 0 2px color-mix(in srgb, var(--accent) 26%, transparent); outline: none; }
+.ice-pill.rel { border-color: rgba(255, 255, 255, .9); box-shadow: 0 0 0 2px rgba(255, 255, 255, .38), 0 4px 12px rgba(42, 24, 88, .18); }
+.ice-pill.dim { opacity: .48; }
+.ice-pill .ice-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--s-explained); box-shadow: 0 0 0 2px color-mix(in srgb, var(--s-explained) 24%, transparent); }
+.ice-pill strong { font-size: 13px; font-weight: 620; line-height: 1.25; white-space: nowrap; max-width: 24ch; overflow: hidden; text-overflow: ellipsis; }
+.ice-pill .shared { font: 650 10.5px var(--mono); padding: 1px 5px; border-radius: 99px; background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); flex: none; }
+.ice-pill.pending { background: color-mix(in srgb, var(--lvl-ink) 8%, color-mix(in srgb, var(--water) 78%, transparent)); border: 1.25px dashed color-mix(in srgb, var(--lvl-ink) 52%, transparent); color: var(--lvl-ink); box-shadow: none; backdrop-filter: blur(6px); }
+.ice-pill.pending .ice-dot { background: transparent; border: 1.5px solid currentColor; box-shadow: none; opacity: .75; }
+.ice-pill.pending .shared { background: color-mix(in srgb, var(--lvl-ink) 14%, transparent); color: inherit; }
+.ice-pill.pending .go { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font: 700 13px/1 var(--mono); flex: none; background: color-mix(in srgb, var(--lvl-ink) 16%, transparent); color: inherit; transition: background-color .15s, color .15s, transform .15s; }
+.ice-pill.pending:hover, .ice-pill.pending:focus-visible { background: color-mix(in srgb, var(--lvl-ink) 16%, color-mix(in srgb, var(--water) 70%, transparent)); border-style: solid; border-color: color-mix(in srgb, var(--lvl-ink) 80%, transparent); }
+.ice-pill.pending:hover .go { background: #fff; color: #241947; transform: scale(1.08); }
 .ice-pill.writing { animation: breathe 1.2s ease-in-out infinite; }
 .ice-pill.lit { animation: lit .9s var(--ease); }
+
+/* dark theme frosted crystal chips instead of blinding stark white boxes */
+:root[data-theme="dark"] .ice-pill:not(.pending) { background: rgba(232, 222, 255, .15); color: #f6f3ff; border-color: rgba(218, 204, 255, .36); box-shadow: 0 3px 10px rgba(8, 4, 20, .34), inset 0 1px 0 rgba(255, 255, 255, .18); backdrop-filter: blur(8px); }
+:root[data-theme="dark"] .ice-pill:not(.pending):hover,
+:root[data-theme="dark"] .ice-pill:not(.pending):focus-visible { background: rgba(232, 222, 255, .24); border-color: var(--accent); }
+:root[data-theme="dark"] .ice-pill:not(.pending) .shared { background: rgba(185, 162, 242, .22); color: #e8ddff; }
+:root[data-theme="dark"] .ice-pill.pending { background: rgba(15, 11, 29, .38); border-color: rgba(214, 198, 255, .36); color: #dfd7f7; }
+:root[data-theme="dark"] .ice-pill.pending:hover,
+:root[data-theme="dark"] .ice-pill.pending:focus-visible { background: rgba(185, 162, 242, .2); border-color: rgba(232, 222, 255, .75); color: #fff; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ice-pill:not(.pending) { background: rgba(232, 222, 255, .15); color: #f6f3ff; border-color: rgba(218, 204, 255, .36); box-shadow: 0 3px 10px rgba(8, 4, 20, .34), inset 0 1px 0 rgba(255, 255, 255, .18); backdrop-filter: blur(8px); }
+  :root:not([data-theme="light"]) .ice-pill:not(.pending):hover,
+  :root:not([data-theme="light"]) .ice-pill:not(.pending):focus-visible { background: rgba(232, 222, 255, .24); border-color: var(--accent); }
+  :root:not([data-theme="light"]) .ice-pill:not(.pending) .shared { background: rgba(185, 162, 242, .22); color: #e8ddff; }
+  :root:not([data-theme="light"]) .ice-pill.pending { background: rgba(15, 11, 29, .38); border-color: rgba(214, 198, 255, .36); color: #dfd7f7; }
+  :root:not([data-theme="light"]) .ice-pill.pending:hover,
+  :root:not([data-theme="light"]) .ice-pill.pending:focus-visible { background: rgba(185, 162, 242, .2); border-color: rgba(232, 222, 255, .75); color: #fff; }
+}
+
+/* floating glass preview tooltip inside the iceberg */
+.berg-tooltip { position: absolute; z-index: 20; pointer-events: none; padding: 9px 12px; border-radius: var(--r); background: color-mix(in srgb, var(--surface) 94%, transparent); border: 1px solid var(--line); color: var(--ink); box-shadow: var(--shadow-lg); backdrop-filter: blur(10px); display: flex; flex-direction: column; gap: 3px; text-align: left; animation: pop .14s var(--ease); }
+.berg-tooltip strong { font-size: 13px; line-height: 1.3; }
+.berg-tooltip p { margin: 0; font-size: 12.5px; line-height: 1.4; color: var(--muted); }
+.berg-tooltip small { font-size: 11px; font-weight: 600; color: var(--accent); }
+
 .ice-legend { display: flex; gap: 16px; flex-wrap: wrap; margin: 10px 2px 0; font-size: 12.5px; color: var(--muted); }
 .ice-legend span { display: inline-flex; align-items: center; gap: 6px; }
-.all-concepts { margin-top: 28px; }
+.all-concepts { margin-top: 24px; }
 .all-concepts summary { cursor: pointer; font-weight: 600; margin-bottom: 12px; }
 .all-concepts .dg { margin-bottom: 14px; }
 
@@ -697,7 +731,7 @@ dialog::backdrop { background: rgba(10, 10, 14, .45); backdrop-filter: blur(2px)
 @keyframes breathe { 50% { opacity: .55; } }
 @keyframes bob { 50% { transform: translateY(3px); } }
 @keyframes wave { to { background-position: 240px 0; } }
-@keyframes berg-wave { to { transform: translateX(-24px); } }
+@keyframes berg-wave { to { transform: translateX(-28px); } }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes lit { 0% { background: #fff; box-shadow: 0 0 0 0 rgba(255, 255, 255, .9); transform: scale(.96); } 60% { box-shadow: 0 0 0 14px rgba(255, 255, 255, 0); transform: scale(1.04); } 100% { transform: none; } }
 @keyframes flip { 0% { transform: rotateX(0); } 50% { transform: rotateX(90deg); } 100% { transform: rotateX(0); } }

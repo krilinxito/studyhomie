@@ -1341,26 +1341,40 @@ function renderConcepts() {
     let i = 0;
     const pill = (c, isPending) => {
       const id = c.slug || c.id;
+      const title = c.title || id || '';
+      const sharedText = (c.guides || 0) > 1 ? tn(c.guides - 1, 'también en otra guía', 'también en {n} guías más') : '';
+      const actionHint = isPending ? t('Aún sin nota: pulsa para explicarlo') : t('Abrir la nota');
       const el = h('button', {
         class: `ice-pill${isPending ? ' pending' : ''}${S.lit === id ? ' lit' : ''}`, type: 'button', style: `--i:${i++}`,
         'data-id': id, 'data-requires': (c.requires || []).join(' '),
-        title: isPending ? t('Aún sin nota: pulsa para explicarlo') : t('Abrir la nota'),
-        onclick: () => (isPending ? explainConcept(c.id, { guide: n.slug, title: c.title, el }) : openNote(c.slug)),
-      }, h('strong', {}, c.title), c.summary ? h('small', {}, c.summary) : null,
-      (c.guides || 0) > 1 ? h('span', { class: 'shared' }, tn(c.guides - 1, 'también en otra guía', 'también en {n} guías más')) : null,
-      isPending ? h('span', { class: 'go' }, t('Explicar')) : null);
+        'data-title': title,
+        'data-summary': c.summary || '',
+        'data-shared': sharedText,
+        'data-hint': actionHint,
+        title: [title, c.summary, sharedText, actionHint].filter(Boolean).join(' · '),
+        onclick: () => (isPending ? explainConcept(c.id, { guide: n.slug, title, el }) : openNote(c.slug)),
+      },
+      h('span', { class: 'ice-dot', 'aria-hidden': 'true' }),
+      h('strong', {}, title),
+      (c.guides || 0) > 1 ? h('span', { class: 'shared', title: sharedText }, `×${c.guides}`) : null,
+      isPending ? h('span', { class: 'go', 'aria-label': t('Explicar') }, '+') : null);
       return el;
     };
     const deepest = keys[keys.length - 1];
+    const bergTipCard = h('div', { class: 'berg-tooltip', hidden: true, 'aria-hidden': 'true' });
     const berg = h('div', { class: 'berg', style: `--levels:${keys.length}` },
       h('div', { class: 'berg-tip' }, h('span', { class: 'tip', 'data-id': n.slug, 'data-requires': (n.meta.base || []).join(' ') }, n.meta.title)),
       h('ol', { class: 'berg-levels' }, keys.map((l) => {
         const g = levels.get(l);
         return h('li', { class: `berg-level${l > 1 ? ' deep' : ''}`, 'data-level': l, style: `--l:${l}; --water: var(--water-${Math.min(l, 5)})` },
-          h('h3', {}, levelName(l), h('small', {}, g.pending.length ? t('{n} por explicar', { n: g.pending.length }) : '')),
+          h('h3', {},
+            h('span', { class: 'lvl-tag' }, `N${l}`),
+            h('span', {}, levelName(l)),
+            g.pending.length ? h('small', {}, t('{n} por explicar', { n: g.pending.length })) : null),
           h('div', { class: 'ice-pills' }, g.written.map((c) => pill(c, !c.exists)), g.pending.map((p) => pill(p, true))));
       })),
-      h('div', { class: 'berg-floor', style: `--l:${deepest + 1}` }, digButton(n, deepest)));
+      h('div', { class: 'berg-floor', style: `--l:${deepest + 1}` }, digButton(n, deepest)),
+      bergTipCard);
     box.append(
       h('header', { class: 'c-head' },
         h('p', { class: 'eyebrow' }, t('Lo que hay debajo')),
@@ -1427,9 +1441,9 @@ function offsetIn(el, root) {
   return { x, y, w: el.offsetWidth, h: el.offsetHeight };
 }
 
-// Draws the iceberg behind the pills: sky, the tip above the water, bands of water that darken
-// with depth, the ice under them widening like the levels do, and the lines from each concept to
-// what it stands on.
+// Draws the iceberg behind the pills: smooth sky-to-abyss gradient, faceted crystalline ice peak
+// and submerged keel, shimmering waterline, subtle depth hairlines, and interactive dependency edges.
+let bergSvgSeq = 0;
 function drawBerg(berg) {
   if (!berg.isConnected || !berg.offsetWidth) return;
   const NS = 'http://www.w3.org/2000/svg';
@@ -1438,35 +1452,101 @@ function drawBerg(berg) {
   const tip = offsetIn(berg.querySelector('.tip'), berg);
   const bands = [...berg.querySelectorAll('.berg-level')];
   const floor = offsetIn(berg.querySelector('.berg-floor'), berg);
-  const waterY = tip.y + tip.h - 2;
+  const waterY = tip.y + tip.h + 2;
   const cx = W / 2;
+  const gid = `bg${++bergSvgSeq}`;
   const svg = el('svg', { class: 'berg-art', width: W, height: H, viewBox: `0 0 ${W} ${H}`, 'aria-hidden': 'true' });
-  svg.append(el('rect', { x: 0, y: 0, width: W, height: waterY, style: 'fill: var(--sky)' }));
-  // a band of water per level, darker the deeper it is
+
+  // Gradients for sky, continuous ocean depth, and faceted crystal ice
+  const defs = el('defs', {});
+  const mkGrad = (id, x1, y1, x2, y2, stops) => {
+    const g = el('linearGradient', { id, x1, y1, x2, y2 });
+    for (const [offset, color, opacity] of stops) {
+      const s = el('stop', { offset, 'stop-color': color });
+      if (opacity != null) s.setAttribute('stop-opacity', String(opacity));
+      g.append(s);
+    }
+    return g;
+  };
+  defs.append(
+    mkGrad(`${gid}-sky`, '0%', '0%', '0%', '100%', [
+      ['0%', 'var(--sky)', 1],
+      ['100%', 'var(--water-1)', 0.45],
+    ]),
+    mkGrad(`${gid}-sea`, '0%', '0%', '0%', '100%', [
+      ['0%', 'var(--water-1)', 1],
+      ['28%', 'var(--water-2)', 1],
+      ['58%', 'var(--water-3)', 1],
+      ['84%', 'var(--water-4)', 1],
+      ['100%', 'var(--water-5)', 1],
+    ]),
+    mkGrad(`${gid}-ice`, '0%', '0%', '0%', '100%', [
+      ['0%', 'var(--ice)', 0.28],
+      ['48%', 'var(--ice)', 0.14],
+      ['100%', 'var(--ice)', 0.05],
+    ]),
+    mkGrad(`${gid}-shade`, '0%', '0%', '100%', '100%', [
+      ['0%', 'var(--water-4)', 0.08],
+      ['100%', 'var(--water-5)', 0.28],
+    ]),
+    mkGrad(`${gid}-foam`, '0%', '0%', '0%', '100%', [
+      ['0%', '#ffffff', 0.34],
+      ['100%', '#ffffff', 0],
+    ]),
+  );
+  svg.append(defs);
+
+  // Sky + continuous ocean depth gradient
+  svg.append(el('rect', { x: 0, y: 0, width: W, height: waterY, fill: `url(#${gid}-sky)` }));
+  svg.append(el('rect', { x: 0, y: waterY, width: W, height: Math.max(0, H - waterY), fill: `url(#${gid}-sea)` }));
+  svg.append(el('rect', { x: 0, y: waterY, width: W, height: 18, fill: `url(#${gid}-foam)` }));
+
+  // Subtle horizontal depth dividers between levels
   const tops = bands.map((b, i) => (i ? (offsetIn(b, berg).y + offsetIn(bands[i - 1], berg).y + bands[i - 1].offsetHeight) / 2 : waterY));
-  bands.forEach((b, i) => {
-    const y = tops[i], y2 = i + 1 < bands.length ? tops[i + 1] : floor.y;
-    svg.append(el('rect', { x: 0, y, width: W, height: y2 - y + 1, style: `fill: var(--water-${Math.min(+b.dataset.level, 5)})` }));
-  });
-  svg.append(el('rect', { x: 0, y: floor.y, width: W, height: H - floor.y, style: `fill: var(--water-${Math.min(bands.length + 1, 5)})` }));
-  // the ice under water: as wide as each level's pills, with a ragged edge
-  const jag = (k) => ((k * 37) % 11) - 5;
+  for (let i = 1; i < tops.length; i++) {
+    svg.append(el('line', { class: 'berg-divider', x1: 18, y1: tops[i], x2: W - 18, y2: tops[i] }));
+  }
+
+  // Sculpted underwater iceberg silhouette: smoothly widens below the waterline without awkward pinches,
+  // hugs each level's pills, and tapers naturally to a crystalline keel
+  const jag = (k) => ((k * 37) % 7) - 3;
   const left = [], right = [];
+  const tipL = Math.max(18, tip.x - 14), tipR = Math.min(W - 18, tip.x + tip.w + 14);
+  let hullSpan = Math.max((tipR - tipL) / 2 + 24, W * 0.34);
   bands.forEach((b, i) => {
     const pills = [...b.querySelectorAll('.ice-pill')].map((p) => offsetIn(p, berg));
-    const lo = Math.min(...pills.map((p) => p.x), cx - 60), hi = Math.max(...pills.map((p) => p.x + p.w), cx + 60);
+    const pillSpan = pills.length ? Math.max(...pills.map((p) => Math.max(cx - p.x, p.x + p.w - cx))) + 18 : hullSpan;
+    const targetSpan = Math.min(W * 0.48, Math.max(hullSpan, pillSpan, W * (0.34 + i * 0.055)));
+    hullSpan = targetSpan;
+    const lo = Math.max(10, cx - targetSpan), hi = Math.min(W - 10, cx + targetSpan);
     const y = i ? tops[i] : waterY, y2 = i + 1 < bands.length ? tops[i + 1] : floor.y;
-    left.push([lo - 18 + jag(i), y + 6], [lo - 22 + jag(i + 3), (y + y2) / 2], [lo - 14 + jag(i + 5), y2 - 4]);
-    right.push([hi + 18 + jag(i + 1), y + 6], [hi + 22 + jag(i + 4), (y + y2) / 2], [hi + 14 + jag(i + 2), y2 - 4]);
+    left.push([lo + jag(i), (y + y2) / 2]);
+    right.push([hi + jag(i + 1), (y + y2) / 2]);
   });
-  const bottom = Math.min(H - 8, floor.y + 26);
-  const body = [[tip.x - 6, waterY], ...left, [cx - 40, bottom - 6], [cx + 8, bottom], [cx + 46, bottom - 10], ...right.reverse(), [tip.x + tip.w + 6, waterY]];
-  svg.append(el('path', { class: 'berg-body', d: `M${body.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join('L')}Z` }));
-  // the tip above water
-  const peak = Math.max(4, tip.y - 14);
-  svg.append(el('path', { class: 'berg-peak', d: `M${tip.x - 6},${waterY} L${tip.x + tip.w * .18},${tip.y + 4} L${tip.x + tip.w * .42},${peak} L${tip.x + tip.w * .6},${tip.y + 2} L${tip.x + tip.w * .8},${tip.y + 8} L${tip.x + tip.w + 6},${waterY} Z` }));
-  svg.append(el('path', { class: 'berg-wave', d: `M0,${waterY} ${Array.from({ length: Math.ceil(W / 24) + 1 }, (_, k) => `q6,-4 12,0 t12,0`).join(' ')}` }));
-  // lines from each concept to what it stands on
+  const bottom = Math.min(H - 10, floor.y + 18);
+  const keelPts = [[cx - Math.min(hullSpan * 0.45, 76), bottom - 14], [cx - 4, bottom], [cx + Math.min(hullSpan * 0.42, 70), bottom - 16]];
+  const rightRev = [...right].reverse();
+  const body = [[tipL, waterY], ...left, ...keelPts, ...rightRev, [tipR, waterY]];
+  svg.append(el('path', { class: 'berg-body', fill: `url(#${gid}-ice)`, d: `M${body.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join('L')}Z` }));
+
+  // Subtle crystalline right-side shadow facet underwater for depth
+  const rightFacet = [[cx + 4, waterY], [cx - 6, bottom], [cx + 42, bottom - 14], ...rightRev, [tipR, waterY]];
+  svg.append(el('path', { class: 'berg-facet', fill: `url(#${gid}-shade)`, d: `M${rightFacet.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join('L')}Z` }));
+
+  // Two-tone faceted peak above water
+  const peakY = Math.max(6, tip.y - 22);
+  const ridgeX = tip.x + tip.w * 0.45;
+  const pLeft = [[tipL, waterY], [tip.x + tip.w * 0.12, tip.y + 2], [ridgeX, peakY], [cx + 4, waterY]];
+  const pRight = [[ridgeX, peakY], [tip.x + tip.w * 0.74, tip.y - 2], [tip.x + tip.w * 0.9, tip.y + 7], [tipR, waterY], [cx + 4, waterY]];
+  const pFull = [[tipL, waterY], [tip.x + tip.w * 0.12, tip.y + 2], [ridgeX, peakY], [tip.x + tip.w * 0.74, tip.y - 2], [tip.x + tip.w * 0.9, tip.y + 7], [tipR, waterY]];
+  svg.append(el('path', { class: 'berg-peak', d: `M${pFull.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join('L')}Z` }));
+  svg.append(el('path', { class: 'berg-peak-lit', d: `M${pLeft.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join('L')}Z` }));
+  svg.append(el('path', { class: 'berg-peak-shade', d: `M${pRight.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join('L')}Z` }));
+
+  // Gentle animated waterline
+  svg.append(el('path', { class: 'berg-wave', d: `M0,${waterY} ${Array.from({ length: Math.ceil(W / 28) + 2 }, () => `q7,-3.5 14,0 t14,0`).join(' ')}` }));
+
+  // Dependency lines from each concept to what it stands on
   const at = new Map([...berg.querySelectorAll('[data-id]')].map((e) => [e.dataset.id, e]));
   const edges = el('g', { class: 'berg-edges' });
   for (const [id, e] of at) {
@@ -1475,20 +1555,61 @@ function drawBerg(berg) {
       const t2 = at.get(r);
       if (!t2) continue;
       const b = offsetIn(t2, berg);
-      if (b.y <= a.y) continue; // only downwards: a loop or a sibling would cross the pills
+      if (b.y <= a.y + 4) continue;
       const x1 = a.x + a.w / 2, y1 = a.y + a.h, x2 = b.x + b.w / 2, y2 = b.y, my = (y1 + y2) / 2;
-      edges.append(el('path', { d: `M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}`, 'data-from': id, 'data-to': r, class: t2.classList.contains('pending') ? 'pend' : '' }));
+      edges.append(el('path', { d: `M${x1.toFixed(1)},${y1.toFixed(1)} C${x1.toFixed(1)},${my.toFixed(1)} ${x2.toFixed(1)},${my.toFixed(1)} ${x2.toFixed(1)},${y2.toFixed(1)}`, 'data-from': id, 'data-to': r, class: t2.classList.contains('pending') ? 'pend' : '' }));
     }
   }
   svg.append(edges);
   berg.querySelector('.berg-art')?.remove();
   berg.prepend(svg);
+
+  // Interactive hover/focus: highlight dependency paths, related chips, and show glass summary tooltip
   if (!berg.dataset.hover) {
     berg.dataset.hover = '1';
-    const lightUp = (id) => { for (const p of berg.querySelectorAll('.berg-edges path')) p.classList.toggle('hot', !!id && (p.dataset.from === id || p.dataset.to === id)); };
-    berg.addEventListener('pointerover', (e) => lightUp(e.target.closest('[data-id]')?.dataset.id));
-    berg.addEventListener('pointerleave', () => lightUp(''));
-    berg.addEventListener('focusin', (e) => lightUp(e.target.closest('[data-id]')?.dataset.id));
+    const tipCard = berg.querySelector('.berg-tooltip');
+    const showTip = (chip) => {
+      if (!tipCard || !chip || !chip.classList.contains('ice-pill')) {
+        if (tipCard) tipCard.hidden = true;
+        return;
+      }
+      const title = chip.dataset.title || '';
+      const summary = chip.dataset.summary || '';
+      const shared = chip.dataset.shared || '';
+      const hint = chip.dataset.hint || '';
+      tipCard.replaceChildren(
+        h('strong', {}, title),
+        summary ? h('p', {}, summary) : null,
+        h('small', {}, [shared, hint].filter(Boolean).join(' · ')));
+      tipCard.hidden = false;
+      const pos = offsetIn(chip, berg);
+      const bw = berg.offsetWidth;
+      const tw = Math.min(280, bw - 24);
+      tipCard.style.maxWidth = `${tw}px`;
+      const th = tipCard.offsetHeight;
+      const leftPos = Math.max(12, Math.min(bw - tipCard.offsetWidth - 12, pos.x + pos.w / 2 - tipCard.offsetWidth / 2));
+      const above = pos.y - th - 10 > 8;
+      tipCard.style.left = `${leftPos}px`;
+      tipCard.style.top = `${above ? pos.y - th - 8 : pos.y + pos.h + 8}px`;
+    };
+    const lightUp = (target) => {
+      const id = target?.dataset?.id || '';
+      const rel = new Set(id ? [id] : []);
+      for (const p of berg.querySelectorAll('.berg-edges path')) {
+        const hot = !!id && (p.dataset.from === id || p.dataset.to === id);
+        p.classList.toggle('hot', hot);
+        if (hot) { rel.add(p.dataset.from); rel.add(p.dataset.to); }
+      }
+      for (const pillEl of berg.querySelectorAll('.ice-pill')) {
+        pillEl.classList.toggle('rel', !!id && pillEl.dataset.id !== id && rel.has(pillEl.dataset.id));
+        pillEl.classList.toggle('dim', !!id && !rel.has(pillEl.dataset.id));
+      }
+      showTip(target);
+    };
+    berg.addEventListener('pointerover', (e) => lightUp(e.target.closest('[data-id]')));
+    berg.addEventListener('pointerleave', () => lightUp(null));
+    berg.addEventListener('focusin', (e) => lightUp(e.target.closest('[data-id]')));
+    berg.addEventListener('focusout', (e) => { if (!berg.contains(e.relatedTarget)) lightUp(null); });
   }
 }
 
