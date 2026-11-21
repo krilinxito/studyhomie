@@ -34,8 +34,6 @@
   /* the iceberg */
   --ice-ink-top: #2a1f4a;
   --sky: #f6f2fd; --ice: #ffffff; --water-1: #ddd2f7; --water-2: #bba7ee; --water-3: #977ad9; --water-4: #7457bd; --water-5: #523c93;
-  /* the narval mascot (concept art lavender palette) */
-  --nv-light: #e4dcfb; --nv-body: #a490ea; --nv-mid: #846fd6; --nv-deep: #5b45b0; --nv-ink: #3f2e80; --nv-tongue: #c8b6f7; --nv-fx: #8b74dc;
   --shadow-sm: 0 1px 2px rgba(32, 20, 52, .06);
   --shadow: 0 1px 2px rgba(32, 20, 52, .04), 0 10px 28px -12px rgba(32, 20, 52, .18);
   --shadow-lg: 0 2px 6px rgba(32, 20, 52, .06), 0 28px 56px -16px rgba(32, 20, 52, .28);
@@ -50,7 +48,6 @@
   --bg: #100e14; --dot: rgba(236, 225, 255, .075); --surface: #18151d; --surface-2: #1f1b25; --surface-3: #29242f;
   --ink: #ece8f2; --muted: #a09aab; --line: #2e2936; --accent: #b9a2f2; --accent-2: #cfbff7; --accent-soft: rgba(185, 162, 242, .14); --accent-ink: #18121f;
   --ice-ink-top: #ffffff; --sky: #1a1622; --ice: #ede6fa; --water-1: #33284f; --water-2: #2b2245; --water-3: #241c3b; --water-4: #1d1631; --water-5: #161126;
-  --nv-light: #ebe4fd; --nv-body: #9e8ae8; --nv-mid: #7f6ad4; --nv-deep: #6b54c5; --nv-ink: #2b1d63; --nv-tongue: #cfc0f9; --nv-fx: #c4b3f8;
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, .4); --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 12px 32px -12px rgba(0, 0, 0, .6); --shadow-lg: 0 30px 60px -16px rgba(0, 0, 0, .7);
   color-scheme: dark;
 }
@@ -59,7 +56,6 @@
     --bg: #100e14; --dot: rgba(236, 225, 255, .075); --surface: #18151d; --surface-2: #1f1b25; --surface-3: #29242f;
     --ink: #ece8f2; --muted: #a09aab; --line: #2e2936; --accent: #b9a2f2; --accent-2: #cfbff7; --accent-soft: rgba(185, 162, 242, .14); --accent-ink: #18121f;
     --ice-ink-top: #ffffff; --sky: #1a1622; --ice: #ede6fa; --water-1: #33284f; --water-2: #2b2245; --water-3: #241c3b; --water-4: #1d1631; --water-5: #161126;
-    --nv-light: #ebe4fd; --nv-body: #9e8ae8; --nv-mid: #7f6ad4; --nv-deep: #6b54c5; --nv-ink: #2b1d63; --nv-tongue: #cfc0f9; --nv-fx: #c4b3f8;
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, .4); --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 12px 32px -12px rgba(0, 0, 0, .6); --shadow-lg: 0 30px 60px -16px rgba(0, 0, 0, .7);
     color-scheme: dark;
   }
@@ -896,35 +892,6 @@ html.fs .dock { padding: 0; }
 .recent-link:hover { color: var(--accent); }
 .recent-xp { font: 600 12.5px var(--mono); color: var(--accent); white-space: nowrap; }
 
-/* Narval mascot SVG & animations */
-.narval { display: block; overflow: visible; }
-.narval .nv-body { fill: var(--nv-body); }
-.narval .nv-light { fill: var(--nv-light); }
-.narval .nv-mid { fill: var(--nv-mid); }
-.narval .nv-deep { fill: var(--nv-deep); }
-.narval .nv-ink { fill: var(--nv-ink); }
-.narval .nv-ink-s { fill: none; stroke: var(--nv-ink); stroke-linecap: round; stroke-linejoin: round; }
-.narval .nv-tongue { fill: var(--nv-tongue); }
-.narval .nv-fx { fill: none; stroke: var(--nv-fx); stroke-linecap: round; stroke-linejoin: round; }
-.narval .nv-fx-dot, .narval .nv-star { fill: var(--nv-fx); stroke: none; }
-.narval .nv-sweat { fill: #7dd3fc; stroke: var(--nv-ink); stroke-width: 1.5; }
-.narval .nv-body-grp { animation: nv-float 3.4s ease-in-out infinite; transform-origin: 76px 76px; }
-.narval.nv-dormido .nv-body-grp { animation: nv-breathe 4.4s ease-in-out infinite; }
-.narval.nv-celebrando .nv-body-grp { animation: nv-hop .9s ease-in-out infinite; }
-.narval .nv-eye { animation: nv-blink 5.2s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
-.narval .nv-z1 { animation: nv-z 2.6s ease-in-out infinite; }
-.narval .nv-z2 { animation: nv-z 2.6s ease-in-out .6s infinite; }
-.narval .nv-star { animation: nv-twinkle 1.8s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
-.narval .nv-star2 { animation-delay: .55s; }
-.narval .nv-sigh { animation: nv-sigh 2.8s ease-in-out infinite; }
-.narval .nv-float-slow { animation: nv-float 2.6s ease-in-out infinite; }
-@keyframes nv-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
-@keyframes nv-breathe { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(.96); } }
-@keyframes nv-hop { 0%, 100% { transform: translateY(0) rotate(0deg); } 45% { transform: translateY(-7px) rotate(-2deg); } }
-@keyframes nv-blink { 0%, 92%, 100% { transform: scaleY(1); } 96% { transform: scaleY(.12); } }
-@keyframes nv-z { 0% { opacity: .25; transform: translate(0, 4px) scale(.88); } 55% { opacity: 1; transform: translate(2px, -3px) scale(1); } 100% { opacity: .25; transform: translate(4px, -7px) scale(.92); } }
-@keyframes nv-twinkle { 0%, 100% { opacity: .45; transform: scale(.82); } 50% { opacity: 1; transform: scale(1.12); } }
-@keyframes nv-sigh { 0%, 100% { opacity: .35; transform: translateX(0); } 50% { opacity: .95; transform: translateX(4px); } }
 
 .hdr-narval { display: inline-flex; align-items: center; margin-right: 2px; }
 .hdr-narval .narval { width: 28px; height: 24px; }
