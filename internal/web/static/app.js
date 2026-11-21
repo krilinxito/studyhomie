@@ -4701,6 +4701,294 @@ function newChat() {
 $('#btn-new').addEventListener('click', () => { newChat(); show('chat'); });
 $('#brand').addEventListener('click', (e) => { e.preventDefault(); newChat(); show('chat'); });
 
+/* ---------- explain anything: a word, a group of words or a sentence, from a selection or the search ---------- */
+const DF = { dlg: null, req: null, def: null, existing: null, deeper: '', history: [], busy: false, ctrl: null, saveGuide: '', saved: '' };
+const MAX_SELECT = 800;
+
+// where a selection may be explained: the readers, the learner's notes and every conversation
+const EXPLAINABLE = '#reader, .reader-wrap.concept, .notes-view, .transcript .msg, .editor-view';
+
+function selectionInfo() {
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed || !sel.rangeCount) return null;
+  const text = sel.toString().replace(/\s+/g, ' ').trim();
+  if (!text || text.length > MAX_SELECT) return null;
+  const range = sel.getRangeAt(0);
+  const node = range.commonAncestorContainer.nodeType === 1 ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement;
+  if (!node || node.closest('input, textarea, [contenteditable="true"], .define-dialog, .search-dialog')) return null;
+  const host = node.closest(EXPLAINABLE);
+  if (!host) return null;
+  // the paragraph around it gives the meaning it has there
+  const block = node.closest('p, li, td, th, blockquote, .msg, h1, h2, h3, h4, figcaption, .callout') || host;
+  const context = (block.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 2500);
+  const inConcept = node.closest('.reader-wrap.concept');
+  const ctxNote = inConcept && S.concept ? S.concept.slug : S.guide || '';
+  return { text, context, ctxNote, rect: range.getBoundingClientRect() };
+}
+
+// the floating «Explicar» button next to what is selected
+const selBtn = h('button', { class: 'sel-explain', type: 'button', hidden: true }, icon('sparkles'), t('Explicar'));
+document.body.append(selBtn);
+let selInfo = null, selTimer = 0;
+function placeSelButton() {
+  selInfo = selectionInfo();
+  if (!selInfo || !selInfo.rect || !selInfo.rect.width) { selBtn.hidden = true; return; }
+  selBtn.hidden = false;
+  const r = selInfo.rect, bw = selBtn.offsetWidth || 96, bh = selBtn.offsetHeight || 32;
+  const above = r.top - bh - 8 > 4;
+  selBtn.style.left = `${Math.round(Math.min(Math.max(8, r.left + r.width / 2 - bw / 2), innerWidth - bw - 8))}px`;
+  selBtn.style.top = `${Math.round(above ? r.top - bh - 8 : Math.min(innerHeight - bh - 8, r.bottom + 8))}px`;
+}
+document.addEventListener('selectionchange', () => { clearTimeout(selTimer); selTimer = setTimeout(placeSelButton, 180); });
+document.addEventListener('scroll', () => { if (!selBtn.hidden) placeSelButton(); }, true);
+// pressing the button must not clear the selection before it is read
+selBtn.addEventListener('pointerdown', (e) => e.preventDefault());
+selBtn.addEventListener('click', () => {
+  const info = selInfo || selectionInfo();
+  selBtn.hidden = true;
+  if (!info) return;
+  window.getSelection()?.removeAllRanges();
+  openDefine({ text: info.text, context: info.context, guide: info.ctxNote }, { saveGuide: S.guide || '' });
+});
+
+function defineDialog() {
+  if (DF.dlg) return DF.dlg;
+  const dlg = h('dialog', { class: 'define-dialog', 'aria-labelledby': 'define-title' });
+  dlg.addEventListener('cancel', (e) => { e.preventDefault(); closeDefine(); });
+  dlg.addEventListener('click', (e) => { if (e.target === dlg) closeDefine(); }); // the backdrop
+  document.body.append(dlg);
+  DF.dlg = dlg;
+  return dlg;
+}
+function closeDefine() {
+  if (DF.ctrl) DF.ctrl.abort();
+  DF.ctrl = null;
+  if (DF.dlg && DF.dlg.open) DF.dlg.close();
+}
+
+// Opens the explanation of a selection or a search. A term the vault already has a note for
+// shows that note first; force asks for a fresh explanation of it in this context.
+async function openDefine(req, { saveGuide = S.guide || '', force = false } = {}) {
+  Object.assign(DF, { req, def: null, existing: null, deeper: '', history: [], saveGuide, saved: '' });
+  if (SR.dlg && SR.dlg.open) SR.dlg.close(); // one dialog at a time
+  const dlg = defineDialog();
+  if (!dlg.open) dlg.showModal();
+  await defineCall({ ...req, force });
+}
+
+async function defineCall(body, { kind = 'first' } = {}) {
+  if (DF.ctrl) DF.ctrl.abort();
+  const ctrl = new AbortController();
+  DF.ctrl = ctrl;
+  DF.busy = kind;
+  drawDefine();
+  try {
+    const res = await api('/api/define', { method: 'POST', body, signal: ctrl.signal });
+    if (DF.ctrl !== ctrl) return;
+    if (kind === 'first') {
+      DF.existing = res.existing || null;
+      DF.def = res.definition || null;
+    } else if (kind === 'deeper') DF.deeper = res.definition.text;
+    else DF.history.push({ q: body.question, a: res.definition.text });
+  } catch (err) {
+    if (err.name === 'AbortError' || DF.ctrl !== ctrl) return;
+    toast(err.message);
+    if (kind === 'first' && !DF.def && !DF.existing) { closeDefine(); return; }
+  } finally {
+    if (DF.ctrl === ctrl) { DF.ctrl = null; DF.busy = false; drawDefine(); }
+  }
+}
+
+// everything explained so far, as Markdown: the explanation, the deeper one and the follow-ups
+function defineMarkdown() {
+  const d = DF.def;
+  if (!d) return '';
+  const parts = [d.text];
+  if (DF.deeper) parts.push(`**${t('Más a fondo')}**\n\n${DF.deeper}`);
+  for (const x of DF.history) parts.push(`**${x.q}**\n\n${x.a}`);
+  return parts.join('\n\n');
+}
+
+function drawDefine() {
+  const dlg = DF.dlg;
+  if (!dlg) return;
+  const { req, def, existing } = DF;
+  const title = (def && def.title) || (existing && existing.title) || req.text;
+  const showQuote = req.text && req.text.toLowerCase() !== String(title).toLowerCase();
+  const thinking = (label) => h('div', { class: 'df-busy', role: 'status' },
+    h('span', { class: 'working-narval', 'aria-hidden': 'true' }, window.Narval ? Narval.svg('estudiando') : null), label);
+  const head = h('div', { class: 'dlg-head df-head' },
+    h('div', {}, h('div', { class: 'rich-eyebrow' }, icon('sparkles'), def ? (def.kind === 'term' ? t('Qué significa') : t('Qué quiere decir')) : t('Explicar')),
+      h('h2', { id: 'define-title' }, title)),
+    h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('Cerrar'), onclick: closeDefine }, icon('x')));
+  const quote = showQuote ? h('blockquote', { class: 'df-quote' }, req.text) : null;
+  const body = h('div', { class: 'df-body' });
+
+  if (DF.busy === 'first') body.append(thinking(Phrases.pick('thinking')));
+  else if (existing && !def) {
+    body.append(
+      h('p', { class: 'df-existing' }, icon('book-open'), t('Ya tienes una nota de esto en tu vault.')),
+      existing.summary ? h('p', {}, existing.summary) : null,
+      h('div', { class: 'actions' },
+        h('button', { class: 'btn small primary', type: 'button', onclick: () => { closeDefine(); openNote(existing.slug); } }, icon('book-open'), t('Abrir la nota')),
+        h('button', { class: 'btn small', type: 'button', onclick: () => defineCall({ ...req, force: true }) }, icon('sparkles'), t('Explicarlo en este contexto'))));
+  } else if (def) {
+    body.append(mdBlock(def.text, { breaks: true }));
+    if (DF.deeper) body.append(h('section', { class: 'df-more' }, h('h3', {}, t('Más a fondo')), mdBlock(DF.deeper, { breaks: true })));
+    else if (DF.busy === 'deeper') body.append(thinking(t('Profundizando…')));
+    for (const x of DF.history) body.append(h('section', { class: 'df-turn' }, h('p', { class: 'df-q' }, x.q), mdBlock(x.a, { breaks: true })));
+    if (DF.busy === 'ask') body.append(thinking(Phrases.pick('thinking')));
+  }
+
+  let foot = null;
+  if (def) {
+    const ask = h('input', { type: 'text', maxlength: 1500, placeholder: t('Pregunta algo más sobre esto…'), 'aria-label': t('Preguntar más'), disabled: DF.busy || null });
+    const send = () => {
+      const q = ask.value.trim();
+      if (!q || DF.busy) return;
+      defineCall({ text: req.text, context: req.context, guide: req.guide, question: q, history: [{ q: '', a: def.text }, ...DF.history] }, { kind: 'ask' });
+    };
+    ask.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); send(); } });
+    const busy = !!DF.busy;
+    foot = h('div', { class: 'df-foot' },
+      h('div', { class: 'df-ask' }, ask, h('button', { class: 'btn small', type: 'button', disabled: busy || null, onclick: send }, icon('send'), t('Preguntar'))),
+      h('div', { class: 'df-actions' },
+        h('button', { class: 'btn small primary', type: 'button', disabled: busy || !!DF.saved || null, onclick: saveDefinedConcept }, icon('plus'), DF.saved ? t('Guardado') : t('Guardar como concepto')),
+        h('button', { class: 'btn small', type: 'button', disabled: busy || null, onclick: (e) => saveDefinedNotes(e.currentTarget) }, icon('notebook-pen'), t('Guardar en apuntes')),
+        DF.deeper ? null : h('button', { class: 'btn small', type: 'button', disabled: busy || null, onclick: () => defineCall({ text: req.text, context: req.context, guide: req.guide, deeper: true, previous: def.text }, { kind: 'deeper' }) }, icon('layers'), t('Profundizar')),
+        h('button', { class: 'btn small ghost', type: 'button', disabled: busy || null, onclick: () => { closeDefine(); chatAction({ action: 'guide', topic: def.title }, t('Escríbeme una guía de «{title}»', { title: def.title })); } }, icon('book-open'), t('Escribir una guía')),
+        h('button', { class: 'btn small ghost', type: 'button', onclick: async () => {
+          try { await navigator.clipboard.writeText(`${def.title}\n\n${defineMarkdown()}`); toast(t('Copiado.')); } catch { toast(t('No pude copiarlo.')); }
+        } }, icon('copy'), t('Copiar'))));
+  }
+  const scroller = h('div', { class: 'df-scroll' }, quote, body);
+  dlg.replaceChildren(head, scroller, foot || '');
+  if (DF.busy === 'ask' || DF.busy === 'deeper' || DF.history.length) scroller.scrollTop = scroller.scrollHeight;
+}
+
+async function saveDefinedConcept() {
+  const d = DF.def;
+  if (!d) return;
+  try {
+    const res = await api('/api/concepts', { method: 'POST', body: { title: d.title, summary: d.summary, text: defineMarkdown(), guide: DF.saveGuide } });
+    DF.saved = res.slug;
+    drawDefine();
+    toast(res.created ? t('Concepto «{title}» guardado.', { title: d.title }) : t('Ya tenías «{title}»: quedó enlazado.', { title: d.title }), { label: t('Abrir'), onClick: () => { closeDefine(); openNote(res.slug); } });
+    loadGraph().catch(() => {}).then(() => reloadGuide());
+  } catch (err) { toast(err.message); }
+}
+
+// «Guardar en apuntes»: the learner's notes of the guide open now, of another, or of any guide
+async function saveDefinedNotes(anchor) {
+  const d = DF.def;
+  if (!d) return;
+  let list = [];
+  try { list = await api('/api/apuntes'); } catch { /* the guides are still offered */ }
+  const opts = new Map();
+  if (DF.saveGuide) opts.set(DF.saveGuide, (nodeOf(DF.saveGuide) || {}).label || DF.saveGuide);
+  for (const a of list) opts.set(a.slug, a.title);
+  for (const n of (S.graph && S.graph.nodes) || []) if (n.kind === 'guide' && !opts.has(n.id)) opts.set(n.id, n.label);
+  if (!opts.size) { toast(t('Primero abre o genera una guía.')); return; }
+  const pick = h('select', { 'aria-label': t('Apuntes de') }, [...opts].map(([slug, title]) => h('option', { value: slug }, title)));
+  const pop = h('div', { class: 'df-pick' },
+    h('label', {}, t('Añadir a los apuntes de'), pick),
+    h('div', { class: 'actions' },
+      h('button', { class: 'btn small ghost', type: 'button', onclick: () => pop.remove() }, t('Cancelar')),
+      h('button', { class: 'btn small primary', type: 'button', onclick: async () => {
+        const quote = DF.req.text && DF.req.text !== d.title ? `> ${DF.req.text}\n\n` : '';
+        try {
+          const res = await api(`/api/apuntes/${encodeURIComponent(pick.value)}/append`, { method: 'POST', body: { text: `### ${d.title}\n\n${quote}${defineMarkdown()}` } });
+          pop.remove();
+          toast(t('Guardado en los apuntes de «{title}».', { title: res.title }), { label: t('Abrir'), onClick: () => { closeDefine(); openNotes(res.slug, res.title); } });
+        } catch (err) { toast(err.message); }
+      } }, t('Guardar'))));
+  anchor.closest('.df-foot').append(pop);
+  pick.focus();
+}
+
+/* ---------- search: the vault, and «explain this» when there is no note ---------- */
+const SR = { dlg: null, q: '', hits: null, recent: [], timer: 0, ctrl: null, active: 0 };
+const SR_DIR = { guias: t('Guía'), conceptos: t('Concepto'), apuntes: t('Apuntes'), flashcards: t('Tarjetas'), roadmaps: t('Roadmap'), daily: t('Diario') };
+
+function openSearch() {
+  if (!SR.dlg) {
+    const input = h('input', { type: 'text', class: 'sr-input', enterkeyhint: 'search', placeholder: t('Busca en tu vault o escribe algo para que te lo explique…'), 'aria-label': t('Buscar'), autocomplete: 'off' });
+    const list = h('ul', { class: 'sr-list', role: 'listbox' });
+    SR.dlg = h('dialog', { class: 'search-dialog', 'aria-label': t('Buscar') }, h('div', { class: 'sr-box' }, icon('search'), input, h('kbd', {}, 'Esc')), list);
+    SR.input = input; SR.list = list;
+    input.addEventListener('input', () => {
+      SR.q = input.value.trim();
+      SR.active = 0;
+      clearTimeout(SR.timer);
+      if (!SR.q) { SR.hits = null; drawSearch(); return; }
+      drawSearch();
+      SR.timer = setTimeout(searchVault, 160);
+    });
+    input.addEventListener('keydown', (e) => {
+      const rows = $$('.sr-row', list);
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        SR.active = (SR.active + (e.key === 'ArrowDown' ? 1 : rows.length - 1)) % Math.max(1, rows.length);
+        drawSearch();
+      } else if (e.key === 'Enter') { e.preventDefault(); rows[SR.active]?.click(); }
+    });
+    SR.dlg.addEventListener('click', (e) => { if (e.target === SR.dlg) SR.dlg.close(); });
+    document.body.append(SR.dlg);
+  }
+  SR.input.value = ''; SR.q = ''; SR.hits = null; SR.active = 0;
+  api('/api/lookups').then((l) => { SR.recent = l || []; drawSearch(); }).catch(() => {});
+  drawSearch();
+  SR.dlg.showModal();
+  SR.input.focus();
+}
+
+async function searchVault() {
+  if (SR.ctrl) SR.ctrl.abort();
+  const ctrl = new AbortController();
+  SR.ctrl = ctrl;
+  const q = SR.q;
+  try {
+    const hits = await api(`/api/vault/search?q=${encodeURIComponent(q)}`, { signal: ctrl.signal });
+    if (SR.q === q) { SR.hits = hits.slice(0, 12); drawSearch(); }
+  } catch { /* a newer search replaced it */ }
+}
+
+function drawSearch() {
+  const rows = [];
+  const row = (ic, main, sub, onclick, cls = '') => h('li', {}, h('button', { class: `sr-row ${cls}`.trim(), type: 'button', role: 'option', onclick }, icon(ic), h('span', { class: 'sr-main' }, h('strong', {}, main), sub ? h('small', {}, sub) : null)));
+  const explain = (text) => row('sparkles', t('Explicar «{text}»', { text }), t('Con la IA, aquí mismo; luego puedes guardarlo'), () => { SR.dlg.close(); openDefine({ text, context: '', guide: S.guide || '' }); }, 'sr-explain');
+  if (!SR.q) {
+    if (SR.recent.length) rows.push(h('li', { class: 'sr-label' }, t('Búsquedas recientes')));
+    for (const l of SR.recent.slice(0, 10)) {
+      rows.push(row(l.concept ? 'book-open' : 'clock', l.title || l.text, l.title && l.title !== l.text ? l.text : '', () => {
+        SR.dlg.close();
+        if (l.concept && nodeOf(l.concept)) openNote(l.concept);
+        else openDefine({ text: l.text, context: '', guide: l.guide || '' }, { saveGuide: l.guide || S.guide || '' });
+      }));
+    }
+    if (!SR.recent.length) rows.push(h('li', { class: 'sr-label' }, t('Escribe una palabra, una frase o un tema.')));
+  } else {
+    const hits = SR.hits || [];
+    const exact = hits.some((x) => (x.title || '').toLowerCase() === SR.q.toLowerCase());
+    if (!exact) rows.push(explain(SR.q));
+    for (const x of hits) rows.push(row(x.dir === 'conceptos' ? 'mountain-snow' : x.dir === 'apuntes' ? 'notebook-pen' : 'book-open', x.title, [SR_DIR[x.dir] || x.dir, x.snippet].filter(Boolean).join(' · '), () => { SR.dlg.close(); openVaultFile(x); }));
+    if (exact) rows.push(explain(SR.q));
+    if (SR.hits && !hits.length) rows.push(h('li', { class: 'sr-label' }, t('No hay notas con eso en tu vault.')));
+  }
+  SR.list.replaceChildren(...rows);
+  const btns = $$('.sr-row', SR.list);
+  btns.forEach((b, i) => b.setAttribute('aria-selected', String(i === SR.active)));
+  btns[SR.active]?.scrollIntoView({ block: 'nearest' });
+}
+
+$('#btn-search').addEventListener('click', openSearch);
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    if (SR.dlg && SR.dlg.open) SR.dlg.close(); else openSearch();
+  }
+});
+
 /* ---------- boot ---------- */
 async function refresh() {
   await loadGraph().catch((err) => toast(err.message));
