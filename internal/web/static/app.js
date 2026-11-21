@@ -1357,7 +1357,6 @@ function renderConcepts() {
         title: [title, c.summary, sharedText, actionHint].filter(Boolean).join(' · '),
         onclick: () => (isPending ? explainConcept(c.id, { guide: n.slug, title, el }) : openNote(c.slug)),
       },
-      h('span', { class: 'ice-dot', 'aria-hidden': 'true' }),
       h('strong', {}, title),
       (c.guides || 0) > 1 ? h('span', { class: 'shared', title: sharedText }, `×${c.guides}`) : null,
       isPending ? h('span', { class: 'go', 'aria-label': t('Explicar') }, '+') : null);
@@ -1371,9 +1370,9 @@ function renderConcepts() {
         const g = levels.get(l);
         return h('li', { class: `berg-level${l > 1 ? ' deep' : ''}`, 'data-level': l, style: `--l:${l}; --water: var(--water-${Math.min(l, 5)})` },
           h('h3', {},
-            h('span', { class: 'lvl-tag' }, `N${l}`),
+            h('span', { class: 'lvl-tag' }, String(l).padStart(2, '0')),
             h('span', {}, levelName(l)),
-            g.pending.length ? h('small', {}, t('{n} por explicar', { n: g.pending.length })) : null),
+            g.pending.length ? h('small', {}, `· ${t('{n} por explicar', { n: g.pending.length })}`) : null),
           h('div', { class: 'ice-pills' }, g.written.map((c) => pill(c, !c.exists)), g.pending.map((p) => pill(p, true))));
       })),
       h('div', { class: 'berg-floor', style: `--l:${deepest + 1}` }, digButton(n, deepest)),
