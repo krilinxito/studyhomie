@@ -1228,13 +1228,26 @@ function renderReader(n) {
       h('button', { class: 'btn small ghost', type: 'button', onclick: () => askAbout(t('Sobre «{title}»:', { title }) + ' ') }, icon('message-circle'), t('Preguntar')))));
 
   const article = h('article', { class: 'r-article' });
-  const bodySrc = stripEmoji(stripSection(n.body, 'Recursos')).trim();
+  const bodySrc = stripEmoji(stripSection(stripSection(n.body, 'Recursos'), 'Material')).trim();
   if (bodySrc) {
     const md = mdBlock(bodySrc, { viz: vizCtx(n.slug) });
     for (const hd of $$('h2', md)) hd.textContent = SECTION[sectionKey(hd.textContent)] || hd.textContent;
     article.append(md);
   } else {
     article.append(h('p', { class: 'r-empty' }, t('Esta nota aún no tiene guía. Pídela en el chat.')));
+  }
+  const mats = m.materials || [];
+  if (mats.length) {
+    article.append(h('section', { class: 'r-materials' }, h('h2', {}, t('Material fuente')),
+      h('ul', { class: 'mat-list' }, mats.map((rel) => {
+        const parts = String(rel).replace(/^material\//, '').split('/');
+        const topic = parts[0] || n.slug;
+        const name = parts.slice(1).join('/') || rel;
+        return h('li', {}, h('a', {
+          class: 'mat-chip', href: `/api/material/${encodeURIComponent(topic)}/${encodeURIComponent(name)}`,
+          target: '_blank', rel: 'noopener noreferrer',
+        }, icon('file'), h('span', {}, name)));
+      }))));
   }
   const res = m.resources || [];
   if (res.length) {
@@ -1638,9 +1651,9 @@ async function attachToNotes(files, editor) {
 }
 
 /* ---------- Vault: your vaults, and every note in the one in use ---------- */
-const DIRS = { guias: t('Guía'), conceptos: t('Concepto'), apuntes: t('Apuntes'), roadmaps: t('Roadmap'), daily: t('Diario') };
-const DIRS_PLURAL = { guias: t('guías'), conceptos: t('conceptos'), apuntes: t('apuntes'), roadmaps: t('roadmaps'), daily: t('días') };
-const VLT = { info: null, files: [], hits: null, q: '', dir: '', adding: false, edit: null, timer: 0 };
+const DIRS = { guias: t('Guía'), conceptos: t('Concepto'), apuntes: t('Apuntes'), flashcards: t('Tarjetas'), roadmaps: t('Roadmap'), daily: t('Diario') };
+const DIRS_PLURAL = { guias: t('guías'), conceptos: t('conceptos'), apuntes: t('apuntes'), flashcards: t('tarjetas'), roadmaps: t('roadmaps'), daily: t('días') };
+const VLT = { info: null, files: [], materials: [], hits: null, q: '', dir: '', adding: false, edit: null, timer: 0 };
 
 function fmtBytes(n) {
   if (n < 1024) return `${n} B`;
@@ -1653,7 +1666,7 @@ async function renderVault() {
   if (!root) return;
   if (VLT.edit) { drawEditor(); return; }
   try {
-    [VLT.info, VLT.files] = await Promise.all([api('/api/vaults'), api('/api/vault/files')]);
+    [VLT.info, VLT.files, VLT.materials] = await Promise.all([api('/api/vaults'), api('/api/vault/files'), api('/api/vault/materials')]);
   } catch (err) { root.replaceChildren(h('p', { class: 'hint', style: 'padding:24px' }, err.message)); return; }
   drawVault();
 }
@@ -1678,8 +1691,9 @@ function drawVault() {
   const root = PANE_EL.vault;
   const { vaults, root: abs, stats, canPick } = VLT.info;
   const cur = vaults.find((v) => v.current) || { name: abs.split(/[\\/]/).pop() };
-  const ONE = { guias: t('guía'), conceptos: t('concepto'), apuntes: t('nota de apuntes'), roadmaps: t('roadmap'), daily: t('día') };
+  const ONE = { guias: t('guía'), conceptos: t('concepto'), apuntes: t('nota de apuntes'), flashcards: t('mazo de tarjetas'), roadmaps: t('roadmap'), daily: t('día') };
   const counts = Object.keys(DIRS).filter((d) => stats.notes[d]).map((d) => `${stats.notes[d]} ${stats.notes[d] === 1 ? ONE[d] : DIRS_PLURAL[d]}`);
+  if (VLT.materials.length) counts.push(tn(VLT.materials.length, '{n} archivo de material', '{n} archivos de material'));
 
   // the vaults: one row each, the one in use first
   const vaultRows = h('ul', { class: 'v-list' }, vaults.map((v) => h('li', { class: v.current ? 'on' : null },
@@ -1714,9 +1728,13 @@ function drawVault() {
       drawNoteList();
     }, 220);
   });
+  const segItems = [
+    ['', t('Todas')],
+    ...Object.entries(DIRS).filter(([d]) => stats.notes[d]).map(([d]) => [d, DIRS_PLURAL[d][0].toUpperCase() + DIRS_PLURAL[d].slice(1)]),
+    ...(VLT.materials.length ? [['material', t('Material')]] : []),
+  ];
   const seg = h('div', { class: 'seg', role: 'group', 'aria-label': t('Carpeta') },
-    [['', t('Todas')], ...Object.entries(DIRS).filter(([d]) => stats.notes[d]).map(([d]) => [d, DIRS_PLURAL[d][0].toUpperCase() + DIRS_PLURAL[d].slice(1)])]
-      .map(([d, label]) => h('button', { type: 'button', 'aria-pressed': String(VLT.dir === d), onclick: () => { VLT.dir = d; drawVault(); } }, label)));
+    segItems.map(([d, label]) => h('button', { type: 'button', 'aria-pressed': String(VLT.dir === d), onclick: () => { VLT.dir = d; drawVault(); } }, label)));
 
   root.replaceChildren(h('div', { class: 'vault' },
     h('p', { class: 'eyebrow' }, t('Vault')),
@@ -1741,6 +1759,21 @@ function drawVault() {
 function drawNoteList() {
   const ul = $('#v-notes');
   if (!ul) return;
+  if (VLT.dir === 'material') {
+    const q = slugify(VLT.q);
+    const mats = VLT.materials.filter((m) => !q || slugify(`${m.topic} ${m.name}`).includes(q));
+    if (!mats.length) { ul.replaceChildren(h('li', { class: 'hint' }, VLT.q ? t('Nada coincide.') : t('Aún no hay archivos de material.'))); return; }
+    ul.replaceChildren(...mats.map((m) => {
+      const href = `/api/material/${encodeURIComponent(m.topic)}/${encodeURIComponent(m.name)}`;
+      return h('li', {},
+        h('a', { class: 'v-open v-mat-link', href, target: '_blank', rel: 'noopener noreferrer' },
+          h('strong', {}, m.name),
+          h('small', {}, `${t('Material')} · ${m.topic} · ${fmtBytes(m.size)} · ${when(m.updated)}`)),
+        h('div', { class: 'v-actions' },
+          h('a', { class: 'icon-btn', href, target: '_blank', rel: 'noopener noreferrer', title: t('Abrir archivo'), 'aria-label': t('Abrir archivo') }, icon('external-link'))));
+    }));
+    return;
+  }
   const rows = VLT.hits || VLT.files.filter((f) => !VLT.q.trim() || slugify(f.title).includes(slugify(VLT.q)));
   const list = rows.filter((f) => !VLT.dir || f.dir === VLT.dir);
   if (!list.length) { ul.replaceChildren(h('li', { class: 'hint' }, VLT.q ? t('Nada coincide.') : t('Aún no hay notas aquí.'))); return; }
@@ -1993,26 +2026,57 @@ function drawProgress() {
         h('span', { class: 'recent-xp' }, `+${ev.xp} XP`));
     })));
 
+  // Collectible flashcards summary in Progreso
+  const cs = st.cards;
+  const rarOrder = ['common', 'rare', 'epic', 'legendary'];
+  const cardsSec = !cs || !cs.total ? null : h('section', { class: 'prog-sec' },
+    h('div', { class: 'prog-sec-head' },
+      h('h3', {}, t('Colección de tarjetas')),
+      h('span', { class: 'hint' }, t('{got} de {total} coleccionadas', { got: cs.collected || 0, total: cs.total }))),
+    h('div', { class: 'rar-summary' }, rarOrder.map((r) => h('div', { class: `rar-pill rar-${r}` },
+      h('span', { class: 'rar-name' }, RARITY_LABEL[r]),
+      h('strong', {}, `${(cs.byRarity && cs.byRarity[r]) || 0} / ${(cs.totals && cs.totals[r]) || 0}`)))));
+
   root.replaceChildren(h('div', { class: 'prog' },
     h('div', { class: 'prog-head' },
       h('h2', {}, t('Progreso')),
       h('button', { class: 'btn small ghost', type: 'button', onclick: () => show('settings') }, icon('settings'), t('Meta diaria de XP'))),
     kpis,
+    cardsSec,
     calendarSec,
     areasSec,
     recentSec));
 }
 
-/* ---------- Practicar ---------- */
+/* ---------- Practicar & Collectible FSRS Flashcards ---------- */
+const RARITY_LABEL = {
+  common: t('Común'),
+  rare: t('Rara'),
+  epic: t('Épica'),
+  legendary: t('Legendaria'),
+};
+const RARITY_XP = { common: 5, rare: 8, epic: 12, legendary: 18 };
+const CARDS = { data: null, scope: 'guide', revealed: false, busy: false, expanded: null };
+
+function fmtInterval(mins) {
+  if (!mins || mins < 60) return t('{m} min', { m: Math.max(1, Math.round(mins || 10)) });
+  if (mins < 60 * 24) return t('{h} h', { h: Math.round(mins / 60) });
+  return tn(Math.round(mins / (60 * 24)), '{n} día', '{n} días');
+}
+
 const STEP_RANK = { new: 0, prepared: 1, tested: 2, explained: 3 };
 function renderPractice() {
   const root = PANE_EL.practice;
   if (!root) return;
   root.replaceChildren();
   const n = S.note;
+  const fcHost = h('div', { id: 'fc-host' });
   if (!n) {
-    root.append(h('div', { class: 'panel-empty' }, h('h3', {}, t('Abre una guía para practicar')),
-      h('p', {}, t('Las preguntas, la explicación con tus palabras y el repaso de conceptos trabajan sobre la guía abierta.')), guideList() || ''));
+    root.append(h('div', { class: 'practice' },
+      h('div', { class: 'panel-empty', style: 'padding-top:12px;padding-bottom:18px' }, h('h3', {}, t('Practicar y tarjetas')),
+        h('p', {}, t('Abre una guía para preguntas y método Feynman, o repasa tus tarjetas coleccionables e importa mazos de Anki.')), guideList() || ''),
+      fcHost));
+    loadFlashcards(fcHost, null);
     return;
   }
   const m = n.meta;
@@ -2031,6 +2095,7 @@ function renderPractice() {
       m.mastery ? h('div', { class: 'mastery' }, h('div', { class: 'row' }, h('span', {}, t('Lo que llevas')), h('span', {}, `${m.mastery}/100`)), h('div', { class: 'bar' }, h('i', { style: `width:${m.mastery}%` }))) : null),
     h('ol', { class: 'sequence', 'aria-label': t('Cómo afianzarlo') }, steps.map((s, i) => h('li', {},
       h('span', { class: `step${i === current ? ' go' : ''}`, 'data-state': s.done ? 'done' : i === current ? 'current' : 'todo' }, h('span', { class: 'step-n' }, s.done ? '✓' : String(i + 1)), s.label)))),
+    fcHost,
     h('section', { class: 'p-card' },
       h('h3', {}, t('Preguntas')),
       h('p', { class: 'hint' }, t('Piden razonar o predecir, no memorizar. Se corrigen al final y el resultado queda en la guía.')),
@@ -2043,49 +2108,165 @@ function renderPractice() {
       h('h3', {}, t('Explícamelo tú')),
       h('p', { class: 'hint' }, t('Me lo explicas como a alguien que no sabe nada. Te señalo los huecos y te pregunto lo que preguntaría un novato.')),
       h('button', { class: 'btn primary small', type: 'button', onclick: () => chatAction({ action: 'feynman' }, t('Quiero explicar «{title}»', { title })) }, t('Empezar a explicar'))),
-    flashcards(n),
     h('section', { class: 'p-card' },
       h('h3', {}, t('Simulación')),
       h('p', { class: 'hint' }, t('Una página interactiva para jugar con el tema, aparte de los visuales de la guía.')),
       n.hasSimulation
         ? h('button', { class: 'btn small', type: 'button', onclick: () => openSim(n.slug, title) }, t('Abrir simulación'))
         : h('button', { class: 'btn small', type: 'button', onclick: () => chatAction({ action: 'interactive', brief: '' }, t('Simulación de «{title}»', { title })) }, t('Generar simulación')))));
+  loadFlashcards(fcHost, n);
 }
 
-// Flashcards from the concept notes: the name on the front, "En una frase" on the back. No model call.
-function flashcards(n) {
-  const list = (n.concepts || []).filter((c) => c.exists);
-  const sec = h('section', { class: 'p-card' }, h('h3', {}, t('Repaso de conceptos')));
-  if (!list.length) { sec.append(h('p', { class: 'hint' }, t('Cuando la guía tenga notas de concepto, aquí podrás repasarlas como tarjetas.'))); return sec; }
-  let i = 0, known = 0, seen = 0;
-  const deck = [...list].sort(() => Math.random() - 0.5);
-  const cache = new Map();
-  const card = h('div', { class: 'flash' });
-  const score = h('p', { class: 'hint' });
-  const flip = () => { card.classList.remove('flip'); void card.offsetWidth; card.classList.add('flip'); };
-  function show1() {
-    const c = deck[i];
-    card.replaceChildren(h('p', { class: 'eyebrow' }, t('Tarjeta {n} de {total}', { n: i + 1, total: deck.length })), h('h4', {}, c.title),
-      h('button', { class: 'btn small yellow', type: 'button', onclick: reveal }, t('Dar la vuelta')));
-    score.textContent = seen ? t('Sabías {known} de {seen}.', { known, seen }) : '';
-    async function reveal() {
-      let text = cache.get(c.slug);
-      if (text == null) {
-        try { const full = await api(`/api/notes/${encodeURIComponent(c.slug)}`); text = sectionOf(full.body, 'En una frase') || c.summary || ''; } catch { text = c.summary || ''; }
-        cache.set(c.slug, text);
-      }
-      flip();
-      card.replaceChildren(h('p', { class: 'eyebrow' }, c.title), mdBlock(text || '_Sin resumen._'),
-        h('div', { class: 'actions' },
-          h('button', { class: 'btn small green', type: 'button', onclick: () => next(true) }, t('Lo sabía')),
-          h('button', { class: 'btn small', type: 'button', onclick: () => next(false) }, t('A repasar')),
-          h('button', { class: 'btn small ghost', type: 'button', onclick: () => openNote(c.slug) }, t('Abrir la nota'))));
-    }
+async function loadFlashcards(host, note) {
+  const deckParam = note && CARDS.scope === 'guide' ? `?deck=${encodeURIComponent(note.slug)}` : '';
+  try {
+    CARDS.data = await api(`/api/cards${deckParam}`);
+    CARDS.revealed = false;
+    drawFlashcards(host, note);
+  } catch (err) {
+    host.replaceChildren(h('p', { class: 'hint' }, err.message));
   }
-  function next(ok) { seen++; if (ok) known++; i = (i + 1) % deck.length; flip(); show1(); }
-  sec.append(h('p', { class: 'hint' }, t('Di la idea en una frase antes de dar la vuelta a la tarjeta.')), card, score);
-  show1();
-  return sec;
+}
+
+function drawFlashcards(host, note) {
+  const data = CARDS.data;
+  if (!data || !host) return;
+  const queue = data.queue || [];
+  const cards = data.cards || [];
+  const decks = data.decks || [];
+  const activeDeck = note ? decks.find((d) => d.slug === note.slug || d.topic === note.slug) : null;
+  const collected = cards.filter((c) => c.collected).length;
+
+  const importInput = h('input', { type: 'file', accept: '.txt,.tsv,.csv', hidden: true });
+  importInput.addEventListener('change', async () => {
+    const f = importInput.files && importInput.files[0];
+    importInput.value = '';
+    if (!f) return;
+    const fd = new FormData();
+    fd.append('file', f, f.name);
+    try {
+      const r = await api('/api/cards/import', { method: 'POST', body: fd });
+      toast(tn(r.total, 'Importada {n} tarjeta desde Anki.', 'Importadas {n} tarjetas desde Anki.'));
+      CARDS.scope = 'all';
+      await loadFlashcards(host, note);
+      loadStats();
+    } catch (err) { toast(err.message); }
+  });
+
+  const genBtn = note ? h('button', {
+    class: 'btn small primary', type: 'button', disabled: CARDS.busy,
+    onclick: async () => {
+      CARDS.busy = true;
+      drawFlashcards(host, note);
+      try {
+        const r = await api('/api/cards/generate', { method: 'POST', body: { slug: note.slug } });
+        toast(tn(r.count, 'Se generó {n} tarjeta coleccionable.', 'Se generaron {n} tarjetas coleccionables.'));
+        CARDS.scope = 'guide';
+        await loadFlashcards(host, note);
+        loadStats();
+      } catch (err) { toast(err.message); } finally {
+        CARDS.busy = false;
+        drawFlashcards(host, note);
+      }
+    },
+  }, icon('sparkles'), CARDS.busy ? t('Generando tarjetas…') : activeDeck ? t('Regenerar tarjetas') : t('Generar tarjetas')) : null;
+
+  const exportHref = activeDeck && CARDS.scope === 'guide'
+    ? `/api/cards/export?deck=${encodeURIComponent(activeDeck.slug)}`
+    : '/api/cards/export';
+
+  const scopeSeg = note ? h('div', { class: 'seg', role: 'group', 'aria-label': t('Mazo') },
+    h('button', { type: 'button', 'aria-pressed': String(CARDS.scope === 'guide'), onclick: () => { CARDS.scope = 'guide'; loadFlashcards(host, note); } }, t('Esta guía')),
+    h('button', { type: 'button', 'aria-pressed': String(CARDS.scope === 'all'), onclick: () => { CARDS.scope = 'all'; loadFlashcards(host, note); } }, t('Todos los mazos'))) : null;
+
+  // Review stage (FSRS queue)
+  let stage;
+  if (queue.length > 0) {
+    const c = queue[0];
+    const rar = c.rarity || 'common';
+    const ivls = c.intervals || {};
+    const rate = async (rating) => {
+      try {
+        const res = await api('/api/cards/review', { method: 'POST', body: { deck: c.deck, cardId: c.id, rating } });
+        if (res.newlyCollected) {
+          toast(t('¡Tarjeta {rarity} coleccionada! +{xp} XP', { rarity: RARITY_LABEL[rar] || rar, xp: res.xpGained }));
+          flashNarval(rar === 'legendary' || rar === 'epic' ? 'celebrando' : 'feliz', 5000);
+        }
+        await loadFlashcards(host, note);
+        loadStats();
+      } catch (err) { toast(err.message); }
+    };
+    stage = h('div', { class: `flash fc-card rar-${rar}` },
+      h('div', { class: 'fc-top' },
+        h('span', { class: `rar-badge rar-${rar}` }, RARITY_LABEL[rar] || rar, ` · +${RARITY_XP[rar] || 5} XP`),
+        h('span', { class: 'fc-meta' }, `${c.deckTitle} · ${tn(queue.length, '{n} para hoy', '{n} para hoy')}`)),
+      h('div', { class: 'fc-front' }, mdBlock(c.front)),
+      CARDS.revealed
+        ? h('div', { class: 'fc-back' },
+          h('hr'),
+          mdBlock(c.back),
+          h('div', { class: 'fc-ratings' },
+            h('button', { class: 'btn small fc-r1', type: 'button', onclick: () => rate(1) }, h('strong', {}, t('Otra vez')), h('small', {}, fmtInterval(ivls[1]))),
+            h('button', { class: 'btn small fc-r2', type: 'button', onclick: () => rate(2) }, h('strong', {}, t('Difícil')), h('small', {}, fmtInterval(ivls[2]))),
+            h('button', { class: 'btn small fc-r3', type: 'button', onclick: () => rate(3) }, h('strong', {}, t('Bien')), h('small', {}, fmtInterval(ivls[3]))),
+            h('button', { class: 'btn small fc-r4', type: 'button', onclick: () => rate(4) }, h('strong', {}, t('Fácil')), h('small', {}, fmtInterval(ivls[4])))))
+        : h('div', { class: 'actions' },
+          h('button', { class: 'btn small primary', type: 'button', onclick: () => { CARDS.revealed = true; drawFlashcards(host, note); } }, t('Dar la vuelta'))));
+  } else if (cards.length > 0) {
+    stage = h('p', { class: 'hint fc-done' }, t('¡Al día! No tienes tarjetas pendientes por ahora. Vuelve cuando toque el próximo repaso.'));
+  } else {
+    stage = h('p', { class: 'hint' }, t('Genera tarjetas coleccionables desde la guía o importa un mazo de Anki (.txt) para empezar a repasar con FSRS.'));
+  }
+
+  // Collectible Album grid for current scope
+  const albumSec = cards.length === 0 ? null : h('div', { class: 'fc-album' },
+    h('div', { class: 'fc-album-head' },
+      h('strong', {}, t('Colección')),
+      h('span', { class: 'hint' }, t('{got} de {total} coleccionadas', { got: collected, total: cards.length }))),
+    h('div', { class: 'fc-grid' }, cards.map((c) => {
+      const rar = c.rarity || 'common';
+      const open = CARDS.expanded === `${c.deck}:${c.id}`;
+      return h('button', {
+        type: 'button',
+        class: `fc-tile rar-${rar}${c.collected ? ' unlocked' : ' locked'}${open ? ' open' : ''}`,
+        onclick: () => {
+          if (!c.collected) return;
+          CARDS.expanded = open ? null : `${c.deck}:${c.id}`;
+          drawFlashcards(host, note);
+        },
+      },
+      h('span', { class: `rar-badge rar-${rar}` }, RARITY_LABEL[rar] || rar),
+      c.collected
+        ? h('div', { class: 'fc-tile-body' },
+          h('strong', {}, c.front),
+          open ? h('p', { class: 'fc-tile-ans' }, c.back) : null)
+        : h('div', { class: 'fc-tile-locked' }, h('span', {}, '?'), h('small', {}, t('Por coleccionar'))));
+    })));
+
+  // Imported / unguided decks -> one-click "Crear guía" (with concepts left in pending iceberg!)
+  const unguided = decks.filter((d) => !d.hasGuide);
+  const ankiGuidesSec = unguided.length === 0 ? null : h('div', { class: 'fc-anki-decks' },
+    h('strong', {}, t('Mazos sin guía')),
+    h('p', { class: 'hint' }, t('Crea una guía a partir de tus tarjetas importadas; los conceptos previos quedarán bajo el agua en el iceberg para explicarlos cuando quieras.')),
+    h('ul', { class: 'fc-deck-list' }, unguided.map((d) => h('li', {},
+      h('div', {}, h('strong', {}, d.title), h('small', {}, tn(d.total, '{n} tarjeta', '{n} tarjetas'))),
+      h('button', {
+        class: 'btn small primary', type: 'button',
+        onclick: () => chatAction({ action: 'deck-guide', deck: d.slug }, t('Crear guía desde el mazo «{title}»', { title: d.title })),
+      }, icon('sparkles'), t('Crear guía'))))));
+
+  host.replaceChildren(h('section', { class: 'p-card fc-studio' },
+    h('div', { class: 'fc-head' },
+      h('h3', {}, t('Tarjetas coleccionables')),
+      scopeSeg),
+    h('div', { class: 'actions fc-tools' },
+      genBtn,
+      h('button', { class: 'btn small', type: 'button', onclick: () => importInput.click() }, icon('download'), t('Importar Anki')),
+      decks.length ? h('a', { class: 'btn small ghost', href: exportHref, download: '' }, icon('external-link'), t('Exportar a Anki')) : null,
+      importInput),
+    stage,
+    albumSec,
+    ankiGuidesSec));
 }
 
 /* ---------- Mapa ---------- */

@@ -18,10 +18,11 @@ import (
 // GuideReq asks for a study guide and, below it, the concept notes it stands on.
 type GuideReq struct {
 	Topic  string
-	Focus  string // what the learner wants out of it, free text
-	Source string // roadmap | material | daily | adhoc
-	Depth  int    // levels of prerequisites that get their own note; 0 is the guide alone
-	Auto   bool   // write the planned concept notes without asking (a roadmap topic: its depth was chosen already)
+	Focus  string   // what the learner wants out of it, free text
+	Source string   // roadmap | material | daily | adhoc
+	Depth  int      // levels of prerequisites that get their own note; 0 is the guide alone
+	Auto   bool     // write the planned concept notes without asking (a roadmap topic: its depth was chosen already)
+	Files  []string // optional source files attached by the learner, copied into vault/material/<slug>/
 }
 
 // MaxDepth bounds how far down the prerequisites a plan goes.
@@ -723,6 +724,21 @@ func (s *Session) writeGuide(ctx context.Context, note *vault.Note, req GuideReq
 		}
 	}
 	note.Body = s.guideBody(note.Body, guide, resources)
+	if len(req.Files) > 0 {
+		seen := map[string]bool{}
+		for _, m := range note.Meta.Materials {
+			seen[m] = true
+		}
+		for _, src := range req.Files {
+			if rel, err := s.V.CopyMaterial(note.Slug, src); err == nil && !seen[rel] {
+				seen[rel] = true
+				note.Meta.Materials = append(note.Meta.Materials, rel)
+			}
+		}
+	}
+	if len(note.Meta.Materials) > 0 {
+		note.Body = vault.ReplaceSection(note.Body, s.h("Material"), materialLines(note.Meta.Materials))
+	}
 	if err := s.V.Save(*note); err != nil {
 		return err
 	}

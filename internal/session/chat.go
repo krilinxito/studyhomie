@@ -41,6 +41,7 @@ type ChatAction struct {
 	Save       bool   `json:"save,omitempty"`
 	Reach      int    `json:"reach,omitempty"`   // roadmap: how much of the field it covers (1-3); 0 asks
 	Roadmap    string `json:"roadmap,omitempty"` // next: the roadmap whose current topic to open
+	Deck       string `json:"deck,omitempty"`    // deck-guide: flashcard deck slug to build a guide from
 }
 
 // ChatOpts starts a chat.
@@ -87,6 +88,7 @@ func (s *Session) Chat(ctx context.Context, o ChatOpts) error {
 	history := strings.TrimSpace(o.History)
 	depth := s.Cfg.Depth
 	next := o.First
+	var pendingFiles []string
 	for {
 		var m ChatMsg
 		if next != nil {
@@ -111,12 +113,13 @@ func (s *Session) Chat(ctx context.Context, o ChatOpts) error {
 		case m.Material && len(m.Files) > 0:
 			guide, err = s.chatMaterial(ctx, m.Files, guide, depth)
 		case m.Action != nil:
-			guide, err = s.runAction(ctx, *m.Action, guide, depth)
+			guide, err = s.runAction(ctx, *m.Action, guide, depth, nil)
 		case strings.TrimSpace(m.Text) == "" && len(m.Files) == 0:
 			continue
 		default:
 			text := m.Text
 			if len(m.Files) > 0 {
+				pendingFiles = append([]string(nil), m.Files...)
 				names := make([]string, len(m.Files))
 				for i, f := range m.Files {
 					names[i] = filepath.Base(f)
@@ -139,7 +142,11 @@ func (s *Session) Chat(ctx context.Context, o ChatOpts) error {
 						s.saveDoubt(guide, m.Text, answer)
 					}
 				} else {
-					guide, err = s.runAction(ctx, *act, guide, depth)
+					filesForGuide := pendingFiles
+					if act.Action == "guide" {
+						pendingFiles = nil
+					}
+					guide, err = s.runAction(ctx, *act, guide, depth, filesForGuide)
 				}
 			}
 		}
@@ -216,7 +223,7 @@ func (s *Session) chatTurn(ctx context.Context, c *Convo, prompt string) (string
 func utf8Start(b byte) bool { return b&0xC0 != 0x80 }
 
 // runAction runs one flow and returns the guide the chat is about afterwards.
-func (s *Session) runAction(ctx context.Context, a ChatAction, guide string, depth int) (string, error) {
+func (s *Session) runAction(ctx context.Context, a ChatAction, guide string, depth int, files []string) (string, error) {
 	needGuide := func() error {
 		if guide == "" {
 			return inputErrorf("primero abre o genera una guía")
@@ -233,7 +240,7 @@ func (s *Session) runAction(ctx context.Context, a ChatAction, guide string, dep
 		if topic == "" {
 			return guide, inputErrorf("¿de qué tema hago la guía?")
 		}
-		slug, err := s.Guide(ctx, GuideReq{Topic: topic, Focus: a.Focus, Depth: d, Source: "adhoc"})
+		slug, err := s.Guide(ctx, GuideReq{Topic: topic, Focus: a.Focus, Depth: d, Source: "adhoc", Files: files})
 		if err != nil || slug == "" {
 			return guide, err
 		}
@@ -285,6 +292,12 @@ func (s *Session) runAction(ctx context.Context, a ChatAction, guide string, dep
 		return s.currentGuide(rslug, guide), nil
 	case "next":
 		slug, err := s.NextGuide(ctx, vault.Slugify(a.Roadmap))
+		if err != nil || slug == "" {
+			return guide, err
+		}
+		return slug, nil
+	case "deck-guide":
+		slug, err := s.GuideFromDeck(ctx, a.Deck)
 		if err != nil || slug == "" {
 			return guide, err
 		}
