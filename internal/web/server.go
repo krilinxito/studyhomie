@@ -134,6 +134,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/update/restart", s.restartNow)
 	mux.HandleFunc("GET /api/graph", s.graph)
 	mux.HandleFunc("GET /api/notes/{slug}", s.note)
+	mux.HandleFunc("DELETE /api/notes/{slug}", s.deleteNote)
 	mux.HandleFunc("POST /api/notes/{slug}/extend", s.extend)
 	mux.HandleFunc("POST /api/notes/{slug}/doubt", s.doubt)
 	mux.HandleFunc("POST /api/notes/{slug}/concept", s.concept)

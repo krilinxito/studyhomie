@@ -135,6 +135,7 @@
       </div>
       <div class="map-wrap">
         <div id="cy" role="img" aria-label="Mapa: cada guía con los conceptos en que se apoya" data-i18n-aria-label="Mapa: cada guía con los conceptos en que se apoya"></div>
+        <div class="map-node-bar" id="map-node-bar" hidden></div>
         <div class="empty" id="map-empty" hidden>
           <h3 id="map-empty-title" data-i18n="Tu mapa está vacío">Tu mapa está vacío</h3>
           <p id="map-empty-text" data-i18n="Pide una guía en el chat. Cada guía y sus conceptos aparecerán aquí, conectados.">Pide una guía en el chat. Cada guía y sus conceptos aparecerán aquí, conectados.</p>
@@ -169,6 +170,15 @@
     <div class="dlg-head"><strong id="update-title" data-i18n="Versión nueva">Versión nueva</strong><button class="icon-btn" type="button" id="update-close" aria-label="Cerrar" data-i18n-aria-label="Cerrar"><svg class="ic"><use href="icons.svg#i-x"/></svg></button></div>
     <div class="update-body" id="update-body"></div>
     <div class="update-foot" id="update-foot"></div>
+  </dialog>
+
+  <dialog id="confirm-dialog" aria-labelledby="confirm-title">
+    <div class="dlg-head"><strong id="confirm-title"></strong><button class="icon-btn" type="button" id="confirm-close" aria-label="Cerrar" data-i18n-aria-label="Cerrar"><svg class="ic"><use href="icons.svg#i-x"/></svg></button></div>
+    <p class="confirm-body" id="confirm-body"></p>
+    <div class="confirm-foot">
+      <button class="btn small ghost" type="button" id="confirm-cancel" data-i18n="Cancelar">Cancelar</button>
+      <button class="btn small danger" type="button" id="confirm-ok" data-i18n="Borrar">Borrar</button>
+    </div>
   </dialog>
 
   <dialog id="tutorial-dialog" aria-labelledby="tut-title">

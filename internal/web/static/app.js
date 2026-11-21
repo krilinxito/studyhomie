@@ -1015,6 +1015,62 @@ function closeGuide() {
   renderPractice();
 }
 
+// Confirmation modal for deleting guides or concepts from lists, readers, or the Map.
+let confirmResolve = null;
+function askConfirm(title, body, okLabel = t('Borrar')) {
+  const dlg = $('#confirm-dialog');
+  if (!dlg) return Promise.resolve(false);
+  $('#confirm-title').textContent = title;
+  $('#confirm-body').textContent = body;
+  $('#confirm-ok').textContent = okLabel;
+  return new Promise((resolve) => {
+    confirmResolve = resolve;
+    if (!dlg.open) dlg.showModal();
+  });
+}
+function finishConfirm(ok) {
+  const dlg = $('#confirm-dialog');
+  if (dlg && dlg.open) dlg.close();
+  const r = confirmResolve;
+  confirmResolve = null;
+  if (r) r(ok);
+}
+$('#confirm-ok').addEventListener('click', () => finishConfirm(true));
+$('#confirm-cancel').addEventListener('click', () => finishConfirm(false));
+$('#confirm-close').addEventListener('click', () => finishConfirm(false));
+$('#confirm-dialog').addEventListener('cancel', (e) => { e.preventDefault(); finishConfirm(false); });
+
+async function deleteNote(slug, title, kind = 'guide') {
+  const isConcept = kind === 'concept';
+  const ok = await askConfirm(
+    isConcept ? t('¿Borrar el concepto «{title}»?', { title }) : t('¿Borrar la guía «{title}»?', { title }),
+    isConcept
+      ? t('Se eliminará esta nota de concepto del vault.')
+      : t('Se eliminará la guía del vault. Sus conceptos compartidos se conservan.'),
+  );
+  if (!ok) return;
+  try {
+    await api(`/api/notes/${encodeURIComponent(slug)}`, { method: 'DELETE' });
+    hideMapNodeBar();
+    if (S.concept && S.concept.slug === slug) S.concept = null;
+    if (S.guide === slug) {
+      S.note = null; S.guide = ''; S.concept = null;
+      store.set('guide', '');
+    }
+    await loadGraph();
+    if (S.guide) await reloadGuide();
+    else {
+      renderReader(null);
+      renderConcepts();
+      renderPractice();
+    }
+    loadStats();
+    toast(isConcept ? t('Concepto borrado.') : t('Guía borrada.'));
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
 // wikilinks and simulation links rendered anywhere in the app
 document.addEventListener('click', (e) => {
   const a = e.target.closest('a[href^="#note/"], a[href^="#sim/"]');
@@ -1165,9 +1221,13 @@ function guideList() {
     h('p', { class: 'rm-hint' }, roadmapHint(roadmapOf(k))),
     roadmapPath(roadmapOf(k))) : h('section', { class: 'dg' },
     h('h3', {}, k ? groupTitle(k) : t('Tus guías')),
-    h('ul', {}, groups.get(k).sort((a, b) => (a.order || 0) - (b.order || 0) || a.label.localeCompare(b.label)).map((n) => h('li', {},
+    h('ul', {}, groups.get(k).sort((a, b) => (a.order || 0) - (b.order || 0) || a.label.localeCompare(b.label)).map((n) => h('li', { class: 'dg-row' },
       h('button', { class: 'dn', type: 'button', style: `--lc: ${lineColor(n.group)}`, onclick: () => openNote(n.id) },
-        h('i', { class: `st st-${n.status}`, title: STATUS[n.status] || n.status }), n.label)))))));
+        h('i', { class: `st st-${n.status}`, title: STATUS[n.status] || n.status }), n.label),
+      h('button', {
+        class: 'icon-btn del-btn', type: 'button', title: t('Borrar {title}', { title: n.label }), 'aria-label': t('Borrar {title}', { title: n.label }),
+        onclick: (e) => { e.stopPropagation(); deleteNote(n.id, n.label, 'guide'); },
+      }, icon('trash-2'))))))));
 }
 
 // the end of a roadmap guide: what unlocks the next topic, or the way to it
@@ -1225,7 +1285,8 @@ function renderReader(n) {
         icon('mountain-snow'), tn(concepts.length, '{n} concepto', '{n} conceptos') + (under ? ' · ' + t('{n} bajo el agua', { n: under }) : '')) : null,
       status !== 'new' ? h('button', { class: 'btn small', type: 'button', onclick: () => show('practice') }, icon('target'), t('Practicar')) : null,
       notesButton(n.slug, title, n.apunte),
-      h('button', { class: 'btn small ghost', type: 'button', onclick: () => askAbout(t('Sobre «{title}»:', { title }) + ' ') }, icon('message-circle'), t('Preguntar')))));
+      h('button', { class: 'btn small ghost', type: 'button', onclick: () => askAbout(t('Sobre «{title}»:', { title }) + ' ') }, icon('message-circle'), t('Preguntar')),
+      h('button', { class: 'btn small ghost ghost-danger', type: 'button', title: t('Borrar {title}', { title }), onclick: () => deleteNote(n.slug, title, 'guide') }, icon('trash-2'), t('Borrar')))));
 
   const article = h('article', { class: 'r-article' });
   const bodySrc = stripEmoji(stripSection(stripSection(stripSection(n.body, 'Recursos'), 'Material'), 'Actividades')).trim();
@@ -1403,7 +1464,12 @@ function renderConcepts() {
     box.append(h('details', { class: 'all-concepts', open: !n || null },
       h('summary', {}, t('Todos tus conceptos ({n})', { n: all.length })),
       [...byCat].sort((a, b) => a[0].localeCompare(b[0])).map(([cat, list]) => h('section', { class: 'dg' }, h('h3', {}, cat),
-        h('div', { class: 'links' }, list.sort((a, b) => a.label.localeCompare(b.label)).map((c) => h('button', { type: 'button', onclick: () => openNote(c.id) }, c.label)))))));
+        h('div', { class: 'links' }, list.sort((a, b) => a.label.localeCompare(b.label)).map((c) => h('span', { class: 'c-chip' },
+          h('button', { type: 'button', onclick: () => openNote(c.id) }, c.label),
+          h('button', {
+            class: 'icon-btn del-btn', type: 'button', title: t('Borrar {title}', { title: c.label }), 'aria-label': t('Borrar {title}', { title: c.label }),
+            onclick: (e) => { e.stopPropagation(); deleteNote(c.id, c.label, 'concept'); },
+          }, icon('trash-2')))))))));
   } else if (!n) {
     box.append(h('div', { class: 'panel-empty' }, h('h3', {}, t('Aún no hay conceptos')), h('p', {}, t('Cuando pidas una guía, aquí verás su iceberg: lo que tiene nota y lo que queda por explicar.'))));
   }
@@ -1627,7 +1693,8 @@ function conceptReader(c) {
       (m.aliases || []).length ? h('div', { class: 'chips' }, m.aliases.map((a) => h('span', { class: 'chip' }, a))) : null,
       (c.requires || []).length ? h('div', { class: 'c-req' }, h('span', { class: 'hint' }, t('Se apoya en')), h('div', { class: 'links' }, c.requires.map((l) => h('button', { type: 'button', onclick: () => (writtenNode(l.slug) ? openNote(l.slug) : explainConcept(l.slug, { title: l.title, guide: owningGuide(l.slug) })) }, l.title)))) : null,
       h('div', { class: 'actions' }, notesButton(c.slug, m.title || c.slug, c.apunte),
-        h('button', { class: 'btn small ghost', type: 'button', onclick: () => askAbout(t('Sobre «{title}»:', { title: m.title }) + ' ') }, icon('message-circle'), t('Preguntar')))),
+        h('button', { class: 'btn small ghost', type: 'button', onclick: () => askAbout(t('Sobre «{title}»:', { title: m.title }) + ' ') }, icon('message-circle'), t('Preguntar')),
+        h('button', { class: 'btn small ghost ghost-danger', type: 'button', title: t('Borrar {title}', { title: m.title || c.slug }), onclick: () => deleteNote(c.slug, m.title || c.slug, 'concept') }, icon('trash-2'), t('Borrar')))),
     h('article', { class: 'r-article' }, mdBlock(stripSection(body, 'Aparece en'), { viz: vizCtx(c.slug) }),
       (c.guides || []).length ? h('section', { class: 'r-next' }, h('h2', {}, t('Aparece en')),
         c.guides.map((g) => h('button', { class: 'neighbor', type: 'button', onclick: () => openNote(g.slug) }, h('small', {}, t('Guía')), h('strong', {}, g.title)))) : null));
@@ -2651,6 +2718,37 @@ async function loadGraph() {
   await drawMap();
 }
 
+let mapSelectedNode = null;
+function hideMapNodeBar() {
+  mapSelectedNode = null;
+  const bar = $('#map-node-bar');
+  if (bar) bar.hidden = true;
+}
+function showMapNodeBar(node) {
+  const bar = $('#map-node-bar');
+  if (!bar || !node || node.hasClass('grouplabel')) { hideMapNodeBar(); return; }
+  const id = node.id();
+  const label = node.data('label') || id;
+  const kind = node.data('kind') || 'guide';
+  if (kind === 'pending') { hideMapNodeBar(); return; }
+  mapSelectedNode = { id, label, kind };
+  bar.replaceChildren(
+    h('span', { class: 'map-node-kind' }, kind === 'concept' ? t('Concepto') : t('Guía')),
+    h('span', { class: 'map-node-name', title: label }, label),
+    h('button', { class: 'btn small', type: 'button', onclick: () => openNote(id, { quiet: false }) }, icon('book-open'), t('Abrir')),
+    h('button', { class: 'btn small ghost ghost-danger', type: 'button', onclick: () => deleteNote(id, label, kind) }, icon('trash-2'), t('Borrar')),
+    h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('Cerrar'), onclick: hideMapNodeBar }, icon('x')));
+  bar.hidden = false;
+}
+document.addEventListener('keydown', (e) => {
+  if ((e.key === 'Delete' || e.key === 'Backspace') && mapSelectedNode && isShown('map')) {
+    const tag = (document.activeElement && document.activeElement.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    e.preventDefault();
+    deleteNote(mapSelectedNode.id, mapSelectedNode.label, mapSelectedNode.kind);
+  }
+});
+
 // The map shows the chat that is open, or every chat: S.graph stays the whole vault either way.
 S.mapScope = store.get('mapScope', 'chat');
 async function drawMap() {
@@ -2682,9 +2780,21 @@ async function drawMap() {
     S.cy.on('tap', 'node', (ev) => {
       const n = ev.target;
       if (n.hasClass('grouplabel')) return;
-      if (n.data('kind') === 'pending') explainConcept(n.id(), { guide: (n.data('grp') || '').replace(/^g:/, '') || S.guide, title: n.data('label') });
-      else openNote(n.id(), { quiet: false });
+      if (n.data('kind') === 'pending') {
+        hideMapNodeBar();
+        explainConcept(n.id(), { guide: (n.data('grp') || '').replace(/^g:/, '') || S.guide, title: n.data('label') });
+      } else {
+        showMapNodeBar(n);
+        openNote(n.id(), { quiet: false });
+      }
     });
+    S.cy.on('cxttap', 'node', (ev) => {
+      const n = ev.target;
+      if (n.hasClass('grouplabel')) return;
+      n.select();
+      showMapNodeBar(n);
+    });
+    S.cy.on('tap', (ev) => { if (ev.target === S.cy) hideMapNodeBar(); });
     new ResizeObserver(() => fitMap()).observe($('#cy'));
   }
   if (same) {

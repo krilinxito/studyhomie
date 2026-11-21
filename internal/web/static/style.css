@@ -1061,6 +1061,37 @@ html.fs .dock { padding: 0; }
 .act-input { width: 100%; resize: vertical; min-height: 70px; padding: 9px 11px; border-radius: var(--r-sm); border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: 13.5px/1.5 var(--font); }
 .act-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent); }
 
+/* Deleting guides & concepts from lists, readers, and Map */
+.dg li.dg-row { display: flex; align-items: center; gap: 4px; }
+.dg li.dg-row .dn { flex: 1; min-width: 0; }
+.del-btn { width: 28px; height: 28px; flex: none; opacity: 0; color: var(--muted); transition: opacity .15s, color .15s, background-color .15s; }
+.dg-row:hover .del-btn, .dg-row:focus-within .del-btn, .c-chip:hover .del-btn, .c-chip:focus-within .del-btn { opacity: 1; }
+.del-btn:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.c-chip { display: inline-flex; align-items: center; border-radius: 99px; border: 1px solid var(--line); background: var(--surface); overflow: hidden; transition: border-color .15s; }
+.c-chip:hover { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+.c-chip > button:first-child { border: 0; border-radius: 0; background: none; padding: 5px 10px 5px 12px; }
+.c-chip .del-btn { width: 24px; height: 24px; margin-right: 3px; border-radius: 99px; }
+.c-chip .del-btn .ic { width: 13px; height: 13px; }
+.btn.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.btn.danger:hover { filter: brightness(1.06); }
+.btn.ghost-danger:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+
+.map-node-bar {
+  position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 25;
+  display: inline-flex; align-items: center; gap: 8px; max-width: calc(100% - 24px);
+  padding: 7px 10px 7px 14px; border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent); border: 1px solid var(--line);
+  box-shadow: var(--shadow-lg); backdrop-filter: blur(10px); animation: pop .15s var(--ease);
+}
+.map-node-bar[hidden] { display: none; }
+.map-node-name { font-size: 13px; font-weight: 620; max-width: 26ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.map-node-kind { font: 600 10.5px var(--mono); text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+
+#confirm-dialog { width: min(420px, 92vw); padding: 0; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); color: var(--ink); box-shadow: var(--shadow-lg); }
+#confirm-dialog::backdrop { background: rgba(12, 9, 20, .55); backdrop-filter: blur(3px); }
+.confirm-body { margin: 0; padding: 14px 18px 18px; font-size: 14px; line-height: 1.5; color: var(--muted); }
+.confirm-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--line); background: var(--surface-2); }
+
 /* a phone: one group of tabs */
 @media (max-width: 880px) {
   .top { padding: 8px 10px 0; height: 48px; }

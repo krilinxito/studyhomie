@@ -132,62 +132,162 @@ func buildInteractivePrelude(libs []string, theme, lang string) string {
 
 const shBaseCSS = `
 :root {
-  --sh-bg: #f7f6f9;
+  --sh-bg: #f6f5f9;
+  --sh-stage: #fbfafd;
   --sh-surface: #ffffff;
-  --sh-surface-2: #f4f2f7;
-  --sh-ink: #1d1a24;
-  --sh-muted: #6e687b;
-  --sh-line: #e4dfec;
-  --sh-grid: rgba(46, 32, 72, .08);
-  --sh-accent: #7c5fd3;
-  --sh-accent-2: #9d84e3;
-  --sh-accent-soft: #f1ecfc;
-  --sh-ok: #16a34a;
+  --sh-surface-2: #f1eff6;
+  --sh-ink: #1a1722;
+  --sh-muted: #686277;
+  --sh-line: rgba(34, 24, 62, .12);
+  --sh-grid: rgba(46, 32, 72, .075);
+  --sh-grid-major: rgba(46, 32, 72, .14);
+  --sh-accent: #6d52c7;
+  --sh-accent-2: #8c72df;
+  --sh-accent-soft: rgba(109, 82, 199, .12);
+  --sh-blue: #2563eb;
+  --sh-teal: #0d9488;
+  --sh-amber: #d97706;
+  --sh-ok: #0d9488;
   --sh-warn: #d97706;
   --sh-danger: #dc2626;
-  --sh-font: system-ui, -apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --sh-font: "Inter var", Inter, system-ui, -apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
   --sh-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color-scheme: light;
 }
 :root[data-theme="dark"] {
-  --sh-bg: #100e14;
-  --sh-surface: #18151d;
-  --sh-surface-2: #211d28;
-  --sh-ink: #ece8f2;
-  --sh-muted: #a09aab;
-  --sh-line: #2e2936;
-  --sh-grid: rgba(236, 225, 255, .07);
-  --sh-accent: #b9a2f2;
-  --sh-accent-2: #cfbff7;
-  --sh-accent-soft: rgba(185, 162, 242, .14);
-  --sh-ok: #34d399;
+  --sh-bg: #111217;
+  --sh-stage: #15171e;
+  --sh-surface: #1b1e27;
+  --sh-surface-2: #242834;
+  --sh-ink: #edf0f7;
+  --sh-muted: #939bb0;
+  --sh-line: rgba(255, 255, 255, .10);
+  --sh-grid: rgba(255, 255, 255, .045);
+  --sh-grid-major: rgba(255, 255, 255, .09);
+  --sh-accent: #a792f2;
+  --sh-accent-2: #c5b5fa;
+  --sh-accent-soft: rgba(167, 146, 242, .15);
+  --sh-blue: #60a5fa;
+  --sh-teal: #2dd4bf;
+  --sh-amber: #fbbf24;
+  --sh-ok: #2dd4bf;
   --sh-warn: #fbbf24;
   --sh-danger: #f87171;
   color-scheme: dark;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --sh-bg: #100e14;
-    --sh-surface: #18151d;
-    --sh-surface-2: #211d28;
-    --sh-ink: #ece8f2;
-    --sh-muted: #a09aab;
-    --sh-line: #2e2936;
-    --sh-grid: rgba(236, 225, 255, .07);
-    --sh-accent: #b9a2f2;
-    --sh-accent-2: #cfbff7;
-    --sh-accent-soft: rgba(185, 162, 242, .14);
-    --sh-ok: #34d399;
+    --sh-bg: #111217;
+    --sh-stage: #15171e;
+    --sh-surface: #1b1e27;
+    --sh-surface-2: #242834;
+    --sh-ink: #edf0f7;
+    --sh-muted: #939bb0;
+    --sh-line: rgba(255, 255, 255, .10);
+    --sh-grid: rgba(255, 255, 255, .045);
+    --sh-grid-major: rgba(255, 255, 255, .09);
+    --sh-accent: #a792f2;
+    --sh-accent-2: #c5b5fa;
+    --sh-accent-soft: rgba(167, 146, 242, .15);
+    --sh-blue: #60a5fa;
+    --sh-teal: #2dd4bf;
+    --sh-amber: #fbbf24;
+    --sh-ok: #2dd4bf;
     --sh-warn: #fbbf24;
     --sh-danger: #f87171;
     color-scheme: dark;
   }
 }
-html, body { margin: 0; background: var(--sh-bg); color: var(--sh-ink); font-family: var(--sh-font); }
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; background: var(--sh-bg); color: var(--sh-ink); font: 13.5px/1.45 var(--sh-font); -webkit-font-smoothing: antialiased; font-variant-numeric: tabular-nums; }
+
+/* Studio Instrument primitives: native controls look crisp and hardware-inspired by default */
+button, select {
+  font: 550 12.5px/1 var(--sh-font); color: var(--sh-ink);
+  background: var(--sh-surface-2); border: 1px solid var(--sh-line);
+  border-radius: 7px; padding: 7px 11px; cursor: pointer;
+  transition: background-color .14s, border-color .14s, color .14s, transform .1s;
+}
+button:hover:not(:disabled), select:hover:not(:disabled) { border-color: color-mix(in srgb, var(--sh-ink) 28%, transparent); }
+button:active:not(:disabled) { transform: translateY(1px); }
+button:disabled { opacity: .45; cursor: default; }
+
+input[type="range"] {
+  -webkit-appearance: none; appearance: none; background: transparent; cursor: pointer; height: 22px; min-width: 90px;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 99px; background: var(--sh-line);
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 14px; height: 14px; margin-top: -5px; border-radius: 50%;
+  background: var(--sh-ink); border: 2px solid var(--sh-surface);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .35); transition: transform .12s, background-color .12s;
+}
+input[type="range"]:hover::-webkit-slider-thumb { background: var(--sh-accent); transform: scale(1.12); }
+input[type="range"]::-moz-range-track { height: 4px; border-radius: 99px; background: var(--sh-line); }
+input[type="range"]::-moz-range-thumb {
+  width: 14px; height: 14px; border-radius: 50%; background: var(--sh-ink); border: 2px solid var(--sh-surface);
+}
+
+/* Studio layout blocks used across labs */
+.lab { display: flex; flex-direction: column; width: 100%; background: var(--sh-bg); color: var(--sh-ink); }
+.lab-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  padding: 9px 14px; background: var(--sh-surface); border-bottom: 1px solid var(--sh-line); min-height: 44px;
+}
+.lab-goal { font-size: 13px; color: var(--sh-muted); font-weight: 500; }
+.lab-goal strong { color: var(--sh-ink); font-weight: 620; }
+.lab-group { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.lab-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 11px; border-radius: 7px; font-weight: 600; }
+.lab-btn.primary { background: var(--sh-teal); border-color: transparent; color: #081c1a; }
+.lab-btn.primary:hover { filter: brightness(1.06); border-color: transparent; }
+.lab-btn.active { background: var(--sh-accent-soft); border-color: var(--sh-accent); color: var(--sh-accent); }
+.lab-seg { display: inline-flex; padding: 2px; border-radius: 8px; background: var(--sh-bg); border: 1px solid var(--sh-line); gap: 2px; }
+.lab-seg button { border: 0; background: transparent; padding: 5px 10px; border-radius: 6px; color: var(--sh-muted); }
+.lab-seg button[aria-pressed="true"], .lab-seg button.active { background: var(--sh-surface-2); color: var(--sh-ink); }
+.lab-pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 7px; background: var(--sh-bg); border: 1px solid var(--sh-line); font: 600 12px var(--sh-mono); }
+
+.lab-stage {
+  position: relative; width: 100%; min-height: 320px; background-color: var(--sh-stage);
+  touch-action: none; user-select: none; overflow: hidden;
+}
+.lab-grid {
+  background-image:
+    linear-gradient(var(--sh-grid-major) 1px, transparent 1px),
+    linear-gradient(90deg, var(--sh-grid-major) 1px, transparent 1px),
+    linear-gradient(var(--sh-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--sh-grid) 1px, transparent 1px);
+  background-size: 96px 96px, 96px 96px, 24px 24px, 24px 24px;
+}
+.lab-dots {
+  background-image: radial-gradient(var(--sh-grid-major) 1.1px, transparent 1.2px);
+  background-size: 20px 20px;
+}
+
+.lab-hud {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  background: var(--sh-surface); border-top: 1px solid var(--sh-line);
+}
+.lab-metric {
+  padding: 11px 14px; border-right: 1px solid var(--sh-line); border-bottom: 1px solid var(--sh-line);
+  display: flex; flex-direction: column; gap: 3px; min-width: 0;
+}
+.lab-metric:last-child { border-right: 0; }
+.lab-metric.is-ok { background: color-mix(in srgb, var(--sh-ok) 10%, var(--sh-surface)); box-shadow: inset 2.5px 0 0 var(--sh-ok); }
+.lab-metric.is-warn { background: color-mix(in srgb, var(--sh-warn) 10%, var(--sh-surface)); box-shadow: inset 2.5px 0 0 var(--sh-warn); }
+.lab-metric.is-accent { background: color-mix(in srgb, var(--sh-accent) 10%, var(--sh-surface)); box-shadow: inset 2.5px 0 0 var(--sh-accent); }
+.lab-k { font: 650 10px/1.2 var(--sh-mono); letter-spacing: .09em; text-transform: uppercase; color: var(--sh-muted); }
+.lab-v { font: 650 14.5px/1.3 var(--sh-mono); color: var(--sh-ink); }
+.lab-s { font: 500 11.5px/1.35 var(--sh-font); color: var(--sh-muted); }
+.lab-dock {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 9px 14px; background: var(--sh-bg); border-top: 1px solid var(--sh-line);
+}
+
 .sh-offline-banner {
-  margin: 16px; padding: 14px 16px; border-radius: 12px;
+  margin: 16px; padding: 14px 16px; border-radius: 10px;
   background: var(--sh-surface); border: 1px solid var(--sh-warn);
-  color: var(--sh-ink); font: 14px/1.5 var(--sh-font);
+  color: var(--sh-ink); font: 13.5px/1.5 var(--sh-font);
 }
 .sh-offline-banner strong { color: var(--sh-warn); display: block; margin-bottom: 4px; }
 `

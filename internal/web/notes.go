@@ -342,6 +342,37 @@ func (s *Server) note(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// deleteNote removes a guide or concept note from the vault and cleans up stale references.
+func (s *Server) deleteNote(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	if vault.Slugify(slug) != slug || slug == "" {
+		fail(w, 400, "nota inválida")
+		return
+	}
+	v := s.vault()
+	if v.Exists(slug) {
+		if err := v.DeleteGuide(slug); err != nil {
+			fail(w, 500, err.Error())
+			return
+		}
+		writeJSON(w, 200, map[string]any{"ok": true, "kind": "guide", "slug": slug})
+		return
+	}
+	id := slug
+	if !v.ConceptExists(id) {
+		id = vault.ConceptID(slug)
+	}
+	if v.ConceptExists(id) {
+		if err := v.DeleteConcept(id); err != nil {
+			fail(w, 500, err.Error())
+			return
+		}
+		writeJSON(w, 200, map[string]any{"ok": true, "kind": "concept", "slug": id})
+		return
+	}
+	fail(w, 404, "no existe esa nota")
+}
+
 // explain writes the note of a concept a guide leaves under water (or any term it links) and answers
 // with the concept's id.
 func (s *Server) explain(w http.ResponseWriter, r *http.Request) {

@@ -28,7 +28,7 @@ Interactive visuals. The app turns fenced ```viz blocks (JSON) into live widgets
   - Physics, chemistry & biology (3D rotatable models/molecules/cells/orbits with Three.js, 2D mechanics, population or reaction labs)
   - Geometry & visual math (draggable geometric constructions with live angle/area/proof readouts, 3D surfaces)
   - History, social sciences, economics, CS, art & languages (interactive timelines, layered historical maps, source comparators, algorithm sandboxes, supply/demand labs, color/perspective studios)
-  Write a rich, specific `brief` naming what the learner manipulates, what calculations/feedback update live, and which library (if any) fits best.
+  Write a rich, specific `brief` naming what the learner directly drags, clicks, places, or plays on the main canvas (prefer tactile direct manipulation over passive sliders!), what physics/motion/calculations and diagnostic readouts update live, and which library (if any) fits best.
   {"type":"html","title":"...","brief":"...","caption":"what to try or notice"}
 - plot: functions of x controlled by sliders (best for calculus, waves, algebra, curves).
   {"type":"plot","title":"...","x":[-6,6],"y":[-3,3],"params":[{"name":"a","label":"amplitud","min":0,"max":3,"step":0.1,"value":1}],"curves":[{"expr":"a*sin(x)","label":"a sin(x)"}],"points":[{"x":"pi/2","y":"a","label":"máximo"}],"readouts":[{"label":"valor máximo","expr":"a"}],"caption":"what to notice"}
