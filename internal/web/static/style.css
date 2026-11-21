@@ -296,6 +296,9 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 .msg.user { align-self: flex-end; width: auto; max-width: min(80%, 60ch); margin: 0 0 0 auto; background: var(--accent-soft); color: var(--ink); border-radius: 18px 18px 6px 18px; padding: 9px 15px; }
 .msg.user .md > :last-child { margin-bottom: 0; }
 .msg.user .md > :first-child { margin-top: 0; }
+.msg-params { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; padding-top: 7px; border-top: 1px solid color-mix(in srgb, var(--ink) 10%, transparent); }
+.msg-param { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 99px; font-size: 11.5px; font-weight: 550; color: var(--muted); background: color-mix(in srgb, var(--surface) 72%, transparent); border: 1px solid color-mix(in srgb, var(--line) 85%, transparent); }
+.msg-param .ic { width: 12px; height: 12px; color: var(--accent); flex: none; }
 .msg.error { color: var(--danger); }
 .msg.card { padding: 0; }
 .msg.bot.streaming .md > :last-child::after { content: ""; display: inline-block; width: 7px; height: 1.05em; margin-left: 3px; vertical-align: -3px; border-radius: 2px; background: var(--accent); animation: blink 1s steps(2) infinite; }
@@ -338,7 +341,12 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 .rich-resources summary { cursor: pointer; margin: 0; list-style: none; }
 .rich-resources summary::-webkit-details-marker { display: none; }
 .rich-resources[open] summary { margin-bottom: 6px; }
-.q-text { font-size: 16.5px; font-weight: 600; line-height: 1.45; }
+.q-text { font-size: 15.5px; font-weight: 560; line-height: 1.55; }
+.q-text > p:first-child { margin-top: 0; }
+.q-text > :last-child { margin-bottom: 0; }
+.q-tag { margin-left: 8px; padding: 1px 8px; border-radius: 99px; font: 700 10.5px var(--mono); letter-spacing: .04em; text-transform: uppercase; color: var(--accent); background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
+.choice-md { font: inherit; }
+.choice-md p { margin: 0; }
 .choices { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
 .choice { text-align: left; font: inherit; color: var(--ink); background: none; border: 1px solid var(--line); border-radius: 8px; padding: 9px 13px; cursor: pointer; transition: background-color .15s, border-color .15s, color .15s; }
 .choice:hover:not(:disabled) { border-color: var(--accent); }

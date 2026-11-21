@@ -16,15 +16,23 @@ import (
 	"github.com/krilinxito/studyhomie/internal/vault"
 )
 
+// MsgParam is a compact badge attached to a learner's chat message showing the
+// parameters selected when it was sent (depth, guide context, attached files, quiz options…).
+type MsgParam struct {
+	Icon string `json:"icon,omitempty"`
+	Text string `json:"text"`
+}
+
 // Event is one message from a running flow to the browser.
 type Event struct {
-	Type  string `json:"type"` // out | in | ask | card | done
-	Text  string `json:"text,omitempty"`
-	Kind  string `json:"kind,omitempty"`  // ask: line | block
-	Label string `json:"label,omitempty"` // ask: the question, in the interface language
-	Key   string `json:"key,omitempty"`   // ask: the same question in Spanish, to tell which one it is
-	Def   string `json:"def,omitempty"`
-	Error string `json:"error,omitempty"` // done
+	Type   string     `json:"type"` // out | in | ask | card | done
+	Text   string     `json:"text,omitempty"`
+	Params []MsgParam `json:"params,omitempty"` // in: parameters selected when sending
+	Kind   string     `json:"kind,omitempty"`   // ask: line | block
+	Label  string     `json:"label,omitempty"`  // ask: the question, in the interface language
+	Key    string     `json:"key,omitempty"`    // ask: the same question in Spanish, to tell which one it is
+	Def    string     `json:"def,omitempty"`
+	Error  string     `json:"error,omitempty"` // done
 	// Card is a structured element the browser draws instead of plain text.
 	Card *session.Card `json:"card,omitempty"` // card
 }
@@ -289,12 +297,13 @@ func (s *Server) StartRun(req StartReq) (*Run, error) {
 	}
 	var first *session.ChatMsg
 	shown := ""
+	var shownParams []MsgParam
 	if req.Cmd == "chat" && req.Chat != nil && !req.Chat.empty() {
 		m, err := s.message(*req.Chat)
 		if err != nil {
 			return nil, err
 		}
-		first, shown = &m, req.Chat.shown()
+		first, shown, shownParams = &m, req.Chat.shown(), s.chatParams(*req.Chat)
 	}
 	s.mu.Lock()
 	if s.active != nil && !s.active.isDone() {
@@ -324,7 +333,7 @@ func (s *Server) StartRun(req StartReq) (*Run, error) {
 			}
 		}
 		if shown != "" {
-			run.emit(Event{Type: "in", Text: shown})
+			run.emit(Event{Type: "in", Text: shown, Params: shownParams})
 		}
 	}
 	run.scheduleSave(false)

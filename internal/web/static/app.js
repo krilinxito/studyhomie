@@ -3373,20 +3373,26 @@ function progressCard(items) {
 }
 
 function questionCard(c, run) {
-  const card = h('div', { class: 'rich rich-question' },
-    h('div', { class: 'rich-eyebrow' }, c.total ? `Pregunta ${c.n} de ${c.total}` : t('Pregunta')),
-    h('p', { class: 'q-text' }, c.question));
+  const qEl = mdBlock(c.question || '', { breaks: true });
+  qEl.classList.add('q-text');
+  const card = h('div', { class: `rich rich-question${c.label ? ' is-exercise' : ''}` },
+    h('div', { class: 'rich-eyebrow' },
+      c.total ? `Pregunta ${c.n} de ${c.total}` : t('Pregunta'),
+      c.label ? h('span', { class: 'q-tag' }, c.label) : null),
+    qEl);
   if (!c.choices || !c.choices.length) return card;
   const state = { answered: false, buttons: [] };
   const list = h('div', { class: 'choices', role: 'group', 'aria-label': t('Opciones') });
   for (const choice of c.choices) {
+    const chEl = mdBlock(choice, { breaks: false });
+    chEl.classList.add('choice-md');
     const b = h('button', { type: 'button', class: 'choice', disabled: run.replay || null, onclick: () => {
       if (state.answered || S.run !== run || run.done) return;
       state.answered = true;
       b.classList.add('picked');
       state.buttons.forEach((x) => { x.disabled = true; });
       sendReply(choice);
-    } }, choice);
+    } }, chEl);
     state.buttons.push(b);
     list.append(b);
   }
@@ -3427,7 +3433,11 @@ function handleEvent(run, e) {
       const known = (T.echo && T.echo.reply === e.text && T.echo) || ((run.lastAsk && quickOptions(run.lastAsk)) || []).find((o) => o.reply === e.text);
       T.echo = null;
       const shown = known ? known.label : /^\{.*"go":true/.test(e.text) ? t('Escribir con estos cambios') : e.text;
-      addMsg('user', mdBlock(shown, { breaks: true }));
+      const msg = addMsg('user', mdBlock(shown, { breaks: true }));
+      if (e.params && e.params.length) {
+        msg.append(h('div', { class: 'msg-params' }, e.params.map((p) => h('span', { class: 'msg-param' },
+          p.icon ? icon(p.icon) : null, h('span', {}, p.text)))));
+      }
       if (!run.replay) setWorking(true, Phrases.pick('thinking'));
       break;
     }

@@ -618,7 +618,7 @@ func (s *Server) input(w http.ResponseWriter, r *http.Request) {
 			fail(w, http.StatusBadRequest, "escribe un mensaje")
 			return
 		}
-		if err := run.sendChat(m, body.shown()); err != nil {
+		if err := run.sendChat(m, body.shown(), s.chatParams(body.chatBody)); err != nil {
 			fail(w, http.StatusConflict, err.Error())
 			return
 		}

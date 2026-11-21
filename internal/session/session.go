@@ -265,8 +265,17 @@ func (s *Session) quiz(ctx context.Context, slug string, n int, difficulty strin
 		return failf("no hay guía para «%s»; ejecuta primero la preparación: %w", slug, err)
 	}
 	system := prompts.Get("quiz", s.aiLang())
-	genPrompt := fmt.Sprintf("GENERATE a test.\nTopic: %s\nWhat the learner studied: %s\nNumber of questions: %d\nDifficulty: %s",
-		note.Meta.Title, s.V.LoadHandoff(slug), n, difficulty)
+	var gp strings.Builder
+	fmt.Fprintf(&gp, "GENERATE a test.\nTopic: %s\n", note.Meta.Title)
+	if area := noteArea(note); area != "" {
+		fmt.Fprintf(&gp, "Area: %s\n", area)
+	}
+	fmt.Fprintf(&gp, "What the learner studied: %s\n", s.V.LoadHandoff(slug))
+	if guideSec := strings.TrimSpace(vault.Section(note.Body, "Guía")); guideSec != "" {
+		fmt.Fprintf(&gp, "Guide excerpt (formulas/examples): %s\n", head(guideSec, 2200))
+	}
+	fmt.Fprintf(&gp, "Number of questions: %d\nDifficulty: %s", n, difficulty)
+	genPrompt := gp.String()
 	s.card(Card{Kind: CardPhase, Phase: "quiz"})
 	s.status("Generando la prueba")
 	resp, err := s.convo(system).Say(ctx, genPrompt, nil)
@@ -285,7 +294,11 @@ func (s *Session) quiz(ctx context.Context, slug string, n int, difficulty strin
 
 	answers := make(map[int]string)
 	for i, q := range gen.Questions {
-		if !s.card(Card{Kind: CardQuestion, N: i + 1, Total: len(gen.Questions), Question: q.Question, Choices: q.Choices}) {
+		qLabel := ""
+		if strings.EqualFold(q.Type, "exercise") {
+			qLabel = s.tr("Ejercicio")
+		}
+		if !s.card(Card{Kind: CardQuestion, N: i + 1, Total: len(gen.Questions), Label: qLabel, Question: q.Question, Choices: q.Choices}) {
 			s.printf("\n%d/%d. %s\n", i+1, len(gen.Questions), q.Question)
 			for _, ch := range q.Choices {
 				s.printf("   %s\n", ch)

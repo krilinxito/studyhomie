@@ -31,18 +31,107 @@ func (b chatBody) shown() string {
 	if t := strings.TrimSpace(b.Label); t != "" {
 		return t
 	}
+	t := strings.TrimSpace(b.Text)
+	if t != "" {
+		return t
+	}
 	names := make([]string, len(b.Files))
 	for i, id := range b.Files {
 		names[i] = id[strings.Index(id, "/")+1:]
 	}
-	t := strings.TrimSpace(b.Text)
-	switch {
-	case len(names) == 0:
-		return t
-	case t == "":
+	if len(names) > 0 {
 		return "Adjunto: " + strings.Join(names, ", ")
 	}
-	return t + "\n\n*Adjunto: " + strings.Join(names, ", ") + "*"
+	return ""
+}
+
+// chatParams builds compact parameter chips reflecting what the learner selected when
+// sending a chat message or action (depth, active guide, attachments, quiz options…).
+func (s *Server) chatParams(b chatBody) []MsgParam {
+	lang := s.lang()
+	var out []MsgParam
+	depthChip := func(d int) MsgParam {
+		var txt string
+		switch {
+		case d <= 0:
+			txt = i18n.T(lang, "solo la guía")
+		case d == 1:
+			txt = i18n.T(lang, "1 nivel de conceptos")
+		default:
+			txt = strings.ReplaceAll(i18n.T(lang, "{n} niveles"), "{n}", fmt.Sprintf("%d", d))
+		}
+		return MsgParam{Icon: "mountain-snow", Text: txt}
+	}
+	guideTitle := func(slug string) string {
+		slug = vault.Slugify(slug)
+		if slug == "" {
+			return ""
+		}
+		if n, err := s.vault().Load(slug); err == nil && n.Meta.Title != "" {
+			return n.Meta.Title
+		}
+		return slug
+	}
+
+	if b.Action != nil {
+		switch b.Action.Action {
+		case "quiz":
+			if b.Action.N > 0 {
+				out = append(out, MsgParam{Icon: "target", Text: strings.ReplaceAll(i18n.T(lang, "{n} preguntas"), "{n}", fmt.Sprintf("%d", b.Action.N))})
+			}
+			if d := strings.TrimSpace(b.Action.Difficulty); d != "" {
+				out = append(out, MsgParam{Icon: "layers", Text: i18n.T(lang, d)})
+			}
+			if g := guideTitle(b.Guide); g != "" {
+				out = append(out, MsgParam{Icon: "book-open", Text: g})
+			}
+		case "feynman":
+			out = append(out, MsgParam{Icon: "message-circle", Text: i18n.T(lang, "Explícamelo tú")})
+			if g := guideTitle(b.Guide); g != "" {
+				out = append(out, MsgParam{Icon: "book-open", Text: g})
+			}
+		case "guide":
+			if b.Action.Depth != nil {
+				out = append(out, depthChip(*b.Action.Depth))
+			} else if b.Depth != nil {
+				out = append(out, depthChip(*b.Depth))
+			}
+			if b.Action.Focus != "" {
+				out = append(out, MsgParam{Icon: "target", Text: b.Action.Focus})
+			}
+		case "daily":
+			out = append(out, MsgParam{Icon: "sparkles", Text: i18n.T(lang, "El reto de hoy")})
+			if f := strings.TrimSpace(b.Action.Field); f != "" {
+				out = append(out, MsgParam{Icon: "book-open", Text: f})
+			}
+		case "interactive":
+			out = append(out, MsgParam{Icon: "sparkles", Text: i18n.T(lang, "Simulación")})
+			if g := guideTitle(b.Guide); g != "" {
+				out = append(out, MsgParam{Icon: "book-open", Text: g})
+			}
+		case "deck-guide":
+			out = append(out, MsgParam{Icon: "sparkles", Text: i18n.T(lang, "Tarjetas")})
+			out = append(out, depthChip(0))
+		}
+		return out
+	}
+
+	if b.Depth != nil {
+		out = append(out, depthChip(*b.Depth))
+	}
+	if g := guideTitle(b.Guide); g != "" {
+		out = append(out, MsgParam{Icon: "book-open", Text: g})
+	}
+	if b.Material {
+		out = append(out, MsgParam{Icon: "file", Text: i18n.T(lang, "Subir apuntes")})
+	}
+	for _, id := range b.Files {
+		name := id[strings.Index(id, "/")+1:]
+		if name != "" {
+			out = append(out, MsgParam{Icon: "paperclip", Text: name})
+		}
+	}
+	return out
 }
 
 // empty reports whether the body asks for nothing.
@@ -89,7 +178,7 @@ func (r *Run) waiting() string {
 }
 
 // sendChat delivers a chat message to a chat waiting for one.
-func (r *Run) sendChat(m session.ChatMsg, shown string) error {
+func (r *Run) sendChat(m session.ChatMsg, shown string, params []MsgParam) error {
 	r.mu.Lock()
 	if r.askKind != "chat" {
 		r.mu.Unlock()
@@ -102,7 +191,7 @@ func (r *Run) sendChat(m session.ChatMsg, shown string) error {
 		return err
 	}
 	if shown != "" {
-		r.emit(Event{Type: "in", Text: shown})
+		r.emit(Event{Type: "in", Text: shown, Params: params})
 	}
 	_, err = io.WriteString(r.in, string(data)+"\n")
 	return err
