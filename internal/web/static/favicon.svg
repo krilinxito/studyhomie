@@ -1,21 +1,43 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <style>
-    .tip { fill: #7c5fd3; }
-    .facet { fill: #b9a2f2; }
-    .wave { fill: none; stroke: #9d84e3; stroke-width: 3.2; stroke-linecap: round; stroke-linejoin: round; }
-    .deep { fill: #9d84e3; opacity: .28; }
+    .peak { fill: #e4dcfb; }
+    .peak2 { fill: #d7cbfa; }
+    .body { fill: #9c86e8; }
+    .belly { fill: #e4dcfb; }
+    .horn { fill: #ebe4fd; }
+    .ink { fill: #3f2e80; stroke: #3f2e80; }
+    .wave { fill: #9c86e8; }
+    .deep { fill: #b4a1f0; }
+    .gap { fill: none; stroke: #ffffff; }
     @media (prefers-color-scheme: dark) {
-      .tip { fill: #cfbff7; }
-      .facet { fill: #efe8fd; }
-      .wave { stroke: #b9a2f2; }
-      .deep { fill: #b9a2f2; opacity: .32; }
+      .peak { fill: #43346e; }
+      .peak2 { fill: #35285a; }
+      .body { fill: #a792ef; }
+      .belly { fill: #e8e0fc; }
+      .horn { fill: #f1ecfe; }
+      .ink { fill: #281b5c; stroke: #281b5c; }
+      .wave { fill: #9c86e8; }
+      .deep { fill: #b8a6f2; }
+      .gap { stroke: #100e14; }
     }
   </style>
-  <!-- the tip: what you see -->
-  <path class="tip" d="M17 27 L25 15 L30 19 L37 7 L47 27 Z"/>
-  <path class="facet" d="M37 7 L47 27 H39.5 Z"/>
-  <!-- the waterline -->
-  <path class="wave" d="M6 33 q4.5 -4 9 0 t9 0 t9 0 t9 0 t9 0 t7 0"/>
-  <!-- and everything underneath -->
-  <path class="deep" d="M13 38 H51 L58 47 L45 58 L22 60 L7 48 Z"/>
+  <!-- Iceberg peaks behind the narval -->
+  <polygon class="peak2" points="6,41 19,17 31,41"/>
+  <polygon class="peak" points="16,41 30,6 54,41"/>
+  <!-- Soft separation ring around the narval -->
+  <path class="gap" stroke-width="4.5" d="M16,42 C18,24 31,19 42,23 C49,26 52,34 51,42"/>
+  <!-- Narval head peeking over the waterline -->
+  <path class="body" d="M16,43 C18,25 31,20 42,24 C49,27 51,35 50,43 Z"/>
+  <!-- Pale belly arc -->
+  <path class="belly" d="M31,43 C34,34 45,32 50,38 L50,43 Z"/>
+  <!-- Diagonal narval horn -->
+  <path class="horn" d="M38,26 L53,12 C54,11 55,12 54,13.5 L44,30 C41.5,31.5 37,29 38,26 Z"/>
+  <!-- Eyes & smile -->
+  <ellipse class="ink" cx="34.5" cy="33" rx="2.1" ry="1.8" stroke="none"/>
+  <ellipse class="ink" cx="45.5" cy="31.8" rx="2.1" ry="1.8" stroke="none"/>
+  <path class="ink" fill="none" stroke-width="2" stroke-linecap="round" d="M38.5,34.5 Q40.5,37 42.5,34.2"/>
+  <!-- White wave gap + wavy ocean iceberg base -->
+  <path class="gap" stroke-width="4.5" stroke-linecap="round" d="M3,44 Q15,37 28,43 T61,44"/>
+  <path class="wave" d="M3,44 Q15,38 28,43.5 T61,44 C53,45 49,51 44,57 L20,57 C15,51 11,45 3,44 Z"/>
+  <path class="deep" opacity=".45" d="M37,45 L49,44 C46,49 44,53 41,57 L28,57 Z"/>
 </svg>

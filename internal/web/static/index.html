@@ -13,10 +13,20 @@
   <header class="top">
     <a class="brand" href="#" id="brand" aria-label="StudyHomie, nueva conversación" data-i18n-aria-label="StudyHomie, nueva conversación">
       <svg class="logo" viewBox="0 0 64 64" aria-hidden="true">
-        <path class="logo-tip" d="M17 27 L25 15 L30 19 L37 7 L47 27 Z"/>
-        <path class="logo-facet" d="M37 7 L47 27 H39.5 Z"/>
-        <path class="logo-wave" d="M6 33 q4.5 -4 9 0 t9 0 t9 0 t9 0 t9 0 t7 0"/>
-        <path class="logo-deep" d="M13 38 H51 L58 47 L45 58 L22 60 L7 48 Z"/>
+        <polygon class="logo-peak2" points="6,41 19,17 31,41"/>
+        <polygon class="logo-peak" points="16,41 30,6 54,41"/>
+        <path class="logo-gap" stroke-width="4.5" d="M16,42 C18,24 31,19 42,23 C49,26 52,34 51,42"/>
+        <g class="logo-nv">
+          <path class="logo-body" d="M16,43 C18,25 31,20 42,24 C49,27 51,35 50,43 Z"/>
+          <path class="logo-belly" d="M31,43 C34,34 45,32 50,38 L50,43 Z"/>
+          <path class="logo-horn" d="M38,26 L53,12 C54,11 55,12 54,13.5 L44,30 C41.5,31.5 37,29 38,26 Z"/>
+          <ellipse class="logo-ink" cx="34.5" cy="33" rx="2.1" ry="1.8"/>
+          <ellipse class="logo-ink" cx="45.5" cy="31.8" rx="2.1" ry="1.8"/>
+          <path class="logo-smile" d="M38.5,34.5 Q40.5,37 42.5,34.2"/>
+        </g>
+        <path class="logo-gap" stroke-width="4.5" stroke-linecap="round" d="M3,44 Q15,37 28,43 T61,44"/>
+        <path class="logo-wave-fill" d="M3,44 Q15,38 28,43.5 T61,44 C53,45 49,51 44,57 L20,57 C15,51 11,45 3,44 Z"/>
+        <path class="logo-deep" d="M37,45 L49,44 C46,49 44,53 41,57 L28,57 Z"/>
       </svg>
       <span>StudyHomie</span>
     </a>
@@ -24,6 +34,7 @@
       <span class="dot" id="session-dot" hidden title="Hay algo en curso" data-i18n-title="Hay algo en curso"></span>
       <span class="badge" id="provider-badge" title="Proveedor de IA" data-i18n-title="Proveedor de IA"></span>
       <button class="streak-pill" id="btn-progress" type="button" title="Progreso, racha y XP" data-i18n-title="Progreso, racha y XP">
+        <span class="hdr-narval" id="hdr-narval" aria-hidden="true"></span>
         <svg class="ic"><use href="icons.svg#i-flame"/></svg>
         <span id="streak-count">0</span>
         <span class="streak-mini" aria-hidden="true"><i id="streak-bar"></i></span>
@@ -158,6 +169,25 @@
     <div class="update-foot" id="update-foot"></div>
   </dialog>
 
+  <dialog id="tutorial-dialog" aria-labelledby="tut-title">
+    <div class="tut-head">
+      <span class="tut-step-label" id="tut-step-label"></span>
+      <button class="btn small ghost" type="button" id="tut-skip" data-i18n="Saltar">Saltar</button>
+    </div>
+    <div class="tut-body">
+      <div class="tut-art" id="tut-art" aria-hidden="true"></div>
+      <h2 id="tut-title"></h2>
+      <p id="tut-text"></p>
+    </div>
+    <div class="tut-foot">
+      <div class="tut-dots" id="tut-dots" aria-hidden="true"></div>
+      <div class="tut-nav">
+        <button class="btn small" type="button" id="tut-prev" data-i18n="Anterior">Anterior</button>
+        <button class="btn small primary" type="button" id="tut-next" data-i18n="Siguiente">Siguiente</button>
+      </div>
+    </div>
+  </dialog>
+
   <div id="toast" role="status" aria-live="assertive" hidden></div>
 
   <script src="i18n.js"></script>
@@ -170,6 +200,7 @@
   <script type="module" src="motion.mjs"></script>
   <script src="viz.js"></script>
   <script src="phrases.js"></script>
+  <script src="narval.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

@@ -4,7 +4,7 @@
  * The model writes a JSON spec; the Go side (internal/viz) has already checked it.
  * plot and transform2d draw with JSXGraph, loaded the first time a note needs it.
  * steps, sample and predict are plain DOM/SVG. */
-const Viz = (() => {
+const Viz = (window.Viz = (() => {
   // the page's t() (i18n.js), under a name the token and time variables below do not hide
   const tr = (msg, vars) => window.t(msg, vars);
   /* ---------- expressions (same language as internal/viz/expr.go) ---------- */
@@ -616,4 +616,4 @@ const Viz = (() => {
   }
 
   return { enhance, compile, syncTheme };
-})();
+})());

@@ -767,6 +767,8 @@ function studySection(row) {
       h('p', { class: 'set-facts' }, t('En un roadmap, el tema siguiente se desbloquea (y se escribe su guía) cuando sacas esta nota o más en la prueba o explicándolo.'))),
     row(t('Límite por respuesta'), h('div', { class: 'set-inline' }, limit, h('span', {}, t('minutos'))),
       h('p', { class: 'set-facts' }, t('Si la IA tarda más que esto en una respuesta, la corto y te aviso, en vez de esperar para siempre. Las guías que buscan en la web tienen el triple. 0 es sin límite.'))),
+    row(t('Tutorial'), h('button', { type: 'button', class: 'btn small', onclick: () => openTutorial(true) }, t('Ver tutorial')),
+      h('p', { class: 'set-facts' }, t('Repasa en 6 pasos cómo funcionan las guías, el iceberg, el mapa, la práctica y tu racha.'))),
     row('', result));
 }
 
@@ -1857,8 +1859,12 @@ const fmtMinutes = (mins) => {
 
 async function loadStats() {
   try {
+    const prevMet = !!(S.stats && S.stats.goalMet);
+    const hadStats = !!S.stats;
     S.stats = await api('/api/stats');
     drawStreakPill();
+    if (hadStats && !prevMet && S.stats.goalMet) flashNarval('celebrando', 8000);
+    else renderNarval();
     if (S.dock && S.dock.getPanel('progress')) drawProgress();
   } catch { /* non-fatal */ }
 }
@@ -2329,8 +2335,129 @@ function resetTranscript() {
   requestAnimationFrame(() => T.anim?.enable());
 }
 
+/* ---------- Narval mascot state & onboarding tutorial ---------- */
+const NARVAL = { mood: 'normal', flash: '', flashTimer: 0, sleeping: false, idleTimer: 0, phase: '' };
+const IDLE_SLEEP_MS = 4 * 60 * 1000;
+
+function pickNarvalMood() {
+  if (NARVAL.flash) return NARVAL.flash;
+  if (S.working) return (NARVAL.phase === 'quiz' || NARVAL.phase === 'feynman') ? 'concentrado' : 'estudiando';
+  if (NARVAL.sleeping) return 'dormido';
+  const st = S.stats;
+  if (st) {
+    if (st.goalMet) return 'feliz';
+    if (st.atRisk) return 'preocupado';
+    if (st.lostStreak) return 'triste';
+  }
+  return (S.graph && S.graph.nodes && S.graph.nodes.length === 0) ? 'mirando' : 'normal';
+}
+
+function renderNarval() {
+  if (!window.Narval) return;
+  const mood = pickNarvalMood();
+  NARVAL.mood = mood;
+  const hdr = $('#hdr-narval');
+  if (hdr) hdr.replaceChildren(Narval.svg(mood));
+  const wel = $('#welcome-narval');
+  if (wel) wel.replaceChildren(Narval.svg(mood));
+}
+
+function flashNarval(mood, ms = 7000) {
+  clearTimeout(NARVAL.flashTimer);
+  NARVAL.flash = mood;
+  renderNarval();
+  NARVAL.flashTimer = setTimeout(() => { NARVAL.flash = ''; renderNarval(); }, ms);
+}
+
+function resetNarvalIdle() {
+  clearTimeout(NARVAL.idleTimer);
+  if (NARVAL.sleeping) { NARVAL.sleeping = false; renderNarval(); }
+  NARVAL.idleTimer = setTimeout(() => {
+    if (!S.working) { NARVAL.sleeping = true; renderNarval(); }
+  }, IDLE_SLEEP_MS);
+}
+for (const ev of ['pointerdown', 'keydown']) window.addEventListener(ev, resetNarvalIdle, { passive: true });
+resetNarvalIdle();
+
+const TUTORIAL_STEPS = () => [
+  {
+    mood: 'feliz',
+    title: t('¡Hola! Soy tu compañero de estudio'),
+    text: t('Pregúntame cualquier tema en el chat o pídeme una guía. También puedes adjuntar apuntes o imágenes y armo guías con visuales interactivos.'),
+  },
+  {
+    mood: 'mirando',
+    title: t('El iceberg de conceptos'),
+    text: t('Cada guía mapea lo que da por sabido, nivel por nivel. Elige cuántos niveles escribir al inicio y usa «Bajar un nivel más» cuando necesites ir más hondo.'),
+  },
+  {
+    mood: 'estudiando',
+    title: t('Un mapa que se conecta solo'),
+    text: t('Todas tus guías y conceptos aparecen conectados en el panel Mapa. Si dos temas comparten una base, se reutiliza la misma nota automáticamente.'),
+  },
+  {
+    mood: 'concentrado',
+    title: t('Practica y explícalo con tus palabras'),
+    text: t('En Practicar tienes preguntas de razonamiento y el método Feynman. En un roadmap, aprobar un tema desbloquea el siguiente.'),
+  },
+  {
+    mood: 'celebrando',
+    title: t('Racha, XP y congeladores'),
+    text: t('Cada guía, lectura, concepto y práctica suma XP hacia tu meta diaria. Cada 7 días seguidos ganas un congelador por si algún día faltas.'),
+  },
+  {
+    mood: 'normal',
+    title: t('Ordena los paneles a tu gusto'),
+    text: t('Los paneles están fijos para que nada se mueva por accidente. Cuando quieras dividir la pantalla o mover pestañas, abre el menú de paneles y pulsa «Editar diseño».'),
+  },
+];
+
+let tutIndex = 0;
+function drawTutorialStep() {
+  const steps = TUTORIAL_STEPS();
+  tutIndex = Math.max(0, Math.min(steps.length - 1, tutIndex));
+  const st = steps[tutIndex];
+  $('#tut-step-label').textContent = t('Paso {n} de {total}', { n: tutIndex + 1, total: steps.length });
+  $('#tut-art').replaceChildren(window.Narval ? Narval.svg(st.mood) : '');
+  $('#tut-title').textContent = st.title;
+  $('#tut-text').textContent = st.text;
+  $('#tut-dots').replaceChildren(...steps.map((_, i) => h('i', { class: i === tutIndex ? 'on' : null })));
+  $('#tut-prev').hidden = tutIndex === 0;
+  $('#tut-next').textContent = tutIndex === steps.length - 1 ? t('Empezar') : t('Siguiente');
+}
+function closeTutorial() {
+  const dlg = $('#tutorial-dialog');
+  if (dlg && dlg.open) dlg.close();
+  if (S.stats) S.stats.tutorialSeen = true;
+  api('/api/tutorial/seen', { method: 'POST', body: {} }).catch(() => {});
+}
+function openTutorial(force = false) {
+  const dlg = $('#tutorial-dialog');
+  if (!dlg) return;
+  if (!force && S.stats && S.stats.tutorialSeen) return;
+  tutIndex = 0;
+  drawTutorialStep();
+  if (!dlg.open) dlg.showModal();
+}
+$('#tut-prev').addEventListener('click', () => { tutIndex--; drawTutorialStep(); });
+$('#tut-next').addEventListener('click', () => {
+  if (tutIndex >= TUTORIAL_STEPS().length - 1) closeTutorial();
+  else { tutIndex++; drawTutorialStep(); }
+});
+$('#tut-skip').addEventListener('click', closeTutorial);
+$('#tutorial-dialog').addEventListener('cancel', (e) => { e.preventDefault(); closeTutorial(); });
+
 function emptyState() {
+  const pet = () => {
+    const reactions = ['feliz', 'celebrando', 'mirando'];
+    flashNarval(reactions[Math.floor(Math.random() * reactions.length)], 3200);
+  };
+  const narvalBtn = h('button', {
+    class: 'welcome-narval', type: 'button', id: 'welcome-narval',
+    'aria-label': t('Saludar al narval'), title: t('Saludar al narval'), onclick: pet,
+  }, window.Narval ? Narval.svg(pickNarvalMood()) : null);
   return h('div', { class: 'chat-empty' },
+    narvalBtn,
     h('p', { class: 'eyebrow' }, 'StudyHomie'),
     h('h1', {}, Phrases.welcome()),
     h('p', { class: 'lead' }, t('Pregunta lo que sea o pide una guía: te explico el tema y lo que da por sabido, hasta lo básico.')),
@@ -2402,6 +2529,8 @@ function addMsg(cls, content) {
 
 let workingTimer;
 function setWorking(on, text) {
+  S.working = !!on;
+  if (!on) NARVAL.phase = '';
   $('#working').hidden = !on;
   if (text) $('#working-text').textContent = text;
   // a long wait reads better when the phrase changes now and then
@@ -2411,6 +2540,7 @@ function setWorking(on, text) {
   }
   $('#btn-cancel').hidden = !on;
   $('#session-dot').hidden = !on;
+  renderNarval();
 }
 
 // Questions with a closed set of answers are asked with buttons instead of a text box.
@@ -2609,7 +2739,9 @@ function scoreTone(score) { return score >= 70 ? 'good' : score >= 40 ? 'mid' : 
 
 function renderCard(c, run) {
   switch (c.kind) {
-    case 'phase': break;
+    case 'phase':
+      if (!run.replay) { NARVAL.phase = c.phase || ''; renderNarval(); }
+      break;
     case 'status': if (!run.replay && !run.done) setWorking(true, c.detail); break;
     case 'plan': T.plan = planCard(c.plan, run); addMsg('card', T.plan.el); break;
     case 'progress': progressCard(c.items); break;
@@ -2621,7 +2753,10 @@ function renderCard(c, run) {
         h('div', { class: 'actions' },
           h('button', { class: 'btn small primary', type: 'button', onclick: () => openNote(c.slug) }, icon('book-open'), t('Leer la guía')),
           h('button', { class: 'btn small', type: 'button', onclick: async () => { await openNote(c.slug, { quiet: true }); show('concepts'); } }, icon('mountain-snow'), t('Ver el iceberg')))));
-      if (!run.replay) loadGraph().catch(() => {}).then(() => openNote(c.slug));
+      if (!run.replay) {
+        flashNarval('celebrando', 7000);
+        loadGraph().catch(() => {}).then(() => openNote(c.slug));
+      }
       break;
     case 'roadmap': {
       const rm = { slug: c.slug, title: c.topic, pass: c.score, steps: c.steps || [] };
@@ -2650,7 +2785,10 @@ function renderCard(c, run) {
       addMsg('card', h('div', { class: `rich rich-score tone-${tone}` },
         h('div', { class: 'score-ring', style: `--p:${Math.max(0, Math.min(100, c.score))}`, role: 'img', 'aria-label': t('{score} de 100', { score: c.score }) }, h('span', {}, c.score)),
         h('div', {}, h('strong', {}, `${c.label}: ${verdict}`), c.detail && h('div', { class: 'hint' }, c.detail))));
-      if (!run.replay) loadGraph().catch(() => {}).then(() => reloadGuide()); // the score may unlock the next topic
+      if (!run.replay) {
+        flashNarval(tone === 'good' ? 'celebrando' : tone === 'mid' ? 'feliz' : 'desanimado', 7000);
+        loadGraph().catch(() => {}).then(() => reloadGuide()); // the score may unlock the next topic
+      }
       break;
     }
     case 'resources':
@@ -2860,7 +2998,10 @@ function finishRun(run, e) {
   closeBubble();
   closeChoices();
   setWorking(false);
-  if (e.error) addMsg('bot error', t(e.error));
+  if (e.error) {
+    addMsg('bot error', t(e.error));
+    if (!run.replay) flashNarval('sorprendido', 7000);
+  }
   if (!$('#transcript').children.length) $('#transcript').append(emptyState());
   setComposer('chat'); // writing again continues this chat
   if (!run.replay) { loadChats(); refresh(); }
@@ -2925,7 +3066,7 @@ async function refresh() {
   await loadGraph().catch((err) => toast(err.message));
   if (S.guide) await reloadGuide(); else { renderReader(null); renderConcepts(); renderPractice(); }
   renderChats();
-  loadStats();
+  await loadStats();
 }
 
 // The first time, the app speaks the browser's language (one of those it knows) and remembers it.
@@ -2953,6 +3094,7 @@ async function boot() {
     checkUpdate();
     setInterval(checkUpdate, 60 * 60 * 1000);
     await refresh();
+    if (S.stats && !S.stats.tutorialSeen && !/^#open\//.test(location.hash)) openTutorial(false);
     await loadChats();
     if (S.info.activeRun) {
       const me = S.chats.find((r) => r.id === S.info.activeRun);

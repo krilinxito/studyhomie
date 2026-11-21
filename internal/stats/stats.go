@@ -59,7 +59,8 @@ type Event struct {
 
 // Data is what gets persisted to vault/.studyhomie/stats.json.
 type Data struct {
-	Events []Event `json:"events"`
+	Events       []Event `json:"events"`
+	TutorialSeen bool    `json:"tutorialSeen,omitempty"`
 }
 
 // AreaStat summarizes progress in one canonical knowledge area.
@@ -99,6 +100,7 @@ type Summary struct {
 	Areas        []AreaStat    `json:"areas"`
 	Calendar     []CalendarDay `json:"calendar"`
 	Recent       []Event       `json:"recent"`
+	TutorialSeen bool          `json:"tutorialSeen"`
 }
 
 // XPFor computes the XP awarded for an event kind and optional score (0..100).
@@ -265,6 +267,21 @@ func Record(vaultRoot string, ev Event) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// MarkTutorialSeen records that the learner has seen (or skipped) the onboarding tutorial for this vault.
+func MarkTutorialSeen(vaultRoot string) error {
+	fileMu.Lock()
+	defer fileMu.Unlock()
+	d, err := loadLocked(vaultRoot)
+	if err != nil {
+		return err
+	}
+	if d.TutorialSeen {
+		return nil
+	}
+	d.TutorialSeen = true
+	return saveLocked(vaultRoot, d)
 }
 
 // Compute builds the full gamification Summary from recorded events and current vault notes/concepts.
@@ -502,6 +519,7 @@ func Compute(d Data, notes []vault.Note, concepts []vault.Concept, dailyGoal, pa
 		Areas:        areas,
 		Calendar:     cal,
 		Recent:       recent,
+		TutorialSeen: d.TutorialSeen,
 	}
 }
 

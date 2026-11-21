@@ -157,6 +157,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/roadmaps", s.roadmaps)
 	mux.HandleFunc("GET /api/daily", s.daily)
 	mux.HandleFunc("GET /api/stats", s.stats)
+	mux.HandleFunc("POST /api/tutorial/seen", s.tutorialSeen)
 	mux.HandleFunc("GET /api/sessions", s.sessions)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.deleteSession)
 	mux.HandleFunc("POST /api/upload", s.upload)

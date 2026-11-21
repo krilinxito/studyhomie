@@ -59,4 +59,17 @@ func TestStatsEndpointAndReadDeduplication(t *testing.T) {
 	if res, _ := do(t, ts, "POST", "/api/settings/study", map[string]any{"dailyGoal": 5}, nil); res.StatusCode != 400 {
 		t.Errorf("dailyGoal=5 status = %d, want 400", res.StatusCode)
 	}
+
+	// Tutorial starts unseen and persists per vault when marked seen.
+	if sum.TutorialSeen {
+		t.Error("tutorialSeen should default to false")
+	}
+	if res, body := do(t, ts, "POST", "/api/tutorial/seen", map[string]any{}, nil); res.StatusCode != 200 {
+		t.Fatalf("tutorial/seen status = %d: %s", res.StatusCode, body)
+	}
+	_, body = do(t, ts, "GET", "/api/stats", nil, nil)
+	json.Unmarshal(body, &sum)
+	if !sum.TutorialSeen {
+		t.Error("tutorialSeen should be true after POST /api/tutorial/seen")
+	}
 }
