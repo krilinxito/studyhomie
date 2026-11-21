@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/krilinxito/studyhomie/compare/v0.4.1...v0.5.0) (2026-11-21)
+
+
+### Novedades
+
+* sitio web, canales de instalación y barra de conversaciones minimizable ([#10](https://github.com/krilinxito/studyhomie/issues/10)) ([a3af191](https://github.com/krilinxito/studyhomie/commit/a3af191a3d8b0826a272f38623ff5ca7d966d5c4))
+
 ## [0.4.1](https://github.com/krilinxito/studyhomie/compare/v0.4.0...v0.4.1) (2026-11-20)
 
 
