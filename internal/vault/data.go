@@ -24,13 +24,14 @@ const (
 	CatUploads     = "uploads"
 	CatHandoffs    = "handoffs"
 	CatSources     = "sources"
+	CatPractice    = "practice"
 	CatState       = "state"
 )
 
 // Categories in the order the settings page lists them.
 var Categories = []string{
 	CatGuides, CatConcepts, CatRoadmaps, CatApuntes, CatAttachments, CatDecks, CatMaterial,
-	CatInteractive, CatDaily, CatSessions, CatUploads, CatHandoffs, CatSources, CatState,
+	CatInteractive, CatDaily, CatSessions, CatPractice, CatUploads, CatHandoffs, CatSources, CatState,
 }
 
 // catSpec says where a category lives: files with ext in dir, or its subfolders (dirs).
@@ -54,7 +55,11 @@ var catSpecs = map[string]catSpec{
 	CatUploads:     {dir: ".studyhomie/uploads", dirs: true},
 	CatHandoffs:    {dir: ".studyhomie/handoff", ext: ".md"},
 	CatSources:     {dir: ".studyhomie/material", ext: ".md"},
+	CatPractice:    {dir: PracticeDir, ext: ".json"},
 }
+
+// PracticeDir holds the quiz and Feynman sessions that can be resumed, one JSON file each.
+const PracticeDir = ".studyhomie/practice"
 
 // State files: one item each, reset rather than deleted.
 var stateFiles = map[string]string{

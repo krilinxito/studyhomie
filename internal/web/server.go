@@ -64,16 +64,21 @@ type Server struct {
 	// Restart starts the app again on the installed version; nil when it cannot (tests).
 	Restart func()
 
-	mu     sync.Mutex
-	runs   map[int]*Run
-	active *Run
-	seq    int
-	store  *store // nil when the sessions folder cannot be created: they then live in memory only
+	mu        sync.Mutex
+	runs      map[int]*Run
+	main      *Run                    // the chat (or roadmap, material…): one at a time
+	practices map[string]*practiceRec // practices a run is showing now, by id
+	seq       int
+	store     *store // nil when the sessions folder cannot be created: they then live in memory only
+
+	prMu  sync.Mutex // guards the practice records and their files
+	slots slots      // AI calls in flight across flows (max_parallel)
 }
 
 func New(cfg config.Config, v *vault.Vault, p provider.Provider) *Server {
-	s := &Server{Cfg: cfg, V: v, P: p, Now: time.Now, runs: map[int]*Run{}}
+	s := &Server{Cfg: cfg, V: v, P: p, Now: time.Now, runs: map[int]*Run{}, practices: map[string]*practiceRec{}}
 	go purgeTrash(v)
+	s.pauseStalePractices()
 	if st, err := newStore(s.sessionsDir()); err == nil {
 		s.store = st
 		s.loadSessions()
@@ -99,7 +104,17 @@ func (s *Server) loadSessions() {
 	for _, sf := range s.store.load() {
 		run := restore(sf)
 		run.store = s.store
-		if sf.Status == statusRunning || len(sf.Events) == 0 || sf.Events[len(sf.Events)-1].Type != "done" {
+		cut := sf.Status == statusRunning || len(sf.Events) == 0 || sf.Events[len(sf.Events)-1].Type != "done"
+		if cut && sf.Practice != "" {
+			// a practice cut by closing the app is only paused: it can be resumed
+			run.status = statusPaused
+			run.errMsg = ""
+			run.events = append(run.events, Event{Type: "done"})
+			if run.Ended.IsZero() {
+				run.Ended = run.Started
+			}
+			s.store.save(run)
+		} else if cut {
 			run.status = statusInterrupted
 			run.errMsg = interruptedMsg
 			run.events = append(run.events, Event{Type: "done", Error: interruptedMsg})
@@ -181,6 +196,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/trash/{id}/restore", s.trashRestore)
 	mux.HandleFunc("DELETE /api/trash/{id}", s.trashPurge)
 	mux.HandleFunc("POST /api/trash/empty", s.trashEmpty)
+	mux.HandleFunc("GET /api/practice", s.listPractices)
+	mux.HandleFunc("POST /api/practice", s.newPractice)
+	mux.HandleFunc("POST /api/practice/{id}/resume", s.resumePractice)
+	mux.HandleFunc("POST /api/practice/{id}/pause", s.pausePractice)
+	mux.HandleFunc("POST /api/practice/{id}/finish", s.finishPractice)
+	mux.HandleFunc("DELETE /api/practice/{id}", s.discardPractice)
 	mux.HandleFunc("POST /api/upload", s.upload)
 	mux.HandleFunc("POST /api/runs", s.startRun)
 	mux.HandleFunc("GET /api/runs/{id}/events", s.events)
@@ -248,8 +269,8 @@ func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	active := 0
 	s.mu.Lock()
-	if s.active != nil && !s.active.isDone() {
-		active = s.active.ID
+	if s.main != nil && !s.main.isDone() {
+		active = s.main.ID
 	}
 	s.mu.Unlock()
 	p, cfg, warning := s.backend()
@@ -277,7 +298,7 @@ func (s *Server) errText(err error) string {
 // they take their input from the request and send the result back in the response.
 func (s *Server) shortSession() *session.Session {
 	p, cfg, _ := s.backend()
-	return &session.Session{P: p, V: s.vault(), Cfg: cfg, CheckLinks: s.CheckLinks}
+	return &session.Session{P: s.limit(p, nil, nil), V: s.vault(), Cfg: cfg, CheckLinks: s.CheckLinks}
 }
 
 // drain reads what is left of the request body. Go only notices that the browser closed the connection

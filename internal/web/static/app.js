@@ -353,7 +353,11 @@ function createDock() {
   const DV = window['dockview-core'];
   const dock = DV.createDockview($('#dock'), {
     theme: DV.themeLightSpaced,
-    createComponent: ({ name }) => ({ element: PANE_EL[name], init() {} }),
+    createComponent: ({ id, name }) => ({
+      element: name === 'practiceRun' ? practiceView(id).root : name === 'review' ? reviewPane() : PANE_EL[name],
+      init() {},
+    }),
+    createTabComponent: ({ id, name }) => (name === 'practiceTab' ? practiceTab(id) : undefined),
     createRightHeaderActionComponent: (group) => groupActions(group),
   });
   S.dock = dock;
@@ -368,6 +372,8 @@ function createDock() {
     try { dock.fromJSON(saved); restored = !!dock.getPanel('chat'); } catch { restored = false; }
   }
   if (!restored) defaultLayout();
+  // practices come back from the server (GET /api/practice), not from the saved layout
+  for (const p of [...dock.panels]) if (/^practice-|^review$/.test(p.id)) p.api.close();
   // a saved layout carries the titles it was saved with: names come from the code, so a rename shows up
   for (const p of dock.panels) if (PANES[p.id] && p.title !== PANES[p.id]) p.api.setTitle(PANES[p.id]);
   // the study panel starts closed: it slides in when the app has something to show
@@ -379,7 +385,7 @@ function createDock() {
     drawGroupActions();
   });
   dock.onDidMaximizedGroupChange?.(() => drawGroupActions());
-  dock.onDidRemovePanel?.(() => { syncPanelButton(); syncSidebarButton(); });
+  dock.onDidRemovePanel?.((p) => { if (p && /^practice-/.test(p.id)) forgetPracticeView(p.id); syncPanelButton(); syncSidebarButton(); });
   dock.onDidAddPanel?.(() => { syncPanelButton(); syncSidebarButton(); });
   dock.onDidActivePanelChange((p) => { if (p) onShown(p.id); syncSidebarButton(); });
   syncSidebarButton();
@@ -809,6 +815,15 @@ function studySection(row) {
       say('ok', t('Guardado.'));
     } catch (err) { say('bad', err.message); }
   });
+  const par = h('input', { type: 'number', min: 1, max: 6, step: 1, value: study.maxParallel ?? 2, class: 'set-num', 'aria-label': t('Llamadas a la IA a la vez') });
+  par.addEventListener('change', async () => {
+    const v = Math.round(Number(par.value));
+    if (!Number.isFinite(v) || v < 1 || v > 6) { say('bad', t('Pon un número de 1 a 6.')); return; }
+    try {
+      SET.data.study = await api('/api/settings/study', { method: 'POST', body: { maxParallel: v } });
+      say('ok', t('Guardado.'));
+    } catch (err) { say('bad', err.message); }
+  });
   const goalIn = h('input', { type: 'number', min: 10, max: 500, step: 10, value: study.dailyGoal ?? 50, class: 'set-num', 'aria-label': t('Meta diaria de XP') });
   const presets = [30, 50, 100];
   let presetBtns = [];
@@ -834,6 +849,8 @@ function studySection(row) {
       h('p', { class: 'set-facts' }, t('En un roadmap, el tema siguiente se desbloquea (y se escribe su guía) cuando sacas esta nota o más en la prueba o explicándolo.'))),
     row(t('Límite por respuesta'), h('div', { class: 'set-inline' }, limit, h('span', {}, t('minutos'))),
       h('p', { class: 'set-facts' }, t('Si la IA tarda más que esto en una respuesta, la corto y te aviso, en vez de esperar para siempre. Las guías que buscan en la web tienen el triple. 0 es sin límite.'))),
+    row(t('A la vez'), h('div', { class: 'set-inline' }, par, h('span', {}, t('llamadas a la IA'))),
+      h('p', { class: 'set-facts' }, t('Cuántas cosas pueden estar pidiéndole algo a la IA al mismo tiempo (el chat y cada práctica). Lo que pase de ahí espera su turno.'))),
     row(t('Tutorial'), h('button', { type: 'button', class: 'btn small', onclick: () => openTutorial(true) }, t('Ver tutorial')),
       h('p', { class: 'set-facts' }, t('Repasa en 6 pasos cómo funcionan las guías, el iceberg, el mapa, la práctica y tu racha.'))),
     row('', result));
@@ -996,6 +1013,7 @@ const DATA_CATS = {
   interactive: { label: t('Simulaciones'), group: 'vault' },
   daily: { label: t('Retos diarios'), group: 'vault' },
   sessions: { label: t('Conversaciones'), group: 'app' },
+  practice: { label: t('Prácticas guardadas'), group: 'app' },
   uploads: { label: t('Archivos enviados al chat'), group: 'app' },
   handoffs: { label: t('Resúmenes internos de guías'), group: 'app' },
   sources: { label: t('Texto extraído del material'), group: 'app' },
@@ -2761,8 +2779,12 @@ function renderPractice() {
   root.replaceChildren();
   const n = S.note;
   const fcHost = h('div', { id: 'fc-host' });
+  const pending = h('div', { class: 'pr-pending-host' });
+  drawPending(pending);
+  if (!PR.loaded) loadPracticeList();
   if (!n) {
     root.append(h('div', { class: 'practice' },
+      pending,
       h('div', { class: 'panel-empty', style: 'padding-top:12px;padding-bottom:18px' }, h('h3', {}, t('Practicar y tarjetas')),
         h('p', {}, t('Abre una guía para preguntas y método Feynman, o repasa tus tarjetas coleccionables e importa mazos de Anki.')), guideList() || ''),
       fcHost));
@@ -2785,20 +2807,21 @@ function renderPractice() {
       m.mastery ? h('div', { class: 'mastery' }, h('div', { class: 'row' }, h('span', {}, t('Lo que llevas')), h('span', {}, `${m.mastery}/100`)), h('div', { class: 'bar' }, h('i', { style: `width:${m.mastery}%` }))) : null),
     h('ol', { class: 'sequence', 'aria-label': t('Cómo afianzarlo') }, steps.map((s, i) => h('li', {},
       h('span', { class: `step${i === current ? ' go' : ''}`, 'data-state': s.done ? 'done' : i === current ? 'current' : 'todo' }, h('span', { class: 'step-n' }, s.done ? '✓' : String(i + 1)), s.label)))),
+    pending,
     fcHost,
     activitiesSection(n, { inPractice: true }),
     h('section', { class: 'p-card' },
       h('h3', {}, t('Preguntas')),
-      h('p', { class: 'hint' }, t('Piden razonar o predecir, no memorizar. Se corrigen al final y el resultado queda en la guía.')),
+      h('p', { class: 'hint' }, t('Piden razonar o predecir, no memorizar. Se corrigen al final y el resultado queda en la guía. Se abren en su pestaña: puedes dejarlas en pausa y seguir después.')),
       h('div', { class: 'quiz-opts' }, nInput, 'preguntas, dificultad', diff,
         h('button', { class: 'btn primary small', type: 'button', onclick: () => {
           const q = Number(nInput.value) || 5;
-          chatAction({ action: 'quiz', n: q, difficulty: diff.value }, t('Quiz de «{title}»: {n} preguntas, {difficulty}', { title, n: q, difficulty: t(diff.value) }));
+          startPractice({ kind: 'quiz', slug: n.slug, n: q, difficulty: diff.value });
         } }, t('Empezar')))),
     h('section', { class: 'p-card' },
       h('h3', {}, t('Explícamelo tú')),
       h('p', { class: 'hint' }, t('Me lo explicas como a alguien que no sabe nada. Te señalo los huecos y te pregunto lo que preguntaría un novato.')),
-      h('button', { class: 'btn primary small', type: 'button', onclick: () => chatAction({ action: 'feynman' }, t('Quiero explicar «{title}»', { title })) }, t('Empezar a explicar'))),
+      h('button', { class: 'btn primary small', type: 'button', onclick: () => startPractice({ kind: 'feynman', slug: n.slug }) }, t('Empezar a explicar'))),
     h('section', { class: 'p-card' },
       h('h3', {}, t('Simulación')),
       h('p', { class: 'hint' }, t('Una página interactiva para jugar con el tema, aparte de los visuales de la guía.')),
@@ -2968,6 +2991,7 @@ function drawFlashcards(host, note) {
     stage = h('div', { class: 'cromo-stage' },
       h('div', { class: 'cromo-queue-bar' },
         h('span', { class: 'fc-meta' }, tn(queue.length, '{n} para hoy', '{n} para hoy')),
+        host !== PR.reviewHost ? h('button', { class: 'btn small ghost', type: 'button', onclick: openReview }, icon('panel-right-open'), t('Repasar en una pestaña')) : null,
         h('button', { class: 'btn small ghost', type: 'button', onclick: toggleFlip }, icon('rotate-ccw'), t('Dar la vuelta'))),
       cromoTilt,
       ratingsBar);
@@ -3319,32 +3343,43 @@ function applyFilters() {
 $('#search').addEventListener('input', applyFilters);
 
 /* ---------- chat ---------- */
-const T = { raw: '', bubble: null, timer: null, auto: true, progress: null, plan: null, echo: null, choiceCard: null, anim: null };
+/* ---------- run views: a transcript, a busy line and a composer; the chat has one, each practice another ---------- */
+const VIEWS = new Set();
+function makeView(els, kind) {
+  const v = { ...els, kind, run: null, working: false, timer: 0,
+    T: { raw: '', bubble: null, timer: null, auto: true, progress: null, plan: null, echo: null, choiceCard: null, anim: null } };
+  v.transcript.addEventListener('scroll', () => {
+    const box = v.transcript;
+    v.T.auto = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  });
+  VIEWS.add(v);
+  return v;
+}
+const CHAT = makeView({
+  transcript: $('#transcript'), busyEl: $('#working'), busyText: $('#working-text'), composer: $('#composer'), reply: $('#reply'),
+  quick: $('#quick'), freeform: $('#freeform'), label: $('#composer-label'), hint: $('#composer-hint'), finish: $('#btn-finish'),
+  cancel: $('#btn-cancel'), send: $('#btn-send'),
+}, 'chat');
 
 // lists that move get AutoAnimate once it has loaded (an ES module, so it may come after this script)
 function withAutoAnimate(fn) {
   if (window.autoAnimate) fn(window.autoAnimate); else window.addEventListener('autoanimate-ready', () => fn(window.autoAnimate), { once: true });
 }
 withAutoAnimate((aa) => {
-  T.anim = aa($('#transcript'), { duration: 220 });
+  CHAT.T.anim = aa($('#transcript'), { duration: 220 });
   aa($('#chat-list'), { duration: 200 });
 });
 
-function scrollDown() {
-  const box = $('#transcript');
-  if (T.auto) box.scrollTop = box.scrollHeight;
+function scrollDown(v) {
+  if (v.T.auto) v.transcript.scrollTop = v.transcript.scrollHeight;
 }
-$('#transcript').addEventListener('scroll', () => {
-  const box = $('#transcript');
-  T.auto = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
-});
 
-function resetTranscript() {
-  clearTimeout(T.timer);
-  T.anim?.disable(); // a new conversation replaces the old one at once, without every message flying out
-  $('#transcript').replaceChildren();
-  Object.assign(T, { raw: '', bubble: null, progress: null, plan: null, choiceCard: null, echo: null, auto: true });
-  requestAnimationFrame(() => T.anim?.enable());
+function resetTranscript(v) {
+  clearTimeout(v.T.timer);
+  v.T.anim?.disable(); // a new conversation replaces the old one at once, without every message flying out
+  v.transcript.replaceChildren();
+  Object.assign(v.T, { raw: '', bubble: null, progress: null, plan: null, choiceCard: null, echo: null, auto: true });
+  requestAnimationFrame(() => v.T.anim?.enable());
 }
 
 /* ---------- Narval mascot state & onboarding tutorial ---------- */
@@ -3534,52 +3569,55 @@ $('#btn-plus').addEventListener('click', (e) => {
   $('#btn-plus').setAttribute('aria-expanded', 'true');
 });
 
-function botText(text) {
-  T.raw += text;
-  if (!T.bubble) {
-    T.bubble = h('div', { class: 'msg bot streaming' });
-    $('#transcript').append(T.bubble);
+function botText(v, text) {
+  v.T.raw += text;
+  if (!v.T.bubble) {
+    v.T.bubble = h('div', { class: 'msg bot streaming' });
+    v.transcript.append(v.T.bubble);
   }
-  clearTimeout(T.timer);
-  T.timer = setTimeout(() => flushBot(true), 60);
+  clearTimeout(v.T.timer);
+  v.T.timer = setTimeout(() => flushBot(v, true), 60);
 }
-function flushBot(streaming) {
-  clearTimeout(T.timer);
-  if (!T.bubble) return;
-  T.bubble.classList.toggle('streaming', streaming);
-  T.bubble.replaceChildren(mdBlock(T.raw, { breaks: true, streaming }));
-  scrollDown();
+function flushBot(v, streaming) {
+  clearTimeout(v.T.timer);
+  if (!v.T.bubble) return;
+  v.T.bubble.classList.toggle('streaming', streaming);
+  v.T.bubble.replaceChildren(mdBlock(v.T.raw, { breaks: true, streaming }));
+  scrollDown(v);
 }
 // the bubble is complete: drawn once more with its widgets
-function closeBubble() {
-  if (!T.bubble) return;
-  if (T.raw.trim()) flushBot(false); else T.bubble.remove();
-  T.raw = ''; T.bubble = null;
+function closeBubble(v) {
+  if (!v.T.bubble) return;
+  if (v.T.raw.trim()) flushBot(v, false); else v.T.bubble.remove();
+  v.T.raw = ''; v.T.bubble = null;
 }
 
-function addMsg(cls, content) {
-  closeBubble();
-  $('.chat-empty')?.remove();
+function addMsg(v, cls, content) {
+  closeBubble(v);
+  v.transcript.querySelector('.chat-empty')?.remove();
   const m = h('div', { class: `msg ${cls}` });
   if (typeof content === 'string') m.textContent = content; else m.append(content);
-  $('#transcript').append(m);
-  scrollDown();
+  v.transcript.append(m);
+  scrollDown(v);
   return m;
 }
 
-let workingTimer;
-function setWorking(on, text) {
-  S.working = !!on;
-  if (!on) NARVAL.phase = '';
-  $('#working').hidden = !on;
-  if (text) $('#working-text').textContent = text;
-  // a long wait reads better when the phrase changes now and then
-  clearInterval(workingTimer);
-  if (on && Phrases.has('thinking', $('#working-text').textContent)) {
-    workingTimer = setInterval(() => { $('#working-text').textContent = Phrases.pick('thinking'); }, 6000);
+function setWorking(v, on, text) {
+  v.working = !!on;
+  if (v === CHAT) {
+    S.working = v.working;
+    if (!on) NARVAL.phase = '';
   }
-  $('#btn-cancel').hidden = !on;
-  $('#session-dot').hidden = !on;
+  v.busyEl.hidden = !on;
+  if (text) v.busyText.textContent = text;
+  // a long wait reads better when the phrase changes now and then
+  clearInterval(v.timer);
+  if (on && Phrases.has('thinking', v.busyText.textContent)) {
+    v.timer = setInterval(() => { v.busyText.textContent = Phrases.pick('thinking'); }, 6000);
+  }
+  if (v.cancel) v.cancel.hidden = !on;
+  $('#session-dot').hidden = ![...VIEWS].some((x) => x.working);
+  if (v.kind === 'practice') drawPracticeHead(v);
   renderNarval();
 }
 
@@ -3600,60 +3638,65 @@ function quickOptions(e) {
   return null;
 }
 
-// The composer follows what the run waits for: a chat message, a short answer, an explanation, or nothing.
-function setComposer(mode, e = {}) {
-  const form = $('#composer'), ta = $('#reply');
+// The composer follows what the run waits for: a chat message, a short answer, an explanation, or
+// nothing. A practice that is over has no composer ("off").
+function setComposer(v, mode, e = {}) {
+  const form = v.composer, ta = v.reply;
   form.dataset.kind = mode;
+  form.hidden = mode === 'off';
   // a yes/no question gets buttons: its "(s/n)" ending, in whatever language, is not shown
   const label = (e.label || '').replace(/\s*\([^()]{1,9}\)\s*$/, (m) => (/\(s\/n\)\s*$/i.test(e.key || e.label || '') ? '' : m)).trim();
   const opts = mode === 'line' ? quickOptions(e) : null;
-  $('#composer-label').textContent = mode === 'line' ? label : '';
-  $('#composer-label').hidden = mode !== 'line' || !label;
-  $('#quick').replaceChildren(...(opts || []).map((o) => h('button', {
-    type: 'button', class: `btn${o.primary ? ' primary' : ''}`, onclick: () => { T.echo = o; sendReply(o.reply); },
+  v.label.textContent = mode === 'line' ? label : '';
+  v.label.hidden = mode !== 'line' || !label;
+  v.quick.replaceChildren(...(opts || []).map((o) => h('button', {
+    type: 'button', class: `btn${o.primary ? ' primary' : ''}`, onclick: () => { v.T.echo = o; sendReply(v.run, o.reply); },
   }, o.label)));
-  $('#quick').hidden = !opts;
-  $('#freeform').hidden = !!opts;
-  $('#depth').hidden = mode !== 'chat';
-  $('#btn-attach').hidden = mode !== 'chat';
-  $('#btn-plus').hidden = mode !== 'chat';
-  if (mode !== 'chat') closePlus();
-  $('#btn-finish').hidden = mode !== 'block';
-  ta.disabled = $('#btn-send').disabled = mode === 'busy';
+  v.quick.hidden = !opts;
+  v.freeform.hidden = !!opts;
+  if (v === CHAT) {
+    $('#depth').hidden = mode !== 'chat';
+    $('#btn-attach').hidden = mode !== 'chat';
+    $('#btn-plus').hidden = mode !== 'chat';
+    if (mode !== 'chat') closePlus();
+  }
+  v.finish.hidden = mode !== 'block';
+  ta.disabled = v.send.disabled = mode === 'busy' || mode === 'off';
   ta.rows = mode === 'block' ? 6 : 2;
   ta.placeholder = {
     chat: t('Pregunta lo que quieras, o pide una guía: «Explícame la transformada de Fourier, enfocada en audio»'),
     line: e.def ? t('Enter para usar «{answer}»', { answer: e.def }) : t('Escribe tu respuesta'),
     block: t('Explícalo con tus palabras, como si el otro no supiera nada…'),
-    busy: t('Espera a que termine, o detenlo.'),
+    busy: v === CHAT ? t('Espera a que termine, o detenlo.') : t('Espera a que termine.'),
+    off: '',
   }[mode];
-  $('#composer-hint').textContent = mode === 'block' ? t('Ctrl + Enter para enviar') : '';
-  if (mode !== 'busy' && !isPhone() && ta.isConnected) (opts ? $('#quick .primary') : ta)?.focus({ preventScroll: true });
+  v.hint.textContent = mode === 'block' ? t('Ctrl + Enter para enviar') : '';
+  if ((mode === 'line' || mode === 'block' || mode === 'chat') && !isPhone() && ta.isConnected && v.transcript.offsetParent) (opts ? v.quick.querySelector('.primary') : ta)?.focus({ preventScroll: true });
 }
 
 // What the learner sends goes to the live chat, or starts one (continuing the chat on screen, if any).
 async function chatSend(body) {
-  const run = S.run;
+  const run = CHAT.run;
   body = { depth: S.depth, guide: S.guide || '', ...body };
   if (run && !run.done && run.waiting === 'chat') {
     run.waiting = '';
-    setComposer('busy');
-    setWorking(true, Phrases.pick('thinking'));
+    setComposer(CHAT, 'busy');
+    setWorking(CHAT, true, Phrases.pick('thinking'));
     try { await api(`/api/runs/${run.id}/input`, { method: 'POST', body }); return true; } catch (err) {
-      toast(err.message); run.waiting = 'chat'; setComposer('chat'); setWorking(false); return false;
+      toast(err.message); run.waiting = 'chat'; setComposer(CHAT, 'chat'); setWorking(CHAT, false); return false;
     }
   }
   if (run && !run.done) { toast(t('Espera a que termine lo que está en curso, o detenlo.')); return false; }
   try {
     const req = { cmd: 'chat', chat: body, guide: S.guide || '' };
     if (run && run.done) req.resume = run.id;
-    setComposer('busy');
-    setWorking(true, Phrases.pick('thinking'));
+    setComposer(CHAT, 'busy');
+    setWorking(CHAT, true, Phrases.pick('thinking'));
     const { id } = await api('/api/runs', { method: 'POST', body: req });
     attachRun(id, run && run.done ? run.title : null);
     loadChats();
     return true;
-  } catch (err) { toast(err.message); setComposer('chat'); setWorking(false); return false; }
+  } catch (err) { toast(err.message); setComposer(CHAT, 'chat'); setWorking(CHAT, false); return false; }
 }
 
 // a button that asks the chat to do something, without going through the model
@@ -3662,13 +3705,23 @@ function chatAction(action, label) {
   chatSend({ text: '', action, label });
 }
 
-async function sendReply(text, finish = false) {
-  const run = S.run;
+async function sendReply(run, text, finish = false) {
   if (!run || run.done) return;
+  const v = run.view;
   run.waiting = '';
-  setComposer('busy');
-  setWorking(true, Phrases.pick('thinking'));
-  try { await api(`/api/runs/${run.id}/input`, { method: 'POST', body: { text, finish } }); } catch (err) { toast(err.message); setWorking(false); }
+  setComposer(v, 'busy');
+  setWorking(v, true, Phrases.pick('thinking'));
+  try { await api(`/api/runs/${run.id}/input`, { method: 'POST', body: { text, finish } }); } catch (err) { toast(err.message); setWorking(v, false); }
+}
+
+// Enter sends a line; an explanation (block) is sent with Ctrl + Enter
+function composerKeys(v) {
+  v.reply.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.isComposing) return;
+    const block = v.composer.dataset.kind === 'block';
+    if (block ? (e.ctrlKey || e.metaKey) : !e.shiftKey) { e.preventDefault(); v.composer.requestSubmit(); }
+  });
+  v.finish.addEventListener('click', () => { const text = v.reply.value; v.reply.value = ''; sendReply(v.run, text, true); });
 }
 
 $('#composer').addEventListener('submit', async (e) => {
@@ -3676,7 +3729,7 @@ $('#composer').addEventListener('submit', async (e) => {
   const ta = $('#reply');
   const mode = $('#composer').dataset.kind || 'chat';
   const text = ta.value;
-  if (mode === 'busy') return;
+  if (mode === 'busy' || mode === 'off') return;
   if (mode === 'chat') {
     if (!text.trim() && !STAGED.length) return;
     const files = takeStaged();
@@ -3687,17 +3740,12 @@ $('#composer').addEventListener('submit', async (e) => {
   }
   if (mode === 'block' && !text.trim()) { toast(t('Escribe tu explicación antes de enviar.')); return; }
   ta.value = '';
-  sendReply(text, false);
+  sendReply(CHAT.run, text, false);
 });
-$('#reply').addEventListener('keydown', (e) => {
-  if (e.key !== 'Enter' || e.isComposing) return;
-  const block = $('#composer').dataset.kind === 'block';
-  if (block ? (e.ctrlKey || e.metaKey) : !e.shiftKey) { e.preventDefault(); $('#composer').requestSubmit(); }
-});
-$('#btn-finish').addEventListener('click', () => { const text = $('#reply').value; $('#reply').value = ''; sendReply(text, true); });
+composerKeys(CHAT);
 $('#btn-cancel').addEventListener('click', async () => {
-  if (!S.run || S.run.done) return;
-  try { await api(`/api/runs/${S.run.id}/cancel`, { method: 'POST', body: {} }); } catch (err) { toast(err.message); }
+  if (!CHAT.run || CHAT.run.done) return;
+  try { await api(`/api/runs/${CHAT.run.id}/cancel`, { method: 'POST', body: {} }); } catch (err) { toast(err.message); }
 });
 
 // Attachments of a message: picked, pasted or dropped, uploaded at once and sent with the next message.
@@ -3758,10 +3806,10 @@ $('#material-input').addEventListener('change', async (e) => {
   const fd = new FormData();
   for (const f of files) fd.append('files', f);
   try {
-    setWorking(true, Phrases.pick('uploading'));
+    setWorking(CHAT, true, Phrases.pick('uploading'));
     const up = await api('/api/upload', { method: 'POST', body: fd });
     await chatSend({ text: '', files: up.files, material: true, label: t('Mis apuntes: {files}', { files: [...files].map((f) => f.name).join(', ') }) });
-  } catch (err) { toast(err.message); setWorking(false); } finally { e.target.value = ''; }
+  } catch (err) { toast(err.message); setWorking(CHAT, false); } finally { e.target.value = ''; }
 });
 
 // "write now": 0 (the guide alone) to 4 levels of concept notes; the iceberg maps that far, and digging goes further
@@ -3778,16 +3826,17 @@ function renderDepth() {
 function scoreTone(score) { return score >= 70 ? 'good' : score >= 40 ? 'mid' : 'low'; }
 
 function renderCard(c, run) {
+  const v = run.view;
   switch (c.kind) {
     case 'phase':
       if (!run.replay) { NARVAL.phase = c.phase || ''; renderNarval(); }
       break;
-    case 'status': if (!run.replay && !run.done) setWorking(true, c.detail); break;
-    case 'plan': T.plan = planCard(c.plan, run); addMsg('card', T.plan.el); break;
-    case 'progress': progressCard(c.items); break;
+    case 'status': if (!run.replay && !run.done) setWorking(v, true, c.detail); break;
+    case 'plan': v.T.plan = planCard(c.plan, run); addMsg(v, 'card', v.T.plan.el); break;
+    case 'progress': progressCard(v, c.items); break;
     case 'guide':
-      T.progress = null;
-      addMsg('card', h('div', { class: 'rich rich-guide' },
+      v.T.progress = null;
+      addMsg(v, 'card', h('div', { class: 'rich rich-guide' },
         h('div', { class: 'rich-eyebrow' }, t('Guía lista')),
         h('h3', {}, c.topic),
         h('div', { class: 'actions' },
@@ -3806,7 +3855,7 @@ function renderCard(c, run) {
       break;
     case 'roadmap': {
       const rm = { slug: c.slug, title: c.topic, pass: c.score, steps: c.steps || [] };
-      addMsg('card', h('div', { class: 'rich rich-roadmap' },
+      addMsg(v, 'card', h('div', { class: 'rich rich-roadmap' },
         h('div', { class: 'rich-eyebrow' }, icon('map'), `Ruta · ${rm.steps.length} temas`),
         h('h3', {}, rm.title),
         h('p', { class: 'hint' }, t('Se estudia en orden: cada tema se desbloquea con {pass}/100 en el anterior, y su guía se escribe entonces.', { pass: rm.pass })),
@@ -3815,20 +3864,20 @@ function renderCard(c, run) {
       break;
     }
     case 'concept':
-      addMsg('card', h('div', { class: 'rich' }, h('div', { class: 'rich-eyebrow' }, t('Nota de concepto')), h('h3', {}, c.topic),
+      addMsg(v, 'card', h('div', { class: 'rich' }, h('div', { class: 'rich-eyebrow' }, t('Nota de concepto')), h('h3', {}, c.topic),
         h('button', { class: 'btn small', type: 'button', onclick: () => openNote(c.slug) }, t('Abrir la nota'))));
       if (!run.replay) loadGraph().catch(() => {}).then(() => reloadGuide());
       break;
     case 'daily':
-      addMsg('card', h('div', { class: 'rich' },
+      addMsg(v, 'card', h('div', { class: 'rich' },
         h('div', { class: 'rich-eyebrow' }, t('Para descubrir hoy'), c.field && h('span', { class: 'chip' }, c.field)),
         h('h3', {}, c.topic), c.hook && h('p', { class: 'hint' }, c.hook)));
       break;
-    case 'question': addMsg('card', questionCard(c, run)); break;
+    case 'question': addMsg(v, 'card', questionCard(c, run)); break;
     case 'score': {
       const tone = scoreTone(c.score);
       const verdict = tone === 'good' ? t('Lo entendiste bien') : tone === 'mid' ? t('Vas por buen camino') : t('Buen punto de partida: quedan cosas por aclarar');
-      addMsg('card', h('div', { class: `rich rich-score tone-${tone}` },
+      addMsg(v, 'card', h('div', { class: `rich rich-score tone-${tone}` },
         h('div', { class: 'score-ring', style: `--p:${Math.max(0, Math.min(100, c.score))}`, role: 'img', 'aria-label': t('{score} de 100', { score: c.score }) }, h('span', {}, c.score)),
         h('div', {}, h('strong', {}, `${c.label}: ${verdict}`), c.detail && h('div', { class: 'hint' }, c.detail))));
       if (!run.replay) {
@@ -3839,8 +3888,16 @@ function renderCard(c, run) {
       }
       break;
     }
+    case 'practice':
+      addMsg(v, 'card', h('div', { class: 'rich rich-practice' },
+        h('div', { class: 'rich-eyebrow' }, icon(PR_ICON[c.phase] || 'target'), c.phase === 'feynman' ? t('Explicación aparte') : t('Preguntas aparte')),
+        h('h3', {}, c.topic),
+        h('p', { class: 'hint' }, t('Va en su propia pestaña: el chat sigue libre mientras respondes.')),
+        h('button', { class: 'btn small primary', type: 'button', onclick: () => openPractice(c.practice) }, icon('external-link'), t('Abrir práctica'))));
+      if (!run.replay) { NARVAL.phase = c.phase || ''; loadPracticeList().then(() => openPractice(c.practice)); }
+      break;
     case 'resources':
-      addMsg('card', h('details', { class: 'rich rich-resources' },
+      addMsg(v, 'card', h('details', { class: 'rich rich-resources' },
         h('summary', { class: 'rich-eyebrow' }, t('Para seguir explorando ({n})', { n: (c.resources || []).length })),
         h('ul', { class: 'res-list' }, (c.resources || []).map((r) => resourceCard(r)))));
       break;
@@ -3849,6 +3906,7 @@ function renderCard(c, run) {
 
 // The plan: what gets a note now, and the part under water, mapped and left to explain on demand.
 function planCard(p, run) {
+  const v = run.view;
   const byLevel = (list) => { const out = []; for (const c of list || []) (out[c.level - 1] ||= []).push(c); return out; };
   const above = byLevel(p.concepts), below = byLevel(p.pending);
   const boxes = new Map(), promote = new Map();
@@ -3906,12 +3964,12 @@ function planCard(p, run) {
       onclick: (e) => { const open = el.classList.toggle('expanded'); e.currentTarget.textContent = open ? t('Ocultar el plan') : t('Ver el plan'); } }, t('Ver el plan')));
   };
   function answer(reply, label) {
-    if (state.answered || S.run !== run || run.done || !state.live) return;
+    if (state.answered || run.view.run !== run || run.done || !state.live) return;
     state.answered = true;
     $$('button, input', el).forEach((x) => { x.disabled = true; });
     fold();
-    T.echo = { reply, label };
-    sendReply(reply);
+    v.T.echo = { reply, label };
+    sendReply(run, reply);
   }
   go.addEventListener('click', () => {
     const skip = [...boxes].filter(([, cb]) => !cb.checked).map(([id]) => id);
@@ -3933,7 +3991,7 @@ function writtenSummary(items) {
 }
 
 // One card per guide being written, redrawn in place as each note finishes.
-function progressCard(items) {
+function progressCard(v, items) {
   const state = { pending: t('en cola'), working: t('escribiendo…'), done: t('lista'), linked: t('ya estaba'), error: t('falló') };
   const done = items.filter((i) => i.state !== 'pending' && i.state !== 'working').length;
   const failed = items.filter((i) => i.state === 'error').length;
@@ -3950,12 +4008,13 @@ function progressCard(items) {
     : [h('div', { class: 'rich-eyebrow' }, t('Escribiendo · {done} de {total}', { done, total: items.length })),
       h('div', { class: 'bar' }, h('i', { style: `width:${Math.round((100 * done) / items.length)}%` })),
       list];
-  if (T.progress && T.progress.isConnected) { T.progress.replaceChildren(...body); return; }
-  T.progress = h('div', { class: 'rich rich-progress' }, ...body);
-  addMsg('card', T.progress);
+  if (v.T.progress && v.T.progress.isConnected) { v.T.progress.replaceChildren(...body); return; }
+  v.T.progress = h('div', { class: 'rich rich-progress' }, ...body);
+  addMsg(v, 'card', v.T.progress);
 }
 
 function questionCard(c, run) {
+  const v = run.view;
   const qEl = mdBlock(c.question || '', { breaks: true });
   qEl.classList.add('q-text');
   const card = h('div', { class: `rich rich-question${c.label ? ' is-exercise' : ''}` },
@@ -3970,102 +4029,403 @@ function questionCard(c, run) {
     const chEl = mdBlock(choice, { breaks: false });
     chEl.classList.add('choice-md');
     const b = h('button', { type: 'button', class: 'choice', disabled: run.replay || null, onclick: () => {
-      if (state.answered || S.run !== run || run.done) return;
+      if (state.answered || run.view.run !== run || run.done) return;
       state.answered = true;
       b.classList.add('picked');
       state.buttons.forEach((x) => { x.disabled = true; });
-      sendReply(choice);
+      sendReply(run, choice);
     } }, chEl);
     state.buttons.push(b);
     list.append(b);
   }
   card.append(list);
-  T.choiceCard = state;
+  v.T.choiceCard = state;
   return card;
 }
 
 // once the learner has answered, or the run is over, earlier buttons are no longer live
-function closeChoices() {
-  if (T.choiceCard) { T.choiceCard.answered = true; T.choiceCard.buttons.forEach((x) => { x.disabled = true; }); }
-  if (T.plan && !T.plan.answered) { T.plan.answered = true; $$('button, input', T.plan.el).forEach((x) => { x.disabled = true; }); }
+function closeChoices(v) {
+  if (v.T.choiceCard) { v.T.choiceCard.answered = true; v.T.choiceCard.buttons.forEach((x) => { x.disabled = true; }); }
+  if (v.T.plan && !v.T.plan.answered) { v.T.plan.answered = true; $$('button, input', v.T.plan.el).forEach((x) => { x.disabled = true; }); }
 }
 
 /* ---------- runs ---------- */
 // Shows a chat: a live one streams in, a stored one replays from its first event.
 function attachRun(id, title, { replay = false } = {}) {
-  if (S.run && S.run.es) S.run.es.close();
-  resetTranscript();
-  const run = { id, done: false, replay, waiting: '', title: title || t('Chat'), es: new EventSource(`/api/runs/${id}/events?from=0`) };
+  const run = attachView(CHAT, id, title || t('Chat'), { replay });
   S.run = run;
   $('#chat-title').textContent = run.title;
   if (S.mapScope === 'chat') drawMap();
-  setComposer('busy');
-  setWorking(!replay, Phrases.pick('thinking'));
-  run.es.onmessage = (ev) => handleEvent(run, JSON.parse(ev.data));
-  run.es.onerror = () => { if (run.done) run.es.close(); }; // otherwise the browser reconnects with Last-Event-ID
   markActiveChat();
 }
 
+// a view follows a run: its events stream in from the first one
+function attachView(v, id, title, { replay = false } = {}) {
+  if (v.run && v.run.es) v.run.es.close();
+  resetTranscript(v);
+  const run = { id, done: false, replay, waiting: '', title, view: v, es: new EventSource(`/api/runs/${id}/events?from=0`) };
+  v.run = run;
+  setComposer(v, 'busy');
+  setWorking(v, !replay, Phrases.pick('thinking'));
+  run.es.onmessage = (ev) => handleEvent(run, JSON.parse(ev.data));
+  run.es.onerror = () => { if (run.done) run.es.close(); }; // otherwise the browser reconnects with Last-Event-ID
+  return run;
+}
+
 function handleEvent(run, e) {
-  if (run !== S.run) return;
+  const v = run.view;
+  if (run !== v.run) return;
   switch (e.type) {
-    case 'out': $('.chat-empty')?.remove(); botText(e.text); break;
+    case 'out': v.transcript.querySelector('.chat-empty')?.remove(); botText(v, e.text); break;
     case 'in': {
-      closeChoices();
+      closeChoices(v);
       // a button answers with a short code ("s", "media"); show what the learner actually clicked
-      const known = (T.echo && T.echo.reply === e.text && T.echo) || ((run.lastAsk && quickOptions(run.lastAsk)) || []).find((o) => o.reply === e.text);
-      T.echo = null;
+      const known = (v.T.echo && v.T.echo.reply === e.text && v.T.echo) || ((run.lastAsk && quickOptions(run.lastAsk)) || []).find((o) => o.reply === e.text);
+      v.T.echo = null;
       const shown = known ? known.label : /^\{.*"go":true/.test(e.text) ? t('Escribir con estos cambios') : e.text;
-      const msg = addMsg('user', mdBlock(shown, { breaks: true }));
+      const msg = addMsg(v, 'user', mdBlock(shown, { breaks: true }));
       if (e.params && e.params.length) {
         msg.append(h('div', { class: 'msg-params' }, e.params.map((p) => h('span', { class: 'msg-param' },
           p.icon ? icon(p.icon) : null, h('span', {}, p.text)))));
       }
-      if (!run.replay) setWorking(true, Phrases.pick('thinking'));
+      if (!run.replay) setWorking(v, true, Phrases.pick('thinking'));
       break;
     }
-    case 'card': closeBubble(); renderCard(e.card, run); break;
+    case 'card': closeBubble(v); renderCard(e.card, run); break;
     case 'ask':
-      closeBubble();
+      closeBubble(v);
       run.lastAsk = e;
       run.waiting = e.kind;
       if (run.replay) break;
-      setWorking(false);
-      if (e.kind === 'line' && T.plan && !T.plan.answered && /genero la guía/i.test(e.key || e.label || '')) {
-        T.plan.live = true;
-        setComposer('busy');
-        $('#reply').placeholder = t('Elige en el plan de arriba.');
-        T.plan.el.scrollIntoView({ behavior: smoothness(), block: 'nearest' });
+      setWorking(v, false);
+      if (v.kind === 'practice') loadPracticeList(); // its progress: one more answered
+      if (e.kind === 'line' && v.T.plan && !v.T.plan.answered && /genero la guía/i.test(e.key || e.label || '')) {
+        v.T.plan.live = true;
+        setComposer(v, 'busy');
+        v.reply.placeholder = t('Elige en el plan de arriba.');
+        v.T.plan.el.scrollIntoView({ behavior: smoothness(), block: 'nearest' });
         break;
       }
-      if (e.kind === 'line' && T.choiceCard && !T.choiceCard.answered && /^respuesta$/i.test(e.key || e.label || '')) {
-        setComposer('busy');
-        $('#reply').placeholder = t('Elige una opción de la pregunta.');
+      if (e.kind === 'line' && v.T.choiceCard && !v.T.choiceCard.answered && /^respuesta$/i.test(e.key || e.label || '')) {
+        setComposer(v, 'busy');
+        v.reply.placeholder = t('Elige una opción de la pregunta.');
         break;
       }
-      setComposer(e.kind, e);
+      setComposer(v, e.kind, e);
       break;
     case 'done': finishRun(run, e); break;
   }
 }
 
 function finishRun(run, e) {
+  const v = run.view;
   run.done = true;
   run.waiting = '';
   run.es.close();
-  closeBubble();
-  closeChoices();
-  setWorking(false);
+  closeBubble(v);
+  closeChoices(v);
+  setWorking(v, false);
   if (e.error) {
-    addMsg('bot error', t(e.error));
+    addMsg(v, 'bot error', t(e.error));
     if (!run.replay) {
       flashNarval('sorprendido', 7000);
       narvalSay('sorprendido', Phrases.pick('error'));
     }
   }
-  if (!$('#transcript').children.length) $('#transcript').append(emptyState());
-  setComposer('chat'); // writing again continues this chat
+  if (v.kind === 'practice') {
+    setComposer(v, 'off');
+    practiceEnded(v, run);
+    if (!run.replay) { loadChats(); refresh(); }
+    return;
+  }
+  if (!v.transcript.children.length) v.transcript.append(emptyState());
+  setComposer(v, 'chat'); // writing again continues this chat
   if (!run.replay) { loadChats(); refresh(); }
+}
+
+/* ---------- practice tabs: a quiz or a Feynman in its own tab, several at a time ---------- */
+const PR = { open: [], recent: [], loaded: false, reviewHost: null };
+const PR_TABS = new Map(); // practice id -> its view
+const PR_KIND = { quiz: t('Preguntas'), feynman: t('Explicación') };
+const PR_ICON = { quiz: 'target', feynman: 'message-circle' };
+const prPanel = (id) => `practice-${id}`;
+const prTitle = (info) => `${PR_KIND[info.kind] || info.kind} · ${info.title || info.slug}`;
+const prFind = (id) => PR.open.find((p) => p.id === id) || PR.recent.find((p) => p.id === id);
+
+async function loadPracticeList() {
+  try {
+    const res = await api('/api/practice');
+    PR.open = res.open || [];
+    PR.recent = res.recent || [];
+    PR.loaded = true;
+  } catch { /* the list stays as it was */ }
+  for (const v of PR_TABS.values()) {
+    const info = prFind(v.practiceId);
+    if (info) { v.info = info; drawPracticeHead(v); }
+  }
+  drawPendingCount();
+  if (PR.pendingHost && PR.pendingHost.isConnected) drawPending(PR.pendingHost);
+}
+
+// "3/5 respondidas", "2 explicaciones": how far a practice got
+function prProgress(p) {
+  if (p.kind === 'feynman') return tn(p.answered, '{n} explicación', '{n} explicaciones');
+  return p.total ? t('{done}/{total} respondidas', { done: p.answered, total: p.total }) : t('Preparando las preguntas');
+}
+function prStatus(p) {
+  switch (p.status) {
+    case 'running': return p.waiting ? t('Esperando tu respuesta') : t('En curso');
+    case 'paused': return t('En pausa');
+    case 'done': return t('Terminada · {score}/100', { score: p.score });
+    case 'partial': return t('Incompleta · {score}/100', { score: p.score });
+    case 'discarded': return t('Cerrada sin nota');
+  }
+  return '';
+}
+
+// The panel of one practice: its header (state and actions), the transcript and its own composer.
+function practiceView(panelId) {
+  const id = panelId.replace(/^practice-/, '');
+  const reply = h('textarea', { rows: 2, 'aria-label': t('Tu respuesta') });
+  const label = h('div', { class: 'composer-label', hidden: true });
+  const quick = h('div', { class: 'quick', hidden: true });
+  const hint = h('span', { class: 'hint' });
+  const finish = h('button', { class: 'btn small', type: 'button', hidden: true }, t('Terminar y evaluar'));
+  const send = h('button', { class: 'send-btn', type: 'submit', 'aria-label': t('Enviar') }, icon('send'));
+  const freeform = h('div', { class: 'freeform' }, h('div', { class: 'composer-box' }, reply, h('div', { class: 'composer-row' }, finish, send)), hint);
+  const composer = h('form', { class: 'composer', hidden: true }, label, quick, freeform);
+  const transcript = h('div', { class: 'transcript', 'aria-live': 'polite' });
+  const busyText = h('span', {}, t('Pensando…'));
+  const busyEl = h('div', { class: 'working', hidden: true }, h('span', { class: 'working-narval', 'aria-hidden': 'true' }, window.Narval ? Narval.svg('concentrado') : null), busyText);
+  const titleEl = h('h2', {});
+  const metaEl = h('span', { class: 'pr-meta' });
+  const actionsEl = h('div', { class: 'pr-actions' });
+  const root = h('section', { class: 'pane chat practice-pane' }, h('div', { class: 'chat-head pr-head' }, h('div', { class: 'pr-title' }, titleEl, metaEl), actionsEl), transcript, busyEl, composer);
+  const v = makeView({ transcript, busyEl, busyText, composer, reply, quick, freeform, label, hint, finish, send, cancel: null }, 'practice');
+  Object.assign(v, { root, practiceId: id, titleEl, metaEl, actionsEl, info: null });
+  composer.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const mode = composer.dataset.kind;
+    if (mode === 'busy' || mode === 'off') return;
+    const text = reply.value;
+    if (mode === 'block' && !text.trim()) { toast(t('Escribe tu explicación antes de enviar.')); return; }
+    reply.value = '';
+    sendReply(v.run, text, false);
+  });
+  composerKeys(v);
+  PR_TABS.set(id, v);
+  return v;
+}
+
+// the header says where the practice is and offers what can be done with it now
+function drawPracticeHead(v) {
+  const info = v.info;
+  if (!info || !v.titleEl) return;
+  const live = !!(v.run && !v.run.done && !v.run.replay);
+  const st = live ? { ...info, status: 'running', waiting: !!v.run.waiting } : info;
+  v.titleEl.textContent = prTitle(info);
+  const parts = [prStatus(st), (st.status === 'running' || st.status === 'paused') ? prProgress(info) : ''].filter(Boolean);
+  v.metaEl.textContent = parts.join(' · ');
+  const btn = (label, ic, act, cls = '') => h('button', { class: `btn small ${cls}`.trim(), type: 'button', onclick: () => practiceAct(info.id, act) }, ic ? icon(ic) : null, label);
+  const acts = live
+    ? [btn(t('Pausar'), 'clock', 'pause', 'ghost'), btn(t('Terminar ahora'), 'check', 'finish')]
+    : st.status === 'paused'
+      ? [btn(t('Retomar'), 'rotate-ccw', 'resume', 'primary'), btn(t('Terminar ahora'), 'check', 'finish'), btn(t('Descartar'), 'trash-2', 'discard', 'ghost')]
+      : [];
+  v.actionsEl.replaceChildren(...acts);
+  const tab = S.dock && S.dock.getPanel(prPanel(info.id));
+  if (tab && tab.title !== prTitle(info)) tab.api.setTitle(prTitle(info));
+}
+
+// a practice run ended: paused, finished or cut; the list knows what it became
+async function practiceEnded(v, run) {
+  if (!run.replay) NARVAL.phase = '';
+  await loadPracticeList();
+  drawPracticeHead(v);
+}
+
+// the dock's tab of a practice: its kind, its title and a close button that asks first
+function practiceTab(panelId) {
+  const id = panelId.replace(/^practice-/, '');
+  const content = h('div', { class: 'dv-default-tab-content' });
+  const close = h('div', { class: 'dv-default-tab-action', role: 'button', tabindex: '-1', 'aria-label': t('Cerrar') }, icon('x'));
+  const element = h('div', { class: 'dv-default-tab pr-tab' }, content, close);
+  close.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); });
+  close.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); closePracticeTab(id); });
+  return {
+    element,
+    init(params) {
+      content.textContent = params.title || '';
+      params.api.onDidTitleChange?.((e) => { content.textContent = e.title; });
+    },
+  };
+}
+
+// Opens (or brings forward) the tab of a practice, following its live run or replaying its last one.
+async function openPractice(id, { info, run, focus = true } = {}) {
+  const dock = S.dock;
+  if (!dock) return;
+  if (!info) info = prFind(id);
+  if (!info) { await loadPracticeList(); info = prFind(id); }
+  if (!info) { toast(t('esa práctica ya no existe')); return; }
+  let p = dock.getPanel(prPanel(id));
+  if (!p) {
+    const near = [...NEAR_STUDY, 'review', ...[...PR_TABS.keys()].map(prPanel)].map((x) => dock.getPanel(x)).find(Boolean);
+    const chat = dock.getPanel('chat');
+    const position = near ? { referencePanel: near.id, direction: 'within' }
+      : chat ? { referencePanel: 'chat', direction: isPhone() ? 'within' : 'right' } : undefined;
+    p = dock.addPanel({ id: prPanel(id), component: 'practiceRun', tabComponent: 'practiceTab', title: prTitle(info), position, inactive: !focus });
+    if (!near && !isPhone()) { sizeStudy(p.group); slide(p.group.element, 'slide-in'); }
+  }
+  const v = PR_TABS.get(id);
+  v.info = info;
+  const runID = run || info.run;
+  const live = !!run || info.status === 'running';
+  if (runID && (!v.run || v.run.id !== runID)) attachView(v, runID, prTitle(info), { replay: !live });
+  else if (!runID) setComposer(v, 'off');
+  drawPracticeHead(v);
+  if (focus) p.api.setActive();
+}
+
+function closePracticePanel(id) {
+  const p = S.dock && S.dock.getPanel(prPanel(id));
+  if (p) p.api.close();
+}
+
+// a practice tab is gone: stop following its run
+function forgetPracticeView(panelId) {
+  const id = panelId.replace(/^practice-/, '');
+  const v = PR_TABS.get(id);
+  if (!v) return;
+  if (v.run && v.run.es) v.run.es.close();
+  v.working = false;
+  clearInterval(v.timer);
+  VIEWS.delete(v);
+  PR_TABS.delete(id);
+  $('#session-dot').hidden = ![...VIEWS].some((x) => x.working);
+}
+
+// Starts a practice on a guide. One already put aside on the same guide is offered first.
+async function startPractice(body) {
+  const same = PR.open.find((p) => p.slug === body.slug && p.kind === body.kind);
+  if (same) {
+    if (same.status === 'running') { openPractice(same.id); return; }
+    const pick = await askChoice(t('Tienes una práctica en pausa de este tema'), t('{what}: {progress}. ¿La retomas o empiezas otra?', { what: prTitle(same), progress: prProgress(same) }),
+      [{ value: 'new', label: t('Empezar otra') }, { value: 'resume', label: t('Retomar'), primary: true }]);
+    if (!pick) return;
+    if (pick === 'resume') { practiceAct(same.id, 'resume'); return; }
+  }
+  try {
+    const res = await api('/api/practice', { method: 'POST', body });
+    NARVAL.phase = body.kind;
+    await openPractice(res.practice.id, { info: res.practice, run: res.run });
+    loadPracticeList();
+    loadChats();
+  } catch (err) { toast(err.message); }
+}
+
+// Pausar / Retomar / Terminar ahora / Descartar
+async function practiceAct(id, act, { confirmed = false } = {}) {
+  try {
+    if (act === 'discard') {
+      if (!confirmed && !(await askConfirm(t('¿Descartar esta práctica?'), t('No se corrige ni cuenta para tu progreso. Queda en la papelera por si cambias de idea.'), t('Descartar')))) return false;
+      const res = await api(`/api/practice/${id}`, { method: 'DELETE' });
+      closePracticePanel(id);
+      undoToast(t('Práctica descartada.'), res.trash && res.trash.id);
+    } else {
+      const res = await api(`/api/practice/${id}/${act}`, { method: 'POST', body: {} });
+      if (res.empty) toast(t('No había nada respondido: se cerró sin nota.'));
+      if (res.run) await openPractice(id, { info: res.practice, run: res.run });
+      else if (PR_TABS.has(id) && res.practice) { const v = PR_TABS.get(id); v.info = res.practice; drawPracticeHead(v); }
+      if (act === 'pause') toast(t('Práctica en pausa: la retomas desde Practicar cuando quieras.'));
+    }
+    await loadPracticeList();
+    loadChats();
+    return true;
+  } catch (err) { toast(err.message); return false; }
+}
+
+// Closing the tab of a practice in progress asks what to do with it.
+async function closePracticeTab(id) {
+  const v = PR_TABS.get(id);
+  const live = v && v.run && !v.run.done && !v.run.replay;
+  if (!live) { closePracticePanel(id); return; }
+  const pick = await askChoice(t('¿Qué hacemos con esta práctica?'), t('Puedes dejarla en pausa y seguir después, corregir ya lo que respondiste (cuenta como incompleta) o descartarla.'), [
+    { value: 'discard', label: t('Descartar'), danger: true },
+    { value: 'finish', label: t('Terminar ahora') },
+    { value: 'pause', label: t('Pausar'), primary: true },
+  ]);
+  if (!pick) return;
+  if (pick === 'finish') { practiceAct(id, 'finish'); return; } // the tab stays to show the score
+  if (await practiceAct(id, pick, { confirmed: true }) && pick === 'pause') closePracticePanel(id);
+}
+
+// A dialog with several answers; resolves with the value picked, or null.
+function askChoice(title, body, options) {
+  return new Promise((resolve) => {
+    const dlg = h('dialog', { class: 'choice-dialog', 'aria-label': title });
+    const done = (val) => { if (dlg.open) dlg.close(); dlg.remove(); resolve(val); };
+    dlg.append(
+      h('div', { class: 'dlg-head' }, h('strong', {}, title), h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('Cerrar'), onclick: () => done(null) }, icon('x'))),
+      h('p', { class: 'confirm-body' }, body),
+      h('div', { class: 'confirm-foot' },
+        h('button', { class: 'btn small ghost', type: 'button', onclick: () => done(null) }, t('Cancelar')),
+        ...options.map((o) => h('button', { class: `btn small${o.primary ? ' primary' : ''}${o.danger ? ' danger' : ''}`, type: 'button', onclick: () => done(o.value) }, o.label))));
+    dlg.addEventListener('cancel', (e) => { e.preventDefault(); done(null); });
+    document.body.append(dlg);
+    dlg.showModal();
+    dlg.querySelector('.btn.primary')?.focus();
+  });
+}
+
+// "Prácticas pendientes": the ones open or put aside, to resume, finish or discard
+function drawPending(host) {
+  PR.pendingHost = host;
+  const list = PR.open;
+  if (!list.length) { host.replaceChildren(); return; }
+  host.replaceChildren(h('section', { class: 'p-card pr-pending' },
+    h('h3', {}, t('Prácticas pendientes')),
+    h('ul', { class: 'pr-list' }, list.map((p) => {
+      const btn = (label, act, cls = '') => h('button', { class: `btn small ${cls}`.trim(), type: 'button', onclick: () => practiceAct(p.id, act) }, label);
+      return h('li', {},
+        h('span', { class: 'pr-ic', 'aria-hidden': 'true' }, icon(PR_ICON[p.kind] || 'target')),
+        h('div', { class: 'pr-what' },
+          h('strong', {}, prTitle(p)),
+          h('small', {}, [prStatus(p), prProgress(p), when(p.updated)].filter(Boolean).join(' · ')),
+          p.error ? h('small', { class: 'pr-error' }, p.error) : null),
+        h('div', { class: 'pr-btns' }, p.status === 'running'
+          ? [h('button', { class: 'btn small primary', type: 'button', onclick: () => openPractice(p.id) }, t('Abrir'))]
+          : [btn(t('Retomar'), 'resume', 'primary'), btn(t('Terminar ahora'), 'finish'), btn(t('Descartar'), 'discard', 'ghost')]));
+    }))));
+}
+
+// the count next to the conversations: practices waiting to be resumed
+function drawPendingCount() {
+  const b = $('#pending-practice');
+  if (!b) return;
+  const n = PR.open.length;
+  b.hidden = !n;
+  b.querySelector('span').textContent = tn(n, '{n} práctica pendiente', '{n} prácticas pendientes');
+}
+
+// the flashcard review in a tab of its own, next to the practices
+function openReview() {
+  const dock = S.dock;
+  if (!dock) return;
+  let p = dock.getPanel('review');
+  if (!p) {
+    const near = [...NEAR_STUDY, ...[...PR_TABS.keys()].map(prPanel)].map((x) => dock.getPanel(x)).find(Boolean);
+    const chat = dock.getPanel('chat');
+    const position = near ? { referencePanel: near.id, direction: 'within' } : chat ? { referencePanel: 'chat', direction: isPhone() ? 'within' : 'right' } : undefined;
+    p = dock.addPanel({ id: 'review', component: 'review', title: t('Repaso de tarjetas'), position });
+    if (!near && !isPhone()) { sizeStudy(p.group); slide(p.group.element, 'slide-in'); }
+  }
+  p.api.setActive();
+  loadFlashcards(PR.reviewHost, S.note);
+}
+function reviewPane() {
+  PR.reviewHost = h('div', { class: 'fc-review-host' });
+  return h('section', { class: 'pane practice-pane review-pane' }, h('div', { class: 'practice' }, PR.reviewHost));
 }
 
 /* ---------- chat history ---------- */
@@ -4087,9 +4447,9 @@ function renderChats() {
     const node = r.slug && nodeOf(r.slug);
     ul.append(h('li', { class: `chat-item${S.run && S.run.id === r.id ? ' on' : ''}`, 'data-id': r.id, style: node ? `--lc: ${lineColor(node.group)}` : null },
       h('button', { class: 'ci-open', type: 'button', onclick: () => openChat(r) },
-        h('span', { class: 'ci-title' }, r.title || t('Chat')),
-        h('span', { class: 'ci-meta' }, r.status === 'running' ? t('En curso') : when(r.started), node ? ` · ${node.label}` : '')),
-      r.status !== 'running' && h('button', { class: 'ci-del', type: 'button', 'aria-label': t('Eliminar «{title}»', { title: r.title }), title: t('Eliminar'), onclick: async () => {
+        h('span', { class: 'ci-title' }, r.practice ? icon(PR_ICON[r.cmd] || 'target') : null, r.practice ? `${PR_KIND[r.cmd] || ''} · ${r.title}` : (r.title || t('Chat'))),
+        h('span', { class: 'ci-meta' }, r.status === 'running' ? t('En curso') : r.status === 'paused' ? t('En pausa') : when(r.started), node ? ` · ${node.label}` : '')),
+      r.status !== 'running' && !(r.practice && PR.open.some((p) => p.id === r.practice)) && h('button', { class: 'ci-del', type: 'button', 'aria-label': t('Eliminar «{title}»', { title: r.title }), title: t('Eliminar'), onclick: async () => {
         if (!confirm(t('¿Eliminar la conversación «{title}»? Tus notas se conservan.', { title: r.title }))) return;
         try {
           const res = await api(`/api/sessions/${r.id}`, { method: 'DELETE' });
@@ -4101,23 +4461,29 @@ function renderChats() {
   }
 }
 $('#chat-search').addEventListener('input', renderChats);
+$('#pending-practice').addEventListener('click', () => show('practice'));
 function markActiveChat() { $$('.chat-item', PANE_EL.chats || document).forEach((li) => li.classList.toggle('on', !!S.run && String(S.run.id) === li.dataset.id)); }
 
 function openChat(r) {
+  if (r.practice) {
+    const info = prFind(r.practice) || { id: r.practice, kind: r.cmd, slug: r.slug, title: r.title, status: r.status === 'running' ? 'running' : 'ended', run: r.id };
+    openPractice(r.practice, { info: { ...info, run: info.run || r.id } });
+    return;
+  }
   attachRun(r.id, r.title, { replay: r.status !== 'running' });
   if (r.slug && r.slug !== S.guide && nodeOf(r.slug)) openNote(r.slug, { quiet: true });
   show('chat');
 }
 
 function newChat() {
-  if (S.run && S.run.es) S.run.es.close();
-  S.run = null;
+  if (CHAT.run && CHAT.run.es) CHAT.run.es.close();
+  S.run = CHAT.run = null;
   if (S.mapScope === 'chat') drawMap();
-  resetTranscript();
+  resetTranscript(CHAT);
   $('#transcript').append(emptyState());
   $('#chat-title').textContent = t('Nueva conversación');
-  setWorking(false);
-  setComposer('chat');
+  setWorking(CHAT, false);
+  setComposer(CHAT, 'chat');
   markActiveChat();
 }
 $('#btn-new').addEventListener('click', () => { newChat(); show('chat'); });
@@ -4168,6 +4534,9 @@ async function boot() {
       await openNote(decodeURIComponent(m[1]), { quiet: !!m[2] });
       if (m[2]) show(m[2]);
     }
+    // practices still running come back as tabs, next to the study panel
+    await loadPracticeList();
+    for (const p of PR.open) if (p.status === 'running') await openPractice(p.id, { info: p, focus: false });
   } catch (err) { toast(err.message); }
 }
 boot();

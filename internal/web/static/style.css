@@ -1293,3 +1293,34 @@ html.fs .dock { padding: 0; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* ---------- practice tabs (quiz, Feynman, card review), several at a time ---------- */
+.practice-pane.chat { overflow: hidden; }
+.review-pane { overflow: auto; }
+.pr-head { flex-wrap: wrap; row-gap: 6px; }
+.pr-title { flex: 1 1 180px; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.pr-title h2 { flex: none; }
+.pr-meta { font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pr-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.pr-actions .btn .ic { width: 14px; height: 14px; }
+.pr-tab .dv-default-tab-action .ic { width: 12px; height: 12px; }
+.pr-tab .dv-default-tab-content { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pr-pending { margin-bottom: 14px; border-color: var(--accent); }
+.pr-list { list-style: none; margin: 0; padding: 0; width: 100%; display: flex; flex-direction: column; gap: 12px; }
+.pr-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.pr-ic { flex: none; width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); }
+.pr-ic .ic { width: 16px; height: 16px; }
+.pr-what { flex: 1 1 200px; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pr-what strong { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pr-what small { color: var(--muted); font-size: 12.5px; }
+.pr-what .pr-error { color: var(--danger); }
+.pr-btns { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+.pending-practice { display: flex; align-items: center; gap: 7px; width: 100%; border: 1px dashed var(--accent); background: var(--accent-soft); color: var(--ink); border-radius: 10px; padding: 7px 10px; font: inherit; font-size: 13px; font-weight: 550; cursor: pointer; text-align: left; }
+.pending-practice[hidden] { display: none; }
+.pending-practice .ic { width: 15px; height: 15px; color: var(--accent); flex: none; }
+.pending-practice:hover { border-style: solid; }
+.ci-title .ic { width: 13px; height: 13px; vertical-align: -2px; margin-right: 4px; color: var(--muted); }
+.choice-dialog { width: min(460px, 92vw); padding: 0; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); color: var(--ink); box-shadow: var(--shadow-lg); }
+.choice-dialog::backdrop { background: rgba(12, 9, 20, .55); backdrop-filter: blur(3px); }
+.choice-dialog .confirm-foot { flex-wrap: wrap; }
+.rich-practice .btn .ic { width: 14px; height: 14px; }

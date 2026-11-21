@@ -75,19 +75,24 @@ func (s *Server) switchVault(path string) error {
 	if err != nil {
 		return err
 	}
+	if s.working() {
+		return errVaultBusy
+	}
+	s.pauseAll()
 	s.mu.Lock()
-	if s.active != nil && !s.active.isDone() {
-		if s.active.waiting() != "chat" {
+	if s.main != nil && !s.main.isDone() {
+		if s.main.waiting() != "chat" {
 			s.mu.Unlock()
 			return errVaultBusy
 		}
-		s.active.park()
+		s.main.park()
 	}
 	s.vmu.Lock()
 	s.V = v
 	s.vmu.Unlock()
 	go purgeTrash(v)
-	s.runs, s.active, s.seq, s.store = map[int]*Run{}, nil, 0, nil
+	s.runs, s.main, s.seq, s.store, s.practices = map[int]*Run{}, nil, 0, nil, map[string]*practiceRec{}
+	s.pauseStalePractices()
 	if st, err := newStore(s.sessionsDir()); err == nil {
 		s.store = st
 		s.loadSessions()

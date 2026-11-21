@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/krilinxito/studyhomie/internal/config"
 	"github.com/krilinxito/studyhomie/internal/i18n"
 	"github.com/krilinxito/studyhomie/internal/session"
 	"github.com/krilinxito/studyhomie/internal/vault"
@@ -102,6 +103,8 @@ type Run struct {
 	subs      map[chan struct{}]struct{}
 	askKind   string // what the flow is waiting for; "" when it is not waiting
 	parked    bool   // an idle chat closed to make room for another
+	paused    bool   // a practice put aside, to resume later
+	Practice  string // the practice it runs, if any
 	done      bool
 	status    string
 	errMsg    string
@@ -289,11 +292,16 @@ func (s *Server) validate(req *StartReq) (paths []string, err error) {
 	return nil, nil
 }
 
-// StartRun launches a flow in the background. Only one runs at a time.
+// StartRun launches a flow in the background. One main flow (a chat, a roadmap…) runs at a time;
+// a quiz or a Feynman is a practice that runs next to it (see startPractice).
 func (s *Server) StartRun(req StartReq) (*Run, error) {
 	paths, err := s.validate(&req)
 	if err != nil {
 		return nil, err
+	}
+	if req.Cmd == "quiz" || req.Cmd == "feynman" {
+		_, run, err := s.startPractice(session.Practice{Kind: req.Cmd, Slug: req.Slug, N: req.N, Difficulty: req.Difficulty})
+		return run, err
 	}
 	var first *session.ChatMsg
 	shown := ""
@@ -306,22 +314,16 @@ func (s *Server) StartRun(req StartReq) (*Run, error) {
 		first, shown, shownParams = &m, req.Chat.shown(), s.chatParams(*req.Chat)
 	}
 	s.mu.Lock()
-	if s.active != nil && !s.active.isDone() {
+	if s.main != nil && !s.main.isDone() {
 		// a chat that is only waiting for a message steps aside; anything working keeps the floor
-		if req.Cmd != "chat" || s.active.waiting() != "chat" {
+		if req.Cmd != "chat" || s.main.waiting() != "chat" {
 			s.mu.Unlock()
 			return nil, errBusy
 		}
-		s.active.park()
+		s.main.park()
 	}
-	s.seq++
-	ctx, cancel := context.WithCancel(context.Background())
-	run := &Run{
-		ID: s.seq, Cmd: req.Cmd, Title: s.runTitle(req), Slug: runSlug(req), Started: s.Now(),
-		cancel: cancel, in: newInputBuf(), store: s.store, status: statusRunning, lang: s.lang(),
-	}
-	s.runs[run.ID] = run
-	s.active = run
+	run, ctx := s.newRunLocked(req.Cmd, s.runTitle(req), runSlug(req))
+	s.main = run
 	s.mu.Unlock()
 	opts := session.ChatOpts{First: first, Guide: req.Guide}
 	if req.Cmd == "chat" {
@@ -338,13 +340,56 @@ func (s *Server) StartRun(req StartReq) (*Run, error) {
 	}
 	run.scheduleSave(false)
 
+	sess, cfg := s.runSession(run)
+	if req.Cmd == "chat" {
+		sess.StartPractice = func(p session.Practice) (string, error) {
+			rec, _, err := s.startPractice(p)
+			if err != nil {
+				return "", err
+			}
+			return rec.ID, nil
+		}
+	}
+	go func() {
+		defer run.cancel()
+		var err error
+		if req.Cmd == "chat" {
+			err = sess.Chat(ctx, opts)
+		} else {
+			err = s.dispatch(ctx, sess, req, paths)
+		}
+		run.finish(ctx, err, cfg.Language)
+	}()
+	return run, nil
+}
+
+// newRunLocked registers a new run; s.mu must be held.
+func (s *Server) newRunLocked(cmd, title, slug string) (*Run, context.Context) {
+	s.seq++
+	ctx, cancel := context.WithCancel(context.Background())
+	run := &Run{
+		ID: s.seq, Cmd: cmd, Title: title, Slug: slug, Started: s.Now(),
+		cancel: cancel, in: newInputBuf(), store: s.store, status: statusRunning, lang: s.lang(),
+	}
+	s.runs[run.ID] = run
+	return run, ctx
+}
+
+// runSession is the session a run drives: its input, output, questions and cards go to the browser.
+// Its AI calls wait for a free slot (max_parallel), and say so while they wait.
+func (s *Server) runSession(run *Run) (*session.Session, config.Config) {
 	prov, cfg, _ := s.backend()
+	lang := i18n.UI(cfg.Language)
+	status := func(text string) {
+		run.emit(Event{Type: "card", Card: &session.Card{Kind: session.CardStatus, Detail: i18n.T(lang, text)}})
+	}
 	sess := &session.Session{
-		P: prov, V: s.vault(), Cfg: cfg, CheckLinks: s.CheckLinks,
+		P: s.limit(prov, func() { status("En cola: espera su turno para la IA…") }, func() { status("Pensando…") }),
+		V: s.vault(), Cfg: cfg, CheckLinks: s.CheckLinks,
 		In:  bufio.NewReader(run.in),
 		Out: outWriter{run},
 		Ask: func(kind, label, def string) {
-			run.emit(Event{Type: "ask", Kind: kind, Label: session.Label(i18n.UI(cfg.Language), label), Key: label, Def: def})
+			run.emit(Event{Type: "ask", Kind: kind, Label: session.Label(lang, label), Key: label, Def: def})
 		},
 		Card: func(c session.Card) {
 			if c.Kind == session.CardGuide {
@@ -355,30 +400,32 @@ func (s *Server) StartRun(req StartReq) (*Run, error) {
 			run.emit(Event{Type: "card", Card: &c})
 		},
 	}
-	go func() {
-		defer cancel()
-		var err error
-		if req.Cmd == "chat" {
-			err = sess.Chat(ctx, opts)
-		} else {
-			err = s.dispatch(ctx, sess, req, paths)
-		}
-		run.in.Close()
-		done := Event{Type: "done"}
-		if err != nil && !errors.Is(err, context.Canceled) {
-			done.Error = session.ErrorText(err, i18n.UI(cfg.Language))
-		}
-		if ctx.Err() != nil {
-			done.Error = "cancelado"
-		}
+	return sess, cfg
+}
+
+// finish closes a run with its closing event. A parked chat and a paused practice end quietly.
+func (run *Run) finish(ctx context.Context, err error, language string) {
+	run.in.Close()
+	done := Event{Type: "done"}
+	if err != nil && !errors.Is(err, context.Canceled) {
+		done.Error = session.ErrorText(err, i18n.UI(language))
+	}
+	if ctx.Err() != nil {
+		done.Error = "cancelado"
+	}
+	run.mu.Lock()
+	paused := run.paused
+	if run.parked || paused {
+		done.Error = ""
+	}
+	run.mu.Unlock()
+	run.emit(done)
+	if paused {
 		run.mu.Lock()
-		if run.parked {
-			done.Error = ""
-		}
+		run.status = statusPaused
 		run.mu.Unlock()
-		run.emit(done)
-	}()
-	return run, nil
+		run.scheduleSave(true)
+	}
 }
 
 // runSlug is the note or roadmap a request works on, or "" when it creates one.
@@ -453,10 +500,6 @@ func (s *Server) dispatch(ctx context.Context, sess *session.Session, req StartR
 	case "prepare":
 		_, err := sess.Prepare(ctx, req.Topic, "adhoc")
 		return err
-	case "quiz":
-		return sess.Quiz(ctx, req.Slug, req.N, req.Difficulty)
-	case "feynman":
-		return sess.Feynman(ctx, req.Slug)
 	case "interactive":
 		return sess.Interactive(ctx, req.Slug, req.Brief)
 	case "roadmap":

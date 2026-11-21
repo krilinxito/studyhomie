@@ -29,6 +29,7 @@ type Card struct {
 	Detail    string           `json:"detail,omitempty"`
 	Resources []vault.Resource `json:"resources,omitempty"`
 	Slug      string           `json:"slug,omitempty"`
+	Practice  string           `json:"practice,omitempty"`
 	Plan      *ConceptPlan     `json:"plan,omitempty"`
 	Items     []ProgressItem   `json:"items,omitempty"`
 	Steps     []RoadmapStep    `json:"steps,omitempty"`

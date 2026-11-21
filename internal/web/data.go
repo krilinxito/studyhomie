@@ -55,6 +55,10 @@ func (s *Server) inUse(cat, id string) bool {
 			if r.Slug == id {
 				return true
 			}
+		case vault.CatPractice:
+			if r.Practice == id {
+				return true
+			}
 		case vault.CatSessions:
 			if strconv.Itoa(r.ID) == id {
 				return true
@@ -203,8 +207,8 @@ func (s *Server) forgetSessions(ids []int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, id := range ids {
-		if r := s.runs[id]; r != nil && s.active == r {
-			s.active = nil
+		if r := s.runs[id]; r != nil && s.main == r {
+			s.main = nil
 		}
 		delete(s.runs, id)
 	}

@@ -225,3 +225,34 @@ func TestWebSessionHidesTerminalText(t *testing.T) {
 		t.Errorf("web transcript should point at the finish button:\n%s", got)
 	}
 }
+
+// A Feynman resumed after a pause carries its rounds to the model; closing it early evaluates what
+// was explained and leaves mastery alone.
+func TestFeynmanResumedThenFinishedEarly(t *testing.T) {
+	f := &fake{replies: []provider.Response{
+		reply(prepReply, 10),
+		reply("¿Y la prior?", 10),
+		reply("Ibas bien.\nSCORE: 60", 10),
+	}}
+	s, _ := newSession(t, f, "La prior es lo que creía antes.\n.\n"+FinishNow+"\n")
+	slug, _ := s.Prepare(context.Background(), "Bayes", "adhoc")
+	var saved []Practice
+	s.Checkpoint = func(p Practice) { saved = append(saved, p) }
+	p := &Practice{Kind: PracticeFeynman, Slug: slug, Turns: []FeynmanTurn{{Learner: "Es como un filtro.", Reply: "Bien, pero ¿por qué?"}}}
+	if err := s.FeynmanFrom(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(f.reqs[1].Prompt, "CONVERSATION SO FAR") || !strings.Contains(f.reqs[1].Prompt, "Es como un filtro.") {
+		t.Errorf("a resumed Feynman must carry its rounds: %s", f.reqs[1].Prompt)
+	}
+	if len(saved) != 1 || len(saved[0].Turns) != 2 {
+		t.Errorf("checkpoints: %+v", saved)
+	}
+	if p.Outcome != OutcomePartial || p.Score != 60 {
+		t.Errorf("outcome %q score %d", p.Outcome, p.Score)
+	}
+	n, _ := s.V.Load(slug)
+	if n.Meta.Status != "prepared" || n.Meta.Mastery != 0 || !strings.Contains(n.Body, "La prior es lo que creía antes.") {
+		t.Errorf("an incomplete Feynman must keep mastery: %+v\n%s", n.Meta, n.Body)
+	}
+}

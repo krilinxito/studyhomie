@@ -55,6 +55,10 @@ type Event struct {
 	XP      int       `json:"xp"`
 	Score   int       `json:"score,omitempty"`
 	Seconds int       `json:"seconds,omitempty"`
+	// Partial marks a practice closed before the end: graded on what was answered, it does not
+	// change the topic's mastery.
+	Partial  bool   `json:"partial,omitempty"`
+	Practice string `json:"practice,omitempty"` // id of the practice session it came from
 }
 
 // Data is what gets persisted to vault/.studyhomie/stats.json.
