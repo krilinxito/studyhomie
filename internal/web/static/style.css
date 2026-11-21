@@ -270,8 +270,11 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 .st-shared { --c: var(--accent); width: 9px; height: 9px; background: var(--c); box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px var(--muted); }
 
 /* chats */
-.sidebar { display: flex; flex-direction: column; gap: 10px; padding: 12px; }
-.new-chat { width: 100%; }
+.top-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
+#btn-sidebar[aria-pressed="true"] { color: var(--accent); }
+.sidebar { display: flex; flex-direction: column; gap: 8px; padding: 10px; }
+.new-chat { width: 100%; font-size: 13px; padding: 8px 10px; gap: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sidebar input[type="search"] { font-size: 13px; padding: 7px 10px; }
 .chat-list { list-style: none; margin: 0 -6px; padding: 0; overflow: auto; flex: 1; display: flex; flex-direction: column; gap: 2px; }
 .chat-list > .hint { padding: 8px; }
 .chat-item { position: relative; display: flex; align-items: center; border-radius: 10px; transition: background-color .15s; }

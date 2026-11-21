@@ -13,7 +13,9 @@
 </head>
 <body>
   <header class="top">
-    <a class="brand" href="#" id="brand" aria-label="StudyHomie, nueva conversación" data-i18n-aria-label="StudyHomie, nueva conversación">
+    <div class="top-left">
+      <button class="icon-btn" id="btn-sidebar" type="button" aria-pressed="true" title="Ocultar conversaciones" data-i18n-title="Ocultar conversaciones" aria-label="Conversaciones" data-i18n-aria-label="Conversaciones"><svg class="ic"><use href="icons.svg#i-panel-left"/></svg></button>
+      <a class="brand" href="#" id="brand" aria-label="StudyHomie, nueva conversación" data-i18n-aria-label="StudyHomie, nueva conversación">
       <svg class="logo" viewBox="0 0 64 64" aria-hidden="true">
         <polygon class="logo-peak2" points="6,41 19,17 31,41"/>
         <polygon class="logo-peak" points="16,41 30,6 54,41"/>
@@ -32,6 +34,7 @@
       </svg>
       <span>StudyHomie</span>
     </a>
+    </div>
     <div class="top-meta">
       <span class="dot" id="session-dot" hidden title="Hay algo en curso" data-i18n-title="Hay algo en curso"></span>
       <span class="badge" id="provider-badge" title="Proveedor de IA" data-i18n-title="Proveedor de IA"></span>

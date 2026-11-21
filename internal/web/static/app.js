@@ -375,9 +375,10 @@ function createDock() {
     drawGroupActions();
   });
   dock.onDidMaximizedGroupChange?.(() => drawGroupActions());
-  dock.onDidRemovePanel?.(() => syncPanelButton());
-  dock.onDidAddPanel?.(() => syncPanelButton());
-  dock.onDidActivePanelChange((p) => { if (p) onShown(p.id); });
+  dock.onDidRemovePanel?.(() => { syncPanelButton(); syncSidebarButton(); });
+  dock.onDidAddPanel?.(() => { syncPanelButton(); syncSidebarButton(); });
+  dock.onDidActivePanelChange((p) => { if (p) onShown(p.id); syncSidebarButton(); });
+  syncSidebarButton();
 }
 
 // a tab dropped on a box's tab bar or the middle of its content: it joins that box. Taking the last
@@ -401,6 +402,13 @@ function setLayoutEditing(on) {
 $('#edit-done').addEventListener('click', () => setLayoutEditing(false));
 $('#edit-reset').addEventListener('click', () => { store.set('dock', null); defaultLayout(); toast(t('Diseño restablecido.')); });
 
+const DEFAULT_CHATS_W = 222;
+// dockview rounds a requested width against the rest of the grid, so the width it gives back is
+// remembered: closing the list keeps the stored width unless the user dragged it to a new one
+function sizeChats(group, w) {
+  group.api.setSize({ width: w });
+  S.chatsGot = Math.round(group.api.width);
+}
 function defaultLayout() {
   const dock = S.dock;
   dock.clear();
@@ -413,8 +421,59 @@ function defaultLayout() {
   dock.addPanel({ id: 'chats', component: 'chats', title: PANES.chats, position: { referencePanel: 'chat', direction: 'left' } });
   dock.getPanel('chat').api.setActive();
   // sizes apply once the dock has its own width
-  requestAnimationFrame(() => { try { dock.getPanel('chats')?.group.api.setSize({ width: 250 }); } catch { /* a nicety */ } });
+  requestAnimationFrame(() => { try { const g = dock.getPanel('chats')?.group; if (g) sizeChats(g, DEFAULT_CHATS_W); } catch { /* a nicety */ } });
+  syncSidebarButton();
 }
+
+// on a phone the list of chats is a tab next to the chat, so "open" means it is the one showing
+function chatsOpen() {
+  const p = S.dock && S.dock.getPanel('chats');
+  return !!p && (!isPhone() || p.api.isVisible);
+}
+function syncSidebarButton() {
+  const b = $('#btn-sidebar');
+  if (!b) return;
+  const open = chatsOpen();
+  b.setAttribute('aria-pressed', String(open));
+  b.title = open ? t('Ocultar conversaciones') : t('Mostrar conversaciones');
+}
+function toggleChats() {
+  const dock = S.dock;
+  if (!dock) return;
+  const p = dock.getPanel('chats');
+  if (isPhone()) {
+    if (chatsOpen()) dock.getPanel('chat')?.api.setActive();
+    else show('chats');
+    syncSidebarButton();
+    return;
+  }
+  if (p) {
+    const w = Math.round(p.api.width);
+    if (w >= 150 && (S.chatsGot == null || Math.abs(w - S.chatsGot) > 3)) store.set('chatsW', w);
+    p.api.close();
+    syncSidebarButton();
+    return;
+  }
+  show('chats');
+  const w = Math.max(170, Math.min(300, store.get('chatsW', DEFAULT_CHATS_W)));
+  requestAnimationFrame(() => {
+    try {
+      const g = dock.getPanel('chats')?.group;
+      if (g && !g.panels.some((x) => x.id === 'chat')) sizeChats(g, w);
+    } catch { /* non-fatal */ }
+  });
+  dock.getPanel('chat')?.api.setActive();
+  syncSidebarButton();
+}
+$('#btn-sidebar')?.addEventListener('click', toggleChats);
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'b') {
+    const tag = (document.activeElement && document.activeElement.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    e.preventDefault();
+    toggleChats();
+  }
+});
 
 // room for the study panel: about half the dock, with the list of chats kept narrow
 function sizeStudy(group) {
@@ -422,7 +481,7 @@ function sizeStudy(group) {
   const W = $('#dock').clientWidth;
   try {
     const chats = dock.getPanel('chats');
-    if (chats && chats.group !== group && !chats.group.panels.some((p) => p.id === 'chat') && chats.api.width > 300) chats.group.api.setSize({ width: 250 });
+    if (chats && chats.group !== group && !chats.group.panels.some((p) => p.id === 'chat') && chats.api.width > 240) sizeChats(chats.group, DEFAULT_CHATS_W);
     group.api.setSize({ width: Math.round(Math.min(W - 520, Math.max(420, W * 0.48))) });
   } catch { /* sizes are a nicety */ }
 }
@@ -496,8 +555,11 @@ function groupActions(group) {
       try { max = group.api.isMaximized(); } catch { return; }
       const full = !!document.fullscreenElement;
       const holdsChat = group.panels.some((p) => p.id === 'chat' || p.id === 'chats');
-      if (group.panels.every((p) => p.id === 'chats')) { element.replaceChildren(); return; } // the list of chats needs none
       const btn = (name, title, onclick) => h('button', { class: 'icon-btn', type: 'button', title, 'aria-label': title, onclick }, icon(name));
+      if (group.panels.every((p) => p.id === 'chats')) {
+        element.replaceChildren(btn('panel-left-close', t('Ocultar conversaciones'), toggleChats));
+        return;
+      }
       element.replaceChildren(...[
         full ? btn('minimize-2', t('Salir de pantalla completa'), () => document.exitFullscreen().catch(() => {}))
           : btn('fullscreen', t('Pantalla completa'), () => fullScreen(group)),
