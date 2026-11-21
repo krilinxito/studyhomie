@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/krilinxito/studyhomie/internal/session"
@@ -351,11 +352,20 @@ func (s *Server) deleteNote(w http.ResponseWriter, r *http.Request) {
 	}
 	v := s.vault()
 	if v.Exists(slug) {
-		if err := v.DeleteGuide(slug); err != nil {
+		if s.inUse(vault.CatGuides, slug) {
+			fail(w, http.StatusConflict, errItemInUse.Error())
+			return
+		}
+		var with []string
+		if q := r.URL.Query().Get("with"); q != "" {
+			with = strings.Split(q, ",")
+		}
+		item, err := s.removeItem(vault.CatGuides, slug, with)
+		if err != nil {
 			fail(w, 500, err.Error())
 			return
 		}
-		writeJSON(w, 200, map[string]any{"ok": true, "kind": "guide", "slug": slug})
+		writeJSON(w, 200, map[string]any{"ok": true, "kind": "guide", "slug": slug, "trash": item.ID})
 		return
 	}
 	id := slug
@@ -363,11 +373,12 @@ func (s *Server) deleteNote(w http.ResponseWriter, r *http.Request) {
 		id = vault.ConceptID(slug)
 	}
 	if v.ConceptExists(id) {
-		if err := v.DeleteConcept(id); err != nil {
+		item, err := v.DeleteConcept(id)
+		if err != nil {
 			fail(w, 500, err.Error())
 			return
 		}
-		writeJSON(w, 200, map[string]any{"ok": true, "kind": "concept", "slug": id})
+		writeJSON(w, 200, map[string]any{"ok": true, "kind": "concept", "slug": id, "trash": item.ID})
 		return
 	}
 	fail(w, 404, "no existe esa nota")

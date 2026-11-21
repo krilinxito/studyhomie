@@ -86,6 +86,7 @@ func (s *Server) switchVault(path string) error {
 	s.vmu.Lock()
 	s.V = v
 	s.vmu.Unlock()
+	go purgeTrash(v)
 	s.runs, s.active, s.seq, s.store = map[int]*Run{}, nil, 0, nil
 	if st, err := newStore(s.sessionsDir()); err == nil {
 		s.store = st

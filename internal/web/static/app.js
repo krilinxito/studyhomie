@@ -86,12 +86,16 @@ async function api(path, opts = {}) {
 }
 
 let toastTimer;
-function toast(msg) {
+// toast shows a short message; action ({ label, onClick }) adds a button to it, such as «Deshacer».
+function toast(msg, action) {
   const box = $('#toast');
-  box.textContent = msg;
+  box.replaceChildren(msg);
+  if (action) {
+    box.append(h('button', { type: 'button', class: 'toast-act', onclick: () => { box.hidden = true; action.onClick(); } }, action.label));
+  }
   box.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { box.hidden = true; }, 6000);
+  toastTimer = setTimeout(() => { box.hidden = true; }, action ? 9000 : 6000);
 }
 
 // Same rules as vault.Slugify in Go, so links resolve to the same note.
@@ -759,6 +763,7 @@ function drawSettings() {
     languageSection(row),
     studySection(row),
     updateSection(row),
+    ...dataSections(),
     h('p', { class: 'set-foot' }, t('Se guarda en {file}. Lo que esté en curso termina con la IA anterior.', { file: SET.data.configPath || 'studyhomie.toml' }))));
 }
 
@@ -978,6 +983,242 @@ $('#update-go').addEventListener('click', () => installUpdate());
 $('#update-later').addEventListener('click', () => { setLater(UPD.st.latest); drawUpdateBar(); });
 $('#update-close').addEventListener('click', () => $('#update-dialog').close());
 
+// Ajustes → «Datos y almacenamiento» and «Papelera»: what the vault holds by category, deleting
+// into a trash that can be undone, and cleaning up what deleted notes left behind.
+const DATA_CATS = {
+  guias: { label: t('Guías'), group: 'vault' },
+  conceptos: { label: t('Conceptos'), group: 'vault' },
+  roadmaps: { label: t('Roadmaps'), group: 'vault' },
+  apuntes: { label: t('Apuntes'), group: 'vault' },
+  adjuntos: { label: t('Adjuntos de apuntes'), group: 'vault' },
+  flashcards: { label: t('Mazos de tarjetas'), group: 'vault' },
+  material: { label: t('Material subido'), group: 'vault' },
+  interactive: { label: t('Simulaciones'), group: 'vault' },
+  daily: { label: t('Retos diarios'), group: 'vault' },
+  sessions: { label: t('Conversaciones'), group: 'app' },
+  uploads: { label: t('Archivos enviados al chat'), group: 'app' },
+  handoffs: { label: t('Resúmenes internos de guías'), group: 'app' },
+  sources: { label: t('Texto extraído del material'), group: 'app' },
+  state: { label: t('Estadísticas y progreso'), group: 'app' },
+};
+const STATE_ITEMS = { stats: t('Estadísticas, XP y racha'), cards: t('Progreso de repaso de tarjetas') };
+const TRASH_KINDS = { ...Object.fromEntries(Object.entries(DATA_CATS).map(([k, v]) => [k, v.label])), orphans: t('Archivos huérfanos') };
+const DATA = { overview: null, trash: null, orphans: null, open: '', items: {}, sel: new Set(), q: '', withDeck: false, withSessions: false, showOrphans: false, error: '' };
+
+function dataSections() {
+  const data = h('section', { class: 'set-section data-sec', id: 'data-sec' }, h('h3', {}, t('Datos y almacenamiento')), h('p', { class: 'set-facts data-loading' }, t('Cargando…')));
+  const trash = h('section', { class: 'set-section data-sec', id: 'trash-sec' }, h('h3', {}, t('Papelera')));
+  loadData();
+  return [data, trash];
+}
+
+async function loadData() {
+  try {
+    const [overview, trash] = await Promise.all([api('/api/data'), api('/api/trash')]);
+    DATA.overview = overview; DATA.trash = trash; DATA.error = '';
+    if (DATA.showOrphans) DATA.orphans = (await api('/api/orphans')).orphans;
+    if (DATA.open) DATA.items[DATA.open] = (await api(`/api/data/${DATA.open}`)).items;
+  } catch (err) { DATA.error = err.message; }
+  drawData();
+}
+
+// after deleting or restoring something, the rest of the app may be showing it
+async function dataChanged() {
+  await loadData();
+  try { await loadGraph(); } catch { /* the map reloads on its own next time */ }
+  if (S.guide && !nodeOf(S.guide)) { S.note = null; S.guide = ''; store.set('guide', ''); renderReader(null); }
+  if (typeof loadChats === 'function') loadChats();
+  loadStats();
+}
+
+function drawData() {
+  const sec = $('#data-sec'), tsec = $('#trash-sec');
+  if (!sec || !tsec) return;
+  const head = h('h3', {}, t('Datos y almacenamiento'));
+  if (DATA.error) { sec.replaceChildren(head, h('p', { class: 'set-result bad' }, DATA.error)); return; }
+  const ov = DATA.overview;
+  if (!ov) return;
+  const keep = (DATA.trash && DATA.trash.keepDays) || 30;
+  const cats = ov.categories.filter((c) => DATA_CATS[c.id]);
+  const max = Math.max(1, ...cats.map((c) => c.bytes));
+  const total = cats.reduce((a, c) => a + c.bytes, 0);
+  const group = (g, title) => {
+    const list = cats.filter((c) => DATA_CATS[c.id].group === g);
+    return h('div', { class: 'data-group' },
+      h('p', { class: 'data-group-title' }, title),
+      h('ul', { class: 'data-cats' }, list.map((c) => dataCatRow(c, max))));
+  };
+  const orph = ov.orphans || { count: 0, bytes: 0 };
+  sec.replaceChildren(head,
+    h('p', { class: 'set-facts' }, t('Todo vive en tu vault. Lo que borras va a la papelera y puedes restaurarlo durante {n} días.', { n: keep }), ' ',
+      h('strong', {}, t('Total: {size}', { size: fmtBytes(total) }))),
+    group('vault', t('En tu vault (también lo ves en Obsidian)')),
+    group('app', t('Datos internos de la app (carpeta .studyhomie)')),
+    h('div', { class: 'data-orphans' },
+      h('div', { class: 'data-orphans-head' },
+        h('span', {}, !orph.count ? t('No hay archivos huérfanos.')
+          : orph.count === 1 ? t('1 archivo huérfano ({size}): quedó de una nota que ya no existe.', { size: fmtBytes(orph.bytes) })
+            : t('{n} archivos huérfanos ({size}): quedaron de notas que ya no existen.', { n: orph.count, size: fmtBytes(orph.bytes) })),
+        orph.count ? h('button', { type: 'button', class: 'btn small ghost', onclick: async () => {
+          DATA.showOrphans = !DATA.showOrphans;
+          if (DATA.showOrphans) { try { DATA.orphans = (await api('/api/orphans')).orphans; } catch (err) { toast(err.message); } }
+          drawData();
+        } }, DATA.showOrphans ? t('Ocultar') : t('Ver')) : null,
+        orph.count ? h('button', { type: 'button', class: 'btn small', onclick: async () => {
+          try {
+            const r = await api('/api/orphans/clean', { method: 'POST', body: {} });
+            undoToast(tn(r.removed, 'Limpié {n} archivo huérfano.', 'Limpié {n} archivos huérfanos.'), r.trash && r.trash.id);
+            DATA.showOrphans = false;
+            await loadData();
+          } catch (err) { toast(err.message); }
+        } }, t('Limpiar')) : null),
+      DATA.showOrphans && DATA.orphans ? h('ul', { class: 'data-orphan-list' }, DATA.orphans.map((o) => h('li', {},
+        h('span', { class: 'data-kind' }, o.cat === 'cardstate' ? t('Progreso de tarjetas') : (DATA_CATS[o.cat] || {}).label || o.cat),
+        h('span', { class: 'data-title' }, o.cat === 'cardstate' ? t('{n} tarjetas que ya no existen', { n: o.title }) : o.title),
+        o.bytes ? h('span', { class: 'data-size' }, fmtBytes(o.bytes)) : null))) : null));
+  drawTrash(tsec);
+}
+
+function dataCatRow(c, max) {
+  const open = DATA.open === c.id;
+  const row = h('li', { class: `data-cat${open ? ' open' : ''}` },
+    h('button', { type: 'button', class: 'data-cat-head', 'aria-expanded': String(open), disabled: !c.count || null, onclick: async () => {
+      DATA.open = open ? '' : c.id;
+      DATA.sel = new Set(); DATA.q = '';
+      if (DATA.open && !DATA.items[c.id]) { try { DATA.items[c.id] = (await api(`/api/data/${c.id}`)).items; } catch (err) { toast(err.message); } }
+      drawData();
+    } },
+      h('span', { class: 'data-cat-name' }, DATA_CATS[c.id].label),
+      h('span', { class: 'data-cat-count' }, String(c.count)),
+      h('span', { class: 'data-bar', 'aria-hidden': 'true' }, h('span', { style: `width:${Math.max(c.bytes ? 2 : 0, Math.round(c.bytes / max * 100))}%` })),
+      h('span', { class: 'data-size' }, fmtBytes(c.bytes))));
+  if (open) row.append(dataItemsBox(c));
+  return row;
+}
+
+function dataItemsBox(c) {
+  const all = DATA.items[c.id] || [];
+  const q = slugify(DATA.q);
+  const list = all.filter((it) => !q || slugify(it.title || it.id).includes(q));
+  const isState = c.id === 'state';
+  const name = (it) => isState ? (STATE_ITEMS[it.id] || it.id) : (it.title || it.id);
+  const withQuery = () => {
+    if (c.id !== 'guias') return '';
+    const w = [DATA.withDeck && 'deck', DATA.withSessions && 'sessions'].filter(Boolean).join(',');
+    return w ? `?with=${w}` : '';
+  };
+  const remove = async (ids) => {
+    const one = ids.length === 1 ? list.find((it) => it.id === ids[0]) || all.find((it) => it.id === ids[0]) : null;
+    const ok = await askConfirm(
+      isState ? t('¿Reiniciar «{title}»?', { title: name(one || { id: ids[0] }) })
+        : one ? t('¿Mover «{title}» a la papelera?', { title: name(one) }) : t('¿Mover {n} elementos a la papelera?', { n: ids.length }),
+      isState ? t('Empieza de cero. Puedes recuperar lo de antes desde la papelera.') : t('Podrás restaurarlo desde la papelera.'),
+      isState ? t('Reiniciar') : t('Mover a la papelera'));
+    if (!ok) return;
+    let last = '', fails = 0;
+    for (const id of ids) {
+      try { const r = await api(`/api/data/${c.id}/${encodeURIComponent(id)}${withQuery()}`, { method: 'DELETE' }); last = r.trash && r.trash.id; }
+      catch (err) { fails++; toast(err.message); }
+    }
+    DATA.sel = new Set();
+    delete DATA.items[c.id];
+    if (!fails) undoToast(ids.length === 1 ? t('Movido a la papelera.') : t('{n} elementos movidos a la papelera.', { n: ids.length }), ids.length === 1 ? last : '');
+    await dataChanged();
+  };
+  const empty = async () => {
+    const ok = await askConfirm(t('¿Vaciar «{title}»?', { title: DATA_CATS[c.id].label }),
+      t('Se mueven a la papelera sus {n} elementos. Podrás restaurarlos uno por uno.', { n: all.length }), t('Vaciar'));
+    if (!ok) return;
+    try {
+      const r = await api(`/api/data/${c.id}/empty${withQuery()}`, { method: 'POST', body: {} });
+      toast(tn(r.removed, '{n} elemento movido a la papelera.', '{n} elementos movidos a la papelera.'));
+      DATA.sel = new Set();
+      delete DATA.items[c.id];
+      await dataChanged();
+    } catch (err) { toast(err.message); }
+  };
+  const selAll = h('input', { type: 'checkbox', 'aria-label': t('Seleccionar todo'), checked: list.length > 0 && list.every((it) => DATA.sel.has(it.id)) || null, onchange: (e) => {
+    for (const it of list) e.target.checked ? DATA.sel.add(it.id) : DATA.sel.delete(it.id);
+    drawData();
+  } });
+  const search = h('input', { type: 'search', class: 'data-search', placeholder: t('Buscar…'), value: DATA.q, 'aria-label': t('Buscar'), oninput: (e) => {
+    DATA.q = e.target.value;
+    const pos = e.target.selectionStart;
+    drawData();
+    const s = $('.data-search');
+    if (s) { s.focus(); s.setSelectionRange(pos, pos); }
+  } });
+  const opts = c.id === 'guias' ? h('div', { class: 'data-opts' },
+    h('label', {}, h('input', { type: 'checkbox', checked: DATA.withDeck || null, onchange: (e) => { DATA.withDeck = e.target.checked; } }), t('Llevarse también su mazo de tarjetas')),
+    h('label', {}, h('input', { type: 'checkbox', checked: DATA.withSessions || null, onchange: (e) => { DATA.withSessions = e.target.checked; } }), t('y sus conversaciones'))) : null;
+  return h('div', { class: 'data-items' },
+    isState ? null : h('div', { class: 'data-tools' }, selAll, search),
+    opts,
+    h('ul', { class: 'data-list' }, list.length ? list.map((it) => h('li', {},
+      isState ? null : h('input', { type: 'checkbox', 'aria-label': name(it), checked: DATA.sel.has(it.id) || null, onchange: (e) => { e.target.checked ? DATA.sel.add(it.id) : DATA.sel.delete(it.id); drawData(); } }),
+      h('span', { class: 'data-title', title: it.rel }, name(it)),
+      h('span', { class: 'data-date' }, when(it.modified)),
+      h('span', { class: 'data-size' }, fmtBytes(it.bytes)),
+      h('button', { type: 'button', class: 'icon-btn', title: isState ? t('Reiniciar') : t('Mover a la papelera'), 'aria-label': isState ? t('Reiniciar') : t('Mover a la papelera'), onclick: () => remove([it.id]) },
+        icon(isState ? 'rotate-ccw' : 'trash-2')))) : h('li', { class: 'hint' }, t('Nada coincide.'))),
+    isState ? null : h('div', { class: 'data-foot' },
+      h('button', { type: 'button', class: 'btn small danger', disabled: !DATA.sel.size || null, onclick: () => remove([...DATA.sel]) },
+        DATA.sel.size ? t('Mover {n} a la papelera', { n: DATA.sel.size }) : t('Mover a la papelera')),
+      h('button', { type: 'button', class: 'btn small ghost ghost-danger', onclick: empty }, t('Vaciar «{title}»', { title: DATA_CATS[c.id].label }))));
+}
+
+function drawTrash(sec) {
+  const tr = DATA.trash || { items: [], keepDays: 30 };
+  const items = tr.items || [];
+  const size = items.reduce((a, it) => a + (it.bytes || 0), 0);
+  const left = (it) => Math.max(0, tr.keepDays - Math.floor((Date.now() - new Date(it.deleted)) / 86400000));
+  const restore = async (it) => {
+    try {
+      await api(`/api/trash/${encodeURIComponent(it.id)}/restore`, { method: 'POST', body: {} });
+      toast(t('Restaurado: {title}', { title: trashTitle(it) }));
+      await dataChanged();
+    } catch (err) { toast(err.message); }
+  };
+  const purge = async (it) => {
+    if (!await askConfirm(t('¿Borrar «{title}» para siempre?', { title: trashTitle(it) }), t('Esto no se puede deshacer.'))) return;
+    try { await api(`/api/trash/${encodeURIComponent(it.id)}`, { method: 'DELETE' }); await loadData(); } catch (err) { toast(err.message); }
+  };
+  sec.replaceChildren(h('h3', {}, t('Papelera')),
+    h('div', { class: 'data-orphans-head' },
+      h('span', { class: 'set-facts' }, !items.length ? t('La papelera está vacía.')
+        : items.length === 1 ? t('1 elemento · {size}. Se borra solo a los {days} días.', { size: fmtBytes(size), days: tr.keepDays })
+          : t('{n} elementos · {size}. Se borran solos a los {days} días.', { n: items.length, size: fmtBytes(size), days: tr.keepDays })),
+      items.length ? h('button', { type: 'button', class: 'btn small ghost ghost-danger', onclick: async () => {
+        if (!await askConfirm(t('¿Vaciar la papelera?'), t('Se borra para siempre todo lo que hay en ella. Esto no se puede deshacer.'), t('Vaciar'))) return;
+        try { await api('/api/trash/empty', { method: 'POST', body: {} }); await loadData(); } catch (err) { toast(err.message); }
+      } }, t('Vaciar papelera')) : null),
+    items.length ? h('ul', { class: 'data-list trash-list' }, items.map((it) => h('li', {},
+      h('span', { class: 'data-kind' }, TRASH_KINDS[it.kind] || it.kind),
+      h('span', { class: 'data-title', title: (it.files || []).join('\n') }, trashTitle(it)),
+      h('span', { class: 'data-date' }, `${when(it.deleted)} · ${tn(left(it), 'queda {n} día', 'quedan {n} días')}`),
+      h('span', { class: 'data-size' }, fmtBytes(it.bytes || 0)),
+      h('button', { type: 'button', class: 'btn small', onclick: () => restore(it) }, t('Restaurar')),
+      h('button', { type: 'button', class: 'icon-btn', title: t('Borrar para siempre'), 'aria-label': t('Borrar para siempre'), onclick: () => purge(it) }, icon('x'))))) : null);
+}
+
+function trashTitle(it) {
+  if (it.kind === 'orphans') return t('Archivos huérfanos');
+  if (it.kind === 'state') return STATE_ITEMS[it.slug] || it.title;
+  return it.title || it.slug;
+}
+
+// a toast with «Deshacer», which takes the item back out of the trash
+function undoToast(msg, trashID) {
+  if (!trashID) { toast(msg); return; }
+  toast(msg, { label: t('Deshacer'), onClick: async () => {
+    try {
+      await api(`/api/trash/${encodeURIComponent(trashID)}/restore`, { method: 'POST', body: {} });
+      toast(t('Restaurado.'));
+      await dataChanged();
+    } catch (err) { toast(err.message); }
+  } });
+}
+
 // the "Actualizaciones" block of the settings page
 function updateSection(row) {
   const st = UPD.st;
@@ -1122,12 +1363,13 @@ async function deleteNote(slug, title, kind = 'guide') {
   const ok = await askConfirm(
     isConcept ? t('¿Borrar el concepto «{title}»?', { title }) : t('¿Borrar la guía «{title}»?', { title }),
     isConcept
-      ? t('Se eliminará esta nota de concepto del vault.')
-      : t('Se eliminará la guía del vault. Sus conceptos compartidos se conservan.'),
+      ? t('La nota de concepto va a la papelera; puedes restaurarla desde Ajustes.')
+      : t('La guía va a la papelera con sus archivos; sus conceptos compartidos se conservan. Puedes restaurarla desde Ajustes.'),
+    t('Mover a la papelera'),
   );
   if (!ok) return;
   try {
-    await api(`/api/notes/${encodeURIComponent(slug)}`, { method: 'DELETE' });
+    const r = await api(`/api/notes/${encodeURIComponent(slug)}`, { method: 'DELETE' });
     hideMapNodeBar();
     if (S.concept && S.concept.slug === slug) S.concept = null;
     if (S.guide === slug) {
@@ -1142,7 +1384,7 @@ async function deleteNote(slug, title, kind = 'guide') {
       renderPractice();
     }
     loadStats();
-    toast(isConcept ? t('Concepto borrado.') : t('Guía borrada.'));
+    undoToast(isConcept ? t('Concepto movido a la papelera.') : t('Guía movida a la papelera.'), r.trash);
   } catch (err) {
     toast(err.message);
   }
@@ -3850,9 +4092,10 @@ function renderChats() {
       r.status !== 'running' && h('button', { class: 'ci-del', type: 'button', 'aria-label': t('Eliminar «{title}»', { title: r.title }), title: t('Eliminar'), onclick: async () => {
         if (!confirm(t('¿Eliminar la conversación «{title}»? Tus notas se conservan.', { title: r.title }))) return;
         try {
-          await api(`/api/sessions/${r.id}`, { method: 'DELETE' });
+          const res = await api(`/api/sessions/${r.id}`, { method: 'DELETE' });
           if (S.run && S.run.id === r.id) newChat();
           loadChats();
+          undoToast(t('Conversación movida a la papelera.'), res.trash && res.trash.id);
         } catch (err) { toast(err.message); }
       } }, icon('trash-2'))));
   }

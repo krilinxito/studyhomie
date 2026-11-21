@@ -44,6 +44,7 @@ Para probarla a mano: `studyhomie init --provider claude-cli` en una carpeta tem
 - `conceptos/<id>.md`: notas de concepto (`vault.Concept`).
 - `roadmaps/<slug>.md`: la nota de la ruta, con `reach` (cuánto abarca) y `guide_depth`.
 - `apuntes/`, `daily/`, `interactive/`; y `.studyhomie/` (oculto para Obsidian): handoff de cada guía, material fuente, sesiones del chat.
+- **Borrar nunca es definitivo:** todo pasa por la papelera (`vault/trash.go`, `.studyhomie/trash/<id>/` con `item.json`, los archivos y los enlaces que se cortaron en `Refs`). `Restore` lo devuelve con sus enlaces; se purga sola a los 30 días (`TrashKeep`). `DeleteGuide` se lleva handoff, material, simulación y apunte de la guía. Ajustes → «Datos y almacenamiento» lista las categorías de `vault/data.go` (`Categories`) y la API está en `web/data.go`. Una categoría o carpeta nueva del vault se agrega en `catSpecs`.
 - El código busca secciones por su título en español (`## Guía`, `## Conexiones`, `## Dudas`, `## Prueba`…). No las renombres sin migrar las notas.
 
 ## Dos profundidades

@@ -73,6 +73,7 @@ type Server struct {
 
 func New(cfg config.Config, v *vault.Vault, p provider.Provider) *Server {
 	s := &Server{Cfg: cfg, V: v, P: p, Now: time.Now, runs: map[int]*Run{}}
+	go purgeTrash(v)
 	if st, err := newStore(s.sessionsDir()); err == nil {
 		s.store = st
 		s.loadSessions()
@@ -170,6 +171,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/tutorial/seen", s.tutorialSeen)
 	mux.HandleFunc("GET /api/sessions", s.sessions)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.deleteSession)
+	mux.HandleFunc("GET /api/data", s.dataOverview)
+	mux.HandleFunc("GET /api/data/{cat}", s.dataItems)
+	mux.HandleFunc("DELETE /api/data/{cat}/{id}", s.dataDelete)
+	mux.HandleFunc("POST /api/data/{cat}/empty", s.dataEmpty)
+	mux.HandleFunc("GET /api/orphans", s.dataOrphans)
+	mux.HandleFunc("POST /api/orphans/clean", s.cleanOrphans)
+	mux.HandleFunc("GET /api/trash", s.trashList)
+	mux.HandleFunc("POST /api/trash/{id}/restore", s.trashRestore)
+	mux.HandleFunc("DELETE /api/trash/{id}", s.trashPurge)
+	mux.HandleFunc("POST /api/trash/empty", s.trashEmpty)
 	mux.HandleFunc("POST /api/upload", s.upload)
 	mux.HandleFunc("POST /api/runs", s.startRun)
 	mux.HandleFunc("GET /api/runs/{id}/events", s.events)
@@ -501,19 +512,17 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusConflict, "la sesión sigue en curso; cancélala primero")
 		return
 	}
-	s.mu.Lock()
-	delete(s.runs, run.ID)
-	if s.active == run {
-		s.active = nil
-	}
-	s.mu.Unlock()
+	var item vault.TrashItem
 	if s.store != nil {
-		if err := s.store.remove(run.ID); err != nil {
+		var err error
+		item, err = s.vault().RemoveItem(vault.CatSessions, strconv.Itoa(run.ID), nil)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			fail(w, 500, err.Error())
 			return
 		}
 	}
-	writeJSON(w, 200, map[string]bool{"ok": true})
+	s.forgetSessions([]int{run.ID})
+	writeJSON(w, 200, map[string]any{"ok": true, "trash": item})
 }
 
 func (s *Server) startRun(w http.ResponseWriter, r *http.Request) {

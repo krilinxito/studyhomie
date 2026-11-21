@@ -1,94 +1,126 @@
 package vault
 
 import (
-	"errors"
 	"os"
-	"path/filepath"
 	"slices"
 )
 
-// DeleteGuide removes a study guide note, its companion handoff/interactive/apunte files,
-// and cleans up stale references to it in concept notes and other guides.
-func (v *Vault) DeleteGuide(slug string) error {
+// DeleteGuide moves a study guide to the trash with the files that belong only to it (handoff,
+// extracted source text, simulation, apunte, material folder), plus the extra vault-relative
+// paths given (its deck, its sessions…), and removes the links other notes had to it. The
+// returned item restores all of that. data is kept with the item (see Trash).
+func (v *Vault) DeleteGuide(slug string, extra []string, data map[string][]byte) (TrashItem, error) {
 	slug = Slugify(slug)
 	if slug == "" {
-		return os.ErrNotExist
+		return TrashItem{}, os.ErrNotExist
 	}
-	removed := false
-	for _, dir := range []string{GuidesDir, legacyDir} {
-		p := filepath.Join(v.Root, dir, slug+".md")
-		if err := os.Remove(p); err == nil {
-			removed = true
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return err
+	title := slug
+	if n, err := v.Load(slug); err == nil && n.Meta.Title != "" {
+		title = n.Meta.Title
+	}
+	files := []string{GuidesDir + "/" + slug + ".md", legacyDir + "/" + slug + ".md"}
+	if _, err := os.Stat(v.abs(files[0])); err != nil {
+		if _, err := os.Stat(v.abs(files[1])); err != nil {
+			return TrashItem{}, os.ErrNotExist
 		}
 	}
-	if !removed {
-		return os.ErrNotExist
-	}
+	files = append(files,
+		".studyhomie/handoff/"+slug+".md",
+		".studyhomie/material/"+slug+".md",
+		"interactive/"+slug+".html",
+		ApuntesDir+"/"+slug+".md",
+		MaterialDir+"/"+slug,
+	)
+	files = append(files, extra...)
 
-	// Best-effort cleanup of companion files belonging exclusively to this guide.
-	_ = os.Remove(filepath.Join(v.Root, ".studyhomie", "handoffs", slug+".md"))
-	_ = os.Remove(filepath.Join(v.Root, "interactive", slug+".html"))
-	_ = os.Remove(filepath.Join(v.Root, ApuntesDir, slug+".md"))
-
-	// Remove stale guide references from concept notes so shared counts stay accurate.
+	var refs []Ref
 	if concepts, err := v.ListConcepts(); err == nil {
 		for _, c := range concepts {
 			if slices.Contains(c.Meta.Guides, slug) {
-				c.Meta.Guides = removeStr(c.Meta.Guides, slug)
-				_ = v.SaveConcept(c)
+				refs = append(refs, Ref{Dir: ConceptsDir, Slug: c.Slug, Field: "guides", Value: slug})
 			}
 		}
 	}
-	// Remove stale prerequisite references from remaining guides.
 	if notes, err := v.List(); err == nil {
 		for _, n := range notes {
-			if slices.Contains(n.Meta.Requires, slug) {
-				n.Meta.Requires = removeStr(n.Meta.Requires, slug)
-				_ = v.Save(n)
+			if n.Slug != slug && slices.Contains(n.Meta.Requires, slug) {
+				refs = append(refs, Ref{Dir: GuidesDir, Slug: n.Slug, Field: "requires", Value: slug})
 			}
 		}
 	}
-	return nil
+	item, err := v.Trash(TrashItem{Kind: GuidesDir, Slug: slug, Title: title, Files: files, Refs: refs}, data)
+	if err != nil {
+		return TrashItem{}, err
+	}
+	v.unlink(refs)
+	return item, nil
 }
 
-// DeleteConcept removes a concept note and cleans up references to it from guides and other concepts.
-func (v *Vault) DeleteConcept(id string) error {
+// DeleteConcept moves a concept note (and its apunte) to the trash and removes the links to it.
+func (v *Vault) DeleteConcept(id string) (TrashItem, error) {
 	id = ConceptID(id)
-	if id == "" {
-		return os.ErrNotExist
+	if id == "" || !v.ConceptExists(id) {
+		return TrashItem{}, os.ErrNotExist
 	}
-	if err := os.Remove(v.conceptPath(id)); err != nil {
-		return err
+	title := id
+	if c, err := v.LoadConcept(id); err == nil && c.Meta.Title != "" {
+		title = c.Meta.Title
 	}
-	_ = os.Remove(filepath.Join(v.Root, ApuntesDir, id+".md"))
-
+	var refs []Ref
 	if notes, err := v.List(); err == nil {
 		for _, n := range notes {
-			changed := false
 			if slices.Contains(n.Meta.Concepts, id) {
-				n.Meta.Concepts = removeStr(n.Meta.Concepts, id)
-				changed = true
+				refs = append(refs, Ref{Dir: GuidesDir, Slug: n.Slug, Field: "concepts", Value: id})
 			}
 			if slices.Contains(n.Meta.Base, id) {
-				n.Meta.Base = removeStr(n.Meta.Base, id)
-				changed = true
-			}
-			if changed {
-				_ = v.Save(n)
+				refs = append(refs, Ref{Dir: GuidesDir, Slug: n.Slug, Field: "base", Value: id})
 			}
 		}
 	}
 	if concepts, err := v.ListConcepts(); err == nil {
 		for _, c := range concepts {
-			if slices.Contains(c.Meta.Requires, id) {
-				c.Meta.Requires = removeStr(c.Meta.Requires, id)
-				_ = v.SaveConcept(c)
+			if c.Slug != id && slices.Contains(c.Meta.Requires, id) {
+				refs = append(refs, Ref{Dir: ConceptsDir, Slug: c.Slug, Field: "requires", Value: id})
 			}
 		}
 	}
-	return nil
+	files := []string{ConceptsDir + "/" + id + ".md", ApuntesDir + "/" + id + ".md"}
+	item, err := v.Trash(TrashItem{Kind: ConceptsDir, Slug: id, Title: title, Files: files, Refs: refs}, nil)
+	if err != nil {
+		return TrashItem{}, err
+	}
+	v.unlink(refs)
+	return item, nil
+}
+
+// unlink removes each reference from the note that holds it (the reverse of relink).
+func (v *Vault) unlink(refs []Ref) {
+	for _, r := range refs {
+		switch r.Dir {
+		case GuidesDir:
+			_ = v.Update(r.Slug, func(n *Note) error {
+				switch r.Field {
+				case "requires":
+					n.Meta.Requires = removeStr(n.Meta.Requires, r.Value)
+				case "concepts":
+					n.Meta.Concepts = removeStr(n.Meta.Concepts, r.Value)
+				case "base":
+					n.Meta.Base = removeStr(n.Meta.Base, r.Value)
+				}
+				return nil
+			})
+		case ConceptsDir:
+			_ = v.UpdateConcept(r.Slug, func(c *Concept) error {
+				switch r.Field {
+				case "guides":
+					c.Meta.Guides = removeStr(c.Meta.Guides, r.Value)
+				case "requires":
+					c.Meta.Requires = removeStr(c.Meta.Requires, r.Value)
+				}
+				return nil
+			})
+		}
+	}
 }
 
 func removeStr(list []string, target string) []string {
