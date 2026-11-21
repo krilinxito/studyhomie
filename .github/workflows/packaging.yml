@@ -1,0 +1,106 @@
+name: Packaging
+
+# Installs the latest release through every channel the website offers, on real Windows, macOS
+# and Linux machines: the install scripts, npm, Scoop, Chocolatey and Homebrew (the last three from
+# manifests rendered here, so a change to packaging/ is tested before a release uses it).
+on:
+  pull_request:
+    paths:
+      - packaging/**
+      - npm/**
+      - site/public/install.*
+      - .github/workflows/packaging.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  script:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: install.sh
+        if: runner.os != 'Windows'
+        run: |
+          STUDYHOMIE_BIN_DIR="$RUNNER_TEMP/bin" sh site/public/install.sh
+          "$RUNNER_TEMP/bin/studyhomie" version
+      - name: install.ps1
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:STUDYHOMIE_INSTALL_DIR = "$env:RUNNER_TEMP\studyhomie"
+          $env:STUDYHOMIE_NO_MODIFY_PATH = '1'
+          ./site/public/install.ps1
+          & "$env:RUNNER_TEMP\studyhomie\studyhomie.exe" version
+
+  npm:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: npm pack, install globally, run
+        working-directory: npm
+        shell: bash
+        run: |
+          npm pack
+          npm install -g ./studyhomie-*.tgz
+          studyhomie version
+
+  windows-managers:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - name: Render the manifests for the latest release
+        run: |
+          $tag = gh release view -R $env:GITHUB_REPOSITORY --json tagName -q .tagName
+          gh release download $tag -R $env:GITHUB_REPOSITORY -p checksums.txt
+          node packaging/render.mjs $tag checksums.txt out
+      - name: Chocolatey
+        run: |
+          Set-Location out/choco
+          choco pack
+          choco install studyhomie --source . --yes --no-progress
+          studyhomie version
+          choco uninstall studyhomie --yes
+      - name: Scoop
+        run: |
+          iex "& {$(irm get.scoop.sh)} -RunAsAdmin"
+          $env:Path = "$env:USERPROFILE\scoop\shims;$env:Path"
+          scoop install out/scoop/studyhomie.json
+          studyhomie version
+
+  homebrew:
+    runs-on: macos-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Render the formula for the latest release
+        run: |
+          tag=$(gh release view -R "$GITHUB_REPOSITORY" --json tagName -q .tagName)
+          gh release download "$tag" -R "$GITHUB_REPOSITORY" -p checksums.txt
+          node packaging/render.mjs "$tag" checksums.txt out
+      - name: Install from a local tap
+        run: |
+          brew tap-new --no-git local/studyhomie
+          cp out/homebrew/studyhomie.rb "$(brew --repository local/studyhomie)/Formula/"
+          brew install local/studyhomie/studyhomie
+          brew test local/studyhomie/studyhomie
+          studyhomie version

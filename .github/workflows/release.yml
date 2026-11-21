@@ -61,3 +61,91 @@ jobs:
           else
             gh release create "$TAG" dist/* --title "$TAG" --generate-notes
           fi
+
+  # ---- package managers: each one is skipped (with a warning) while its secret is not set ----
+
+  npm:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm provenance
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - name: Publish studyhomie to npm
+        working-directory: npm
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then echo "::warning::NPM_TOKEN is not set: npm was skipped"; exit 0; fi
+          npm version "${TAG#v}" --no-git-tag-version
+          npm publish --provenance --access public
+
+  taps:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+      TAP_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - name: Render the Scoop manifest and the Homebrew formula
+        run: |
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p checksums.txt
+          node packaging/render.mjs "$TAG" checksums.txt out
+      - name: Push them to krilinxito/scoop-bucket and krilinxito/homebrew-tap
+        run: |
+          if [ -z "$TAP_TOKEN" ]; then echo "::warning::TAP_GITHUB_TOKEN is not set: Scoop and Homebrew were skipped"; exit 0; fi
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          publish() { # repo, file, path in the repo
+            dir=$(mktemp -d)
+            git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/$1.git" "$dir"
+            mkdir -p "$dir/$(dirname "$3")"
+            cp "$2" "$dir/$3"
+            git -C "$dir" add "$3"
+            if git -C "$dir" diff --cached --quiet; then echo "$1 already has $TAG"; return; fi
+            git -C "$dir" commit -m "studyhomie ${TAG#v}"
+            git -C "$dir" push
+          }
+          publish krilinxito/scoop-bucket out/scoop/studyhomie.json bucket/studyhomie.json
+          publish krilinxito/homebrew-tap out/homebrew/studyhomie.rb Formula/studyhomie.rb
+
+  choco:
+    needs: release
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+      CHOCO_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - name: Pack, install it here, and push to chocolatey.org
+        run: |
+          gh release download $env:TAG -R $env:GITHUB_REPOSITORY -p checksums.txt
+          node packaging/render.mjs $env:TAG checksums.txt out
+          Set-Location out/choco
+          choco pack
+          choco install studyhomie --source . --yes --no-progress
+          studyhomie version
+          if (-not $env:CHOCO_KEY) { Write-Output "::warning::CHOCOLATEY_API_KEY is not set: Chocolatey was skipped"; exit 0 }
+          choco push "studyhomie.$($env:TAG.TrimStart('v')).nupkg" --source https://push.chocolatey.org/ --api-key $env:CHOCO_KEY

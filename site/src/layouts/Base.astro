@@ -1,0 +1,65 @@
+---
+import '@fontsource-variable/inter';
+import '../../../internal/web/static/narval.css';
+import '../styles/site.css';
+import { LANGS, HTML_LANG, pathOf, dict, type Lang } from '../i18n';
+import { SITE } from '../lib/install';
+
+interface Props { lang: Lang }
+const { lang } = Astro.props;
+const t = dict(lang);
+const canonical = new URL(pathOf(lang), SITE).href;
+---
+<!doctype html>
+<html lang={HTML_LANG[lang]}>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{t.meta.title}</title>
+  <meta name="description" content={t.meta.description}>
+  <link rel="canonical" href={canonical}>
+  {LANGS.map((l) => <link rel="alternate" hreflang={HTML_LANG[l]} href={new URL(pathOf(l), SITE).href}>)}
+  <link rel="alternate" hreflang="x-default" href={new URL('/', SITE).href}>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/favicon.png" type="image/png">
+  <meta name="theme-color" content="#7c5fd3">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="StudyHomie">
+  <meta property="og:title" content={t.meta.title}>
+  <meta property="og:description" content={t.meta.description}>
+  <meta property="og:url" content={canonical}>
+  <meta property="og:locale" content={HTML_LANG[lang].replace('-', '_')}>
+  <meta name="twitter:card" content="summary_large_image">
+  <!-- before paint: the chosen theme, the scroll choreography switch, and (on /) the first-visit language -->
+  <script is:inline define:vars={{ isRoot: lang === 'es', langs: LANGS }}>
+    (function () {
+      var d = document.documentElement;
+      d.classList.add('js');
+      var get = function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } };
+      var theme = get('sh-theme');
+      if (theme === 'light' || theme === 'dark') d.setAttribute('data-theme', theme);
+      if (!isRoot) return;
+      var stored = get('sh-lang');
+      if (stored) {
+        if (langs.indexOf(stored) > 0) location.replace('/' + stored + '/');
+        return;
+      }
+      var prefs = navigator.languages || [navigator.language || ''];
+      for (var i = 0; i < prefs.length; i++) {
+        var code = String(prefs[i]).toLowerCase().slice(0, 2);
+        if (code === 'es') return;
+        if (langs.indexOf(code) > 0) {
+          try { localStorage.setItem('sh-lang', code); } catch (e) { /* private mode */ }
+          location.replace('/' + code + '/');
+          return;
+        }
+      }
+    })();
+  </script>
+</head>
+<body>
+  <a class="skip" href="#main">{t.nav.skip}</a>
+  <slot />
+  <script src="../scripts/site.ts"></script>
+</body>
+</html>

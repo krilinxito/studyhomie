@@ -7,6 +7,24 @@ Le preguntas desde un **chat** (con archivos o imágenes adjuntas) y escribe una
 
 ![Chat de estudio con guía y visual interactivo](docs/img/nota.png)
 
+## Instalación
+
+Todo lo que hace, con el narval de guía: **<https://studyhomie.maxi42.space>**
+
+| Sistema o gestor | Comando |
+|---|---|
+| Windows (PowerShell) | `irm https://studyhomie.maxi42.space/install.ps1 \| iex` |
+| macOS y Linux | `curl -fsSL https://studyhomie.maxi42.space/install.sh \| sh` |
+| npm (cualquier sistema) | `npm install -g studyhomie` |
+| Scoop | `scoop bucket add studyhomie https://github.com/krilinxito/scoop-bucket` y `scoop install studyhomie` |
+| Homebrew | `brew install krilinxito/tap/studyhomie` |
+| Chocolatey | `choco install studyhomie` |
+| Go 1.24+ | `go install github.com/krilinxito/studyhomie/cmd/studyhomie@latest` |
+
+Los scripts bajan el binario del último release, verifican su SHA-256 contra `checksums.txt` y lo dejan en `%LOCALAPPDATA%\Programs\StudyHomie` (Windows, agregado a tu `PATH`) o en `~/.local/bin`. Si lo instalaste con npm, Scoop, Homebrew o Chocolatey, la app no se actualiza sola: te muestra el comando de ese gestor.
+
+Después, en una carpeta para tus estudios: `studyhomie init` y `studyhomie`.
+
 ## Instálalo con tu agente de IA
 
 La forma más rápida: abre tu agente de programación (Claude Code, Codex, Cursor, Antigravity…) en una terminal y pégale esto:
@@ -57,9 +75,19 @@ $env:Path += ";$gobin"
 export PATH="$(go env GOPATH)/bin:$PATH"
 ```
 
-**B. Binario listo, sin Go.**
+**B. Binario listo, sin Go.** Con el script de instalación (verifica el SHA-256 y agrega la carpeta al `PATH`):
 
-Windows (PowerShell):
+```powershell
+# Windows (PowerShell)
+irm https://studyhomie.maxi42.space/install.ps1 | iex
+```
+
+```sh
+# macOS / Linux (queda en ~/.local/bin)
+curl -fsSL https://studyhomie.maxi42.space/install.sh | sh
+```
+
+Si el script no se puede descargar, hazlo a mano. Windows (PowerShell):
 
 ```powershell
 $v = (Invoke-RestMethod https://api.github.com/repos/krilinxito/studyhomie/releases/latest).tag_name
@@ -346,7 +374,7 @@ StudyHomie busca versiones nuevas en GitHub Releases al arrancar y cada pocas ho
 
 Al actualizar, la app descarga el archivo de tu sistema, comprueba su sha256 contra el `checksums.txt` de la release, reemplaza su propio binario y se reinicia sola; la pestaña del navegador se recarga cuando la versión nueva responde. Desde la consola: `studyhomie update`.
 
-Si el binario está en una carpeta sin permiso de escritura (p. ej. una carpeta del sistema), la app te lo dice y puedes descargar la versión a mano desde [Releases](https://github.com/krilinxito/studyhomie/releases/latest). Las compilaciones locales (`go build`, versión `dev`) nunca se actualizan solas.
+Si el binario está en una carpeta sin permiso de escritura (p. ej. una carpeta del sistema), la app te lo dice y puedes descargar la versión a mano desde [Releases](https://github.com/krilinxito/studyhomie/releases/latest). Las compilaciones locales (`go build`, versión `dev`) nunca se actualizan solas. Si lo instalaste con npm, Scoop, Homebrew o Chocolatey, el aviso te da el comando de ese gestor (por ejemplo `brew upgrade studyhomie`) en lugar de reemplazar el binario.
 
 ## Tu vault
 

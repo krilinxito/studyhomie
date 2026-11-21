@@ -22,3 +22,26 @@ jobs:
         run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
       - run: go vet ./...
       - run: go test ./...
+
+  site:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm ci
+        working-directory: site
+      - name: astro check + build
+        run: npm run build
+        working-directory: site
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: Frontend and npm package syntax
+        run: |
+          node --check internal/web/static/app.js
+          node --check npm/bin/studyhomie.js
+          node --check npm/lib/install.js
+          sh -n site/public/install.sh

@@ -1,0 +1,16 @@
+{
+  "name": "studyhomie",
+  "version": "0.0.0-dev",
+  "description": "AI study assistant that runs on your computer: guides with interactive visuals, the iceberg of prerequisites, roadmaps and practice. Notes in Markdown, Obsidian-compatible.",
+  "keywords": ["study", "learning", "ai", "obsidian", "markdown", "flashcards", "feynman", "cli"],
+  "homepage": "https://studyhomie.maxi42.space",
+  "bugs": "https://github.com/krilinxito/studyhomie/issues",
+  "repository": { "type": "git", "url": "git+https://github.com/krilinxito/studyhomie.git", "directory": "npm" },
+  "license": "MIT",
+  "bin": { "studyhomie": "bin/studyhomie.js" },
+  "scripts": { "postinstall": "node lib/install.js" },
+  "files": ["bin", "lib"],
+  "os": ["win32", "darwin", "linux"],
+  "cpu": ["x64", "arm64"],
+  "engines": { "node": ">=18" }
+}

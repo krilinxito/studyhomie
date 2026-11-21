@@ -10,6 +10,7 @@ go test ./...                                 # tests
 go vet ./...
 gofmt -l .                                    # CI falla si lista algo
 node --check internal/web/static/app.js       # sintaxis del frontend (no tiene build ni tests JS)
+cd site && npm ci && npm run build            # la web (astro check + build)
 ```
 
 **Después de cada cambio, recompila e instala:** `go build -o studyhomie.exe ./cmd/studyhomie` (el exe de la raíz del repo) y `go install ./cmd/studyhomie`. Este segundo es el que importa: el comando `studyhomie` del usuario es `%USERPROFILE%\go\bin\studyhomie.exe`, el del PATH, no el del repo. Windows no deja sobrescribir un `.exe` en uso, pero sí renombrarlo: si la app está abierta, mueve el de `go\bin` a `studyhomie.exe.old` antes del `go install` y avisa al usuario que reinicie la app.
@@ -33,6 +34,9 @@ Para probarla a mano: `studyhomie init --provider claude-cli` en una carpeta tem
 | `internal/update` | Autoactualización desde GitHub Releases. |
 | `internal/config` | `studyhomie.toml` (`Default()` tiene los valores por defecto). |
 | `internal/i18n` | Idiomas: catálogos, `T`/`Sprintf`, encabezados de sección en cada idioma. |
+| `site/` | La web pública (Astro, GitHub Pages, studyhomie.maxi42.space): una sola página que es un iceberg, con el narval de la app (`narval.js`/`narval.css` se importan desde `internal/web/static`, no se copian). Textos en `site/src/i18n/{es,en,fr,zh,pt}.ts` (el español define el tipo). Los scripts `install.ps1`/`install.sh` viven en `site/public/`. |
+| `npm/` | El paquete `studyhomie` de npm: baja el binario del release de su misma versión (en `postinstall` o en la primera ejecución). |
+| `packaging/` | `render.mjs` genera el manifiesto de Scoop, la fórmula de Homebrew y el paquete de Chocolatey desde `checksums.txt`. `release.yml` los publica en cada release; `packaging.yml` los prueba en Windows, macOS y Linux. |
 
 ## Modelo de datos (vault)
 

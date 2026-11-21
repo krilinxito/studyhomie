@@ -1,0 +1,12 @@
+---
+// A command to paste in a terminal, with a copy button (the page script wires it up).
+interface Props { code: string; copy: string; copied: string; id?: string; hidden?: boolean; os?: string }
+const { code, copy, copied, id, hidden, os } = Astro.props;
+---
+<div class="cmd" id={id} hidden={hidden} data-os={os}>
+  <pre><code>{code}</code></pre>
+  <button class="copy-btn" type="button" data-copy data-done={copied} aria-label={copy}>
+    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="13" height="13" rx="2.5"></rect><path d="M16 8V5.5A2.5 2.5 0 0 0 13.5 3h-8A2.5 2.5 0 0 0 3 5.5v8A2.5 2.5 0 0 0 5.5 16H8"></path></svg>
+    <span>{copy}</span>
+  </button>
+</div>

@@ -1,0 +1,7 @@
+---
+// The app's narval mascot, rendered to inline SVG at build time.
+import { narvalSVG, type Mood } from '../lib/narval';
+interface Props { mood: Mood; class?: string; label?: string }
+const { mood, class: cls, label } = Astro.props;
+---
+<span class:list={['nv', cls]} set:html={narvalSVG(mood, label)} />
