@@ -16,6 +16,7 @@ import (
 	"github.com/krilinxito/studyhomie/internal/links"
 	"github.com/krilinxito/studyhomie/internal/prompts"
 	"github.com/krilinxito/studyhomie/internal/provider"
+	"github.com/krilinxito/studyhomie/internal/stats"
 	"github.com/krilinxito/studyhomie/internal/vault"
 )
 
@@ -47,6 +48,18 @@ func (s *Session) now() time.Time {
 		return s.Now()
 	}
 	return time.Now()
+}
+
+// recordEvent appends a study event to the vault's stats log. Errors are ignored so stats
+// never interrupt studying.
+func (s *Session) recordEvent(ev stats.Event) {
+	if s.V == nil {
+		return
+	}
+	if ev.At.IsZero() {
+		ev.At = s.now()
+	}
+	_, _ = stats.Record(s.V.Root, ev)
 }
 
 func (s *Session) pick(n int) int {
@@ -246,6 +259,7 @@ func (s *Session) Quiz(ctx context.Context, slug string, n int, difficulty strin
 }
 
 func (s *Session) quiz(ctx context.Context, slug string, n int, difficulty string) error {
+	started := s.now()
 	note, err := s.V.Load(slug)
 	if err != nil {
 		return failf("no hay guía para «%s»; ejecuta primero la preparación: %w", slug, err)
@@ -330,6 +344,14 @@ func (s *Session) quiz(ctx context.Context, slug string, n int, difficulty strin
 	if err := s.V.Save(note); err != nil {
 		return err
 	}
+	s.recordEvent(stats.Event{
+		Kind:    stats.KindQuiz,
+		Topic:   slug,
+		Title:   note.Meta.Title,
+		Area:    noteArea(note),
+		Score:   g.Score,
+		Seconds: int(s.now().Sub(started).Seconds()),
+	})
 	if len(g.Gaps) > 0 {
 		h := s.V.LoadHandoff(slug) + "\n\nGaps found in the test: " + strings.Join(g.Gaps, "; ")
 		return s.V.SaveHandoff(slug, h)
@@ -347,6 +369,7 @@ func (s *Session) Feynman(ctx context.Context, slug string) error {
 }
 
 func (s *Session) feynman(ctx context.Context, slug string) error {
+	started := s.now()
 	note, err := s.V.Load(slug)
 	if err != nil {
 		return failf("no hay guía para «%s»; ejecuta primero la preparación: %w", slug, err)
@@ -396,11 +419,11 @@ func (s *Session) feynman(ctx context.Context, slug string) error {
 		if ok && !s.card(Card{Kind: CardScore, Label: s.tr("Explicación"), Score: score}) {
 			s.printf("\nPuntaje Feynman: %d/100\n", score)
 		}
-		return s.saveFeynman(slug, transcript.String(), score, ok)
+		return s.saveFeynman(slug, transcript.String(), score, ok, int(s.now().Sub(started).Seconds()))
 	}
 }
 
-func (s *Session) saveFeynman(slug, transcript string, score int, scored bool) error {
+func (s *Session) saveFeynman(slug, transcript string, score int, scored bool, seconds int) error {
 	if err := s.V.AppendSection(slug, s.h("Feynman"), transcript); err != nil {
 		return err
 	}
@@ -418,7 +441,18 @@ func (s *Session) saveFeynman(slug, transcript string, score int, scored bool) e
 			note.Meta.Mastery = score
 		}
 	}
-	return s.V.Save(note)
+	if err := s.V.Save(note); err != nil {
+		return err
+	}
+	s.recordEvent(stats.Event{
+		Kind:    stats.KindFeynman,
+		Topic:   slug,
+		Title:   note.Meta.Title,
+		Area:    noteArea(note),
+		Score:   score,
+		Seconds: seconds,
+	})
+	return nil
 }
 
 // Study runs the three phases in order for one topic.

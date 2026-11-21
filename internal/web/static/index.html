@@ -23,6 +23,11 @@
     <div class="top-meta">
       <span class="dot" id="session-dot" hidden title="Hay algo en curso" data-i18n-title="Hay algo en curso"></span>
       <span class="badge" id="provider-badge" title="Proveedor de IA" data-i18n-title="Proveedor de IA"></span>
+      <button class="streak-pill" id="btn-progress" type="button" title="Progreso, racha y XP" data-i18n-title="Progreso, racha y XP">
+        <svg class="ic"><use href="icons.svg#i-flame"/></svg>
+        <span id="streak-count">0</span>
+        <span class="streak-mini" aria-hidden="true"><i id="streak-bar"></i></span>
+      </button>
       <button class="icon-btn" id="btn-panel" type="button" aria-pressed="false" title="Abrir el panel de estudio (guía, conceptos, mapa, apuntes)" data-i18n-title="Abrir el panel de estudio (guía, conceptos, mapa, apuntes)"><svg class="ic"><use href="icons.svg#i-panel-right-open"/></svg></button>
       <div class="menu">
         <button class="icon-btn" id="btn-layout" type="button" aria-haspopup="true" aria-expanded="false" title="Paneles y layout" data-i18n-title="Paneles y layout"><svg class="ic"><use href="icons.svg#i-layout-dashboard"/></svg></button>
@@ -135,6 +140,7 @@
     </section>
     <section class="pane" data-pane="practice" id="p-practice" aria-label="Practicar" data-i18n-aria-label="Practicar"></section>
     <section class="pane" data-pane="notes" id="p-notes" aria-label="Apuntes" data-i18n-aria-label="Apuntes"></section>
+    <section class="pane" data-pane="progress" id="p-progress" aria-label="Progreso" data-i18n-aria-label="Progreso"></section>
     <section class="pane" data-pane="vault" id="p-vault" aria-label="Vault" data-i18n-aria-label="Vault"></section>
     <section class="pane" data-pane="settings" id="p-settings" aria-label="Ajustes" data-i18n-aria-label="Ajustes"></section>
   </div>

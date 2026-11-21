@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/krilinxito/studyhomie/internal/session"
+	"github.com/krilinxito/studyhomie/internal/stats"
 	"github.com/krilinxito/studyhomie/internal/vault"
 )
 
@@ -307,6 +308,19 @@ func (s *Server) note(w http.ResponseWriter, r *http.Request) {
 			notes = append(notes, ref)
 		}
 		_, simErr := s.vault().LoadInteractive(slug)
+		if vault.Section(n.Body, "Guía") != "" {
+			area := n.Meta.Area
+			if area == "" && n.Meta.Field != "" {
+				area = vault.NormalizeArea(n.Meta.Field)
+			}
+			_, _ = stats.Record(s.vault().Root, stats.Event{
+				At:    s.Now(),
+				Kind:  stats.KindRead,
+				Topic: slug,
+				Title: n.Meta.Title,
+				Area:  area,
+			})
+		}
 		writeJSON(w, 200, map[string]any{
 			"slug": slug, "kind": "guide", "meta": n.Meta, "body": n.Body,
 			"backlinks": s.refs(back), "requires": s.refs(n.Meta.Requires), "concepts": notes, "hasSimulation": simErr == nil, "apunte": s.vault().HasApunte(slug),

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/krilinxito/studyhomie/internal/prompts"
+	"github.com/krilinxito/studyhomie/internal/stats"
 	"github.com/krilinxito/studyhomie/internal/vault"
 )
 
@@ -143,6 +144,12 @@ func (s *Session) Doubt(ctx context.Context, slug, question string) (Answer, err
 	if err != nil {
 		return Answer{}, err
 	}
+	s.recordEvent(stats.Event{
+		Kind:  stats.KindDoubt,
+		Topic: slug,
+		Title: title,
+		Area:  noteArea(note),
+	})
 	return Answer{Entry: entry, Concepts: s.offers(slug, out.Concepts)}, nil
 }
 

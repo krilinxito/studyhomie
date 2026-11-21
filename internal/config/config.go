@@ -29,6 +29,7 @@ type Config struct {
 	Iceberg       bool     `toml:"iceberg"`        // with depth 0, still map the first level of prerequisites (to explain or dig from)
 	Updates       string   `toml:"updates"`        // new versions: "ask" (default), "auto" or "never"
 	PassScore     int      `toml:"pass_score"`     // mastery (0-100) a roadmap topic needs to unlock the next one
+	DailyGoal     int      `toml:"daily_goal"`     // daily XP goal for the streak (default 50)
 	Timeout       int      `toml:"timeout"`        // minutes one AI call may take before it is cut (three times that when it searches the web); 0 = no limit
 }
 
@@ -53,6 +54,7 @@ func Default() Config {
 		Iceberg:       true,
 		Updates:       "ask",
 		PassScore:     70,
+		DailyGoal:     50,
 		Timeout:       5,
 		Interests:     DefaultInterests(),
 	}

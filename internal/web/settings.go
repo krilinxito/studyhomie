@@ -10,6 +10,7 @@ import (
 	"github.com/krilinxito/studyhomie/internal/config"
 	"github.com/krilinxito/studyhomie/internal/provider"
 	"github.com/krilinxito/studyhomie/internal/providers"
+	"github.com/krilinxito/studyhomie/internal/stats"
 )
 
 // backend returns the provider and config in use. Settings can swap them while the app runs;
@@ -43,15 +44,18 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 		"providers":  providers.Statuses(r.Context(), cfg),
 		"warning":    warning,
 		"configPath": s.ConfigPath,
-		"study":      studySettings{PassScore: &cfg.PassScore, Timeout: &cfg.Timeout},
+		"study":      studySettings{PassScore: &cfg.PassScore, Timeout: &cfg.Timeout, DailyGoal: intPtr(stats.NormalizeGoal(cfg.DailyGoal))},
 	})
 }
 
+func intPtr(v int) *int { return &v }
+
 // studySettings are how studying works: the mastery a roadmap topic needs to unlock the next one,
-// and how many minutes one AI call may take. Either can be sent alone.
+// how many minutes one AI call may take, and the daily XP goal. Any field can be sent alone.
 type studySettings struct {
 	PassScore *int `json:"passScore,omitempty"`
 	Timeout   *int `json:"timeout,omitempty"`
+	DailyGoal *int `json:"dailyGoal,omitempty"`
 }
 
 // maxTimeout bounds the time limit of an AI call that can be set, in minutes.
@@ -63,12 +67,16 @@ func (s *Server) saveStudySettings(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &body) {
 		return
 	}
-	if (body.PassScore == nil && body.Timeout == nil) || (body.PassScore != nil && (*body.PassScore < 0 || *body.PassScore > 100)) {
+	if (body.PassScore == nil && body.Timeout == nil && body.DailyGoal == nil) || (body.PassScore != nil && (*body.PassScore < 0 || *body.PassScore > 100)) {
 		fail(w, 400, "la nota para avanzar va de 0 a 100")
 		return
 	}
 	if body.Timeout != nil && (*body.Timeout < 0 || *body.Timeout > maxTimeout) {
 		fail(w, 400, "el límite de tiempo va de 0 a 60 minutos")
+		return
+	}
+	if body.DailyGoal != nil && (*body.DailyGoal < stats.MinDailyGoal || *body.DailyGoal > stats.MaxDailyGoal) {
+		fail(w, 400, "la meta diaria va de 10 a 500 XP")
 		return
 	}
 	s.pmu.Lock()
@@ -79,6 +87,9 @@ func (s *Server) saveStudySettings(w http.ResponseWriter, r *http.Request) {
 	if body.Timeout != nil {
 		cfg.Timeout = *body.Timeout
 	}
+	if body.DailyGoal != nil {
+		cfg.DailyGoal = *body.DailyGoal
+	}
 	if s.ConfigPath != "" {
 		if err := config.Write(s.ConfigPath, cfg); err != nil {
 			s.pmu.Unlock()
@@ -88,7 +99,7 @@ func (s *Server) saveStudySettings(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Cfg = cfg
 	s.pmu.Unlock()
-	writeJSON(w, 200, studySettings{PassScore: &cfg.PassScore, Timeout: &cfg.Timeout})
+	writeJSON(w, 200, studySettings{PassScore: &cfg.PassScore, Timeout: &cfg.Timeout, DailyGoal: intPtr(stats.NormalizeGoal(cfg.DailyGoal))})
 }
 
 // saveSettings switches the AI backend, and writes the choice to studyhomie.toml.

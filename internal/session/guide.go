@@ -10,6 +10,7 @@ import (
 
 	"github.com/krilinxito/studyhomie/internal/i18n"
 	"github.com/krilinxito/studyhomie/internal/prompts"
+	"github.com/krilinxito/studyhomie/internal/stats"
 	"github.com/krilinxito/studyhomie/internal/vault"
 	"github.com/krilinxito/studyhomie/internal/viz"
 )
@@ -627,6 +628,7 @@ func stateOf(err error) string {
 
 // writeGuide writes the guide itself, verifies its links and widgets, and saves the note.
 func (s *Session) writeGuide(ctx context.Context, note *vault.Note, req GuideReq, plan ConceptPlan) error {
+	started := s.now()
 	area := plan.Area
 	if area == "" {
 		area = note.Meta.Area
@@ -731,6 +733,13 @@ func (s *Session) writeGuide(ctx context.Context, note *vault.Note, req GuideReq
 	if err := s.V.SaveHandoff(note.Slug, handoff); err != nil {
 		return err
 	}
+	s.recordEvent(stats.Event{
+		Kind:    stats.KindGuide,
+		Topic:   note.Slug,
+		Title:   note.Meta.Title,
+		Area:    noteArea(*note),
+		Seconds: int(s.now().Sub(started).Seconds()),
+	})
 	if len(resources) > 0 {
 		s.card(Card{Kind: CardResources, Resources: resources})
 	}
@@ -879,6 +888,14 @@ func (s *Session) Explain(ctx context.Context, guide, ref, summary string) (stri
 		n.Meta.Concepts = append(n.Meta.Concepts, id)
 		return nil
 	})
+	if err == nil {
+		s.recordEvent(stats.Event{
+			Kind:  stats.KindConcept,
+			Topic: id,
+			Title: pc.Title,
+			Area:  noteArea(g),
+		})
+	}
 	return id, err
 }
 

@@ -340,9 +340,9 @@ $('#btn-theme').addEventListener('click', () => {
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (!document.documentElement.dataset.theme) applyTheme(); });
 
 /* ---------- the dock: panels you can drag, split, stack and float ---------- */
-const PANES = { chat: t('Chat'), chats: t('Conversaciones'), guide: t('Guía'), concepts: t('Conceptos'), map: t('Mapa'), practice: t('Practicar'), notes: t('Apuntes'), vault: t('Vault'), settings: t('Ajustes') };
+const PANES = { chat: t('Chat'), chats: t('Conversaciones'), guide: t('Guía'), concepts: t('Conceptos'), map: t('Mapa'), practice: t('Practicar'), notes: t('Apuntes'), progress: t('Progreso'), vault: t('Vault'), settings: t('Ajustes') };
 const STUDY = ['guide', 'concepts', 'map', 'practice', 'notes']; // the study panel: closed until there is something to show
-const NEAR_STUDY = [...STUDY, 'vault', 'settings']; // panels that open next to the study group
+const NEAR_STUDY = [...STUDY, 'progress', 'vault', 'settings']; // panels that open next to the study group
 
 function createDock() {
   for (const el of $$('#panes > .pane')) PANE_EL[el.dataset.pane] = el;
@@ -539,10 +539,12 @@ function onShown(id) {
   if (id === 'concepts') renderConcepts();
   if (id === 'practice') renderPractice();
   if (id === 'notes') renderNotes();
+  if (id === 'progress') renderProgress();
   if (id === 'vault') renderVault();
   if (id === 'settings') renderSettings();
 }
 $('#btn-settings').addEventListener('click', () => show('settings'));
+$('#btn-progress').addEventListener('click', () => show('progress'));
 
 /* ---------- Ajustes: which AI answers ---------- */
 const capitalize = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
@@ -740,7 +742,27 @@ function studySection(row) {
       say('ok', t('Guardado.'));
     } catch (err) { say('bad', err.message); }
   });
+  const goalIn = h('input', { type: 'number', min: 10, max: 500, step: 10, value: study.dailyGoal ?? 50, class: 'set-num', 'aria-label': t('Meta diaria de XP') });
+  const presets = [30, 50, 100];
+  let presetBtns = [];
+  const saveGoal = async (v) => {
+    if (!Number.isFinite(v) || v < 10 || v > 500) { say('bad', t('Pon un número de 10 a 500.')); return; }
+    try {
+      SET.data.study = await api('/api/settings/study', { method: 'POST', body: { dailyGoal: v } });
+      goalIn.value = v;
+      presetBtns.forEach((b, i) => b.setAttribute('aria-pressed', String(presets[i] === v)));
+      say('ok', t('Guardado.'));
+      loadStats();
+    } catch (err) { say('bad', err.message); }
+  };
+  goalIn.addEventListener('change', () => saveGoal(Math.round(Number(goalIn.value))));
+  presetBtns = presets.map((v) => h('button', {
+    type: 'button', class: 'btn small', 'aria-pressed': String((study.dailyGoal ?? 50) === v),
+    onclick: () => saveGoal(v),
+  }, `${v} XP`));
   return h('section', { class: 'set-section' }, h('h3', {}, t('Estudio')),
+    row(t('Meta diaria de XP'), h('div', { class: 'set-inline goal-presets' }, ...presetBtns, goalIn, h('span', {}, 'XP')),
+      h('p', { class: 'set-facts' }, t('XP que necesitas cada día para mantener tu racha. Ganas 1 congelador cada 7 días seguidos (máx. 2).'))),
     row(t('Nota para avanzar'), h('div', { class: 'set-inline' }, input, h('span', {}, '/ 100')),
       h('p', { class: 'set-facts' }, t('En un roadmap, el tema siguiente se desbloquea (y se escribe su guía) cuando sacas esta nota o más en la prueba o explicándolo.'))),
     row(t('Límite por respuesta'), h('div', { class: 'set-inline' }, limit, h('span', {}, t('minutos'))),
@@ -962,6 +984,7 @@ async function openNote(slug, { quiet = false } = {}) {
         if (!quiet) show('guide');
       }
     });
+    loadStats();
   } catch (err) { toast(err.message); }
 }
 
@@ -1797,6 +1820,182 @@ function drawEditor() {
   if (E.mode === 'edit') body.focus({ preventScroll: true });
 }
 $('#btn-vault').addEventListener('click', () => { VLT.edit = null; show('vault'); });
+
+/* ---------- Progreso: XP, streak, freezes, calendar & area stats ---------- */
+const AREA_NAME = {
+  matematicas: t('Matemáticas'),
+  fisica: t('Física'),
+  electronica: t('Electrónica'),
+  quimica: t('Química'),
+  biologia: t('Biología'),
+  medicina: t('Medicina'),
+  informatica: t('Informática'),
+  musica: t('Música'),
+  historia: t('Historia'),
+  'ciencias-sociales': t('Ciencias sociales'),
+  economia: t('Economía'),
+  lenguas: t('Lenguas'),
+  arte: t('Arte'),
+  filosofia: t('Filosofía'),
+  general: t('General'),
+};
+const EV_KIND = {
+  guide: t('Guía generada'),
+  read: t('Guía leída'),
+  quiz: t('Prueba completada'),
+  feynman: t('Explicación Feynman'),
+  concept: t('Concepto explicado'),
+  doubt: t('Duda resuelta'),
+  flashcard: t('Repaso de tarjetas'),
+  activity: t('Actividad completada'),
+};
+const fmtMinutes = (mins) => {
+  const m = Math.max(0, Math.round(mins || 0));
+  if (m >= 60) return t('{h} h {m} min', { h: Math.floor(m / 60), m: m % 60 });
+  return t('{m} min', { m });
+};
+
+async function loadStats() {
+  try {
+    S.stats = await api('/api/stats');
+    drawStreakPill();
+    if (S.dock && S.dock.getPanel('progress')) drawProgress();
+  } catch { /* non-fatal */ }
+}
+
+function drawStreakPill() {
+  const st = S.stats;
+  const btn = $('#btn-progress');
+  if (!st || !btn) return;
+  $('#streak-count').textContent = String(st.streak || 0);
+  const pct = Math.min(100, Math.round(((st.todayXP || 0) / Math.max(1, st.dailyGoal || 50)) * 100));
+  $('#streak-bar').style.width = `${pct}%`;
+  btn.classList.toggle('met', !!st.goalMet);
+  btn.classList.toggle('risk', !!st.atRisk);
+  btn.title = `${t('Progreso, racha y XP')} · ${st.todayXP}/${st.dailyGoal} XP`;
+}
+
+async function renderProgress() {
+  if (!S.stats) await loadStats();
+  else { drawProgress(); loadStats(); }
+}
+
+function drawProgress() {
+  const root = PANE_EL.progress;
+  const st = S.stats;
+  if (!root || !st) return;
+
+  const pct = Math.min(100, Math.round(((st.todayXP || 0) / Math.max(1, st.dailyGoal || 50)) * 100));
+  const left = Math.max(0, (st.dailyGoal || 50) - (st.todayXP || 0));
+  const streakSub = st.atRisk
+    ? h('span', { class: 'prog-warn' }, t('Racha en riesgo hoy'))
+    : st.lostStreak
+      ? h('span', { class: 'prog-warn' }, t('Tu racha se reinició ayer'))
+      : h('span', {}, t('Mejor racha: {n}', { n: st.longest || 0 }));
+
+  const freezeIcons = [];
+  for (let i = 0; i < (st.maxFreezes || 2); i++) {
+    freezeIcons.push(h('span', { class: `freeze-pip${i < (st.freezes || 0) ? ' on' : ''}`, 'aria-hidden': 'true' }, icon('snowflake')));
+  }
+
+  const kpis = h('div', { class: 'prog-grid' },
+    h('div', { class: `prog-card${st.goalMet ? ' met' : ''}` },
+      h('span', { class: 'prog-label' }, t('Meta de hoy')),
+      h('strong', { class: 'prog-val' }, `${st.todayXP} / ${st.dailyGoal} XP`),
+      h('div', { class: 'prog-track' }, h('i', { style: `width:${pct}%` })),
+      h('small', {}, st.goalMet ? t('Meta cumplida') : t('Faltan {xp} XP', { xp: left }))),
+    h('div', { class: `prog-card${st.atRisk ? ' risk' : ''}` },
+      h('span', { class: 'prog-label' }, t('Racha')),
+      h('strong', { class: 'prog-val prog-flame' }, icon('flame'), tn(st.streak || 0, '{n} día', '{n} días')),
+      h('small', {}, streakSub)),
+    h('div', { class: 'prog-card' },
+      h('span', { class: 'prog-label' }, t('Congeladores')),
+      h('strong', { class: 'prog-val prog-freezes' }, ...freezeIcons, h('span', {}, `${st.freezes || 0} / ${st.maxFreezes || 2}`)),
+      h('small', {}, st.nextFreezeIn > 0
+        ? tn(st.nextFreezeIn, 'Falta {n} día para ganar otro', 'Faltan {n} días para ganar otro')
+        : t('Al máximo'))),
+    h('div', { class: 'prog-card' },
+      h('span', { class: 'prog-label' }, t('Total')),
+      h('strong', { class: 'prog-val' }, `${st.totalXP || 0} XP`),
+      h('small', { class: 'prog-time' }, icon('clock'), fmtMinutes(st.totalMinutes))),
+  );
+
+  // GitHub-style calendar heatmap (18 weeks = 126 days, columns = weeks, rows = days)
+  const calDays = st.calendar || [];
+  const cells = [];
+  for (const d of calDays) {
+    const tip = d.frozen
+      ? t('{date} · protegido con congelador', { date: d.date })
+      : t('{date} · {xp} XP', { date: d.date, xp: d.xp });
+    cells.push(h('span', {
+      class: `cal-cell l${d.level || 0}${d.frozen ? ' frozen' : ''}`,
+      title: tip,
+      'aria-label': tip,
+    }));
+  }
+  const calendarSec = h('section', { class: 'prog-sec' },
+    h('div', { class: 'prog-sec-head' },
+      h('h3', {}, t('Actividad')),
+      h('span', { class: 'hint' }, t('Últimas 18 semanas'))),
+    h('div', { class: 'cal-wrap' }, h('div', { class: 'cal-grid', role: 'img', 'aria-label': t('Actividad') }, ...cells)),
+    h('div', { class: 'cal-legend' },
+      h('span', {}, t('Menos')),
+      ...[0, 1, 2, 3, 4].map((lv) => h('i', { class: `cal-cell l${lv}` })),
+      h('span', {}, t('Más')),
+      h('span', { class: 'cal-frozen-key' }, h('i', { class: 'cal-cell l0 frozen' }), t('Protegido con congelador'))),
+  );
+
+  // Per-area horizontal bars
+  const areas = st.areas || [];
+  const maxXP = Math.max(1, ...areas.map((a) => a.xp || 0));
+  const areaBody = areas.length === 0
+    ? h('p', { class: 'hint' }, t('Empieza una guía o una prueba en el chat para ver tu progreso aquí.'))
+    : h('ul', { class: 'area-list' }, areas.map((a, idx) => {
+      const w = a.xp > 0 ? Math.max(4, Math.round((a.xp / maxXP) * 100)) : 0;
+      const meta = [];
+      if (a.guides) meta.push(tn(a.guides, '{n} guía', '{n} guías'));
+      if (a.masteredGuides) meta.push(tn(a.masteredGuides, '{n} dominada', '{n} dominadas'));
+      if (a.avgMastery) meta.push(t('Dominio medio {score}%', { score: a.avgMastery }));
+      if (a.concepts) meta.push(tn(a.concepts, '{n} concepto', '{n} conceptos'));
+      if (a.minutes) meta.push(fmtMinutes(a.minutes));
+      return h('li', { class: 'area-row' },
+        h('div', { class: 'area-head' },
+          h('strong', {}, AREA_NAME[a.area] || a.area),
+          h('span', { class: 'area-xp' }, `${a.xp} XP`)),
+        h('div', { class: 'area-track' }, h('i', { style: `width:${w}%;background:var(--l${idx % 8})` })),
+        meta.length ? h('small', { class: 'area-meta' }, meta.join(' · ')) : null);
+    }));
+  const areasSec = h('section', { class: 'prog-sec' },
+    h('div', { class: 'prog-sec-head' }, h('h3', {}, t('Progreso por área'))),
+    areaBody);
+
+  // Recent XP events
+  const recent = st.recent || [];
+  const recentSec = recent.length === 0 ? null : h('section', { class: 'prog-sec' },
+    h('div', { class: 'prog-sec-head' }, h('h3', {}, t('Actividad reciente'))),
+    h('ul', { class: 'recent-list' }, recent.map((ev) => {
+      const label = EV_KIND[ev.kind] || ev.kind;
+      const areaLabel = AREA_NAME[ev.area] || ev.area || '';
+      const clickable = ev.topic && nodeOf(ev.topic);
+      const titleEl = clickable
+        ? h('button', { class: 'recent-link', type: 'button', onclick: () => openNote(ev.topic) }, ev.title || ev.topic)
+        : h('span', {}, ev.title || ev.topic || label);
+      return h('li', {},
+        h('div', { class: 'recent-main' },
+          titleEl,
+          h('small', {}, [label, areaLabel, ev.score ? `${ev.score}/100` : '', ev.date].filter(Boolean).join(' · '))),
+        h('span', { class: 'recent-xp' }, `+${ev.xp} XP`));
+    })));
+
+  root.replaceChildren(h('div', { class: 'prog' },
+    h('div', { class: 'prog-head' },
+      h('h2', {}, t('Progreso')),
+      h('button', { class: 'btn small ghost', type: 'button', onclick: () => show('settings') }, icon('settings'), t('Meta diaria de XP'))),
+    kpis,
+    calendarSec,
+    areasSec,
+    recentSec));
+}
 
 /* ---------- Practicar ---------- */
 const STEP_RANK = { new: 0, prepared: 1, tested: 2, explained: 3 };
@@ -2726,6 +2925,7 @@ async function refresh() {
   await loadGraph().catch((err) => toast(err.message));
   if (S.guide) await reloadGuide(); else { renderReader(null); renderConcepts(); renderPractice(); }
   renderChats();
+  loadStats();
 }
 
 // The first time, the app speaks the browser's language (one of those it knows) and remembers it.
