@@ -934,11 +934,12 @@ html.fs .dock { padding: 0; }
 .rar-pill .rar-name { font: 700 10.5px var(--mono); text-transform: uppercase; letter-spacing: .06em; color: var(--rc); }
 .rar-pill strong { font: 700 15px var(--mono); color: var(--ink); }
 
-.fc-studio { display: flex; flex-direction: column; gap: 14px; }
+.fc-studio { display: flex; flex-direction: column; gap: 14px; align-items: stretch; width: 100%; }
 .fc-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .fc-head h3 { margin: 0; }
 .fc-tools { margin: 0; }
 .fc-card { padding: 18px 20px; border-radius: var(--r); background: var(--surface); border: 1.5px solid color-mix(in srgb, var(--rc) 45%, var(--line)); display: flex; flex-direction: column; gap: 12px; }
+.fc-card > .btn { align-self: flex-start; }
 .fc-card.rar-epic { box-shadow: 0 0 0 1px color-mix(in srgb, var(--rc) 22%, transparent), 0 8px 24px -14px var(--rc); }
 .fc-card.rar-legendary { box-shadow: 0 0 0 1px color-mix(in srgb, var(--rc) 35%, transparent), 0 10px 28px -12px var(--rc); background: linear-gradient(155deg, color-mix(in srgb, var(--rc) 7%, var(--surface)), var(--surface)); }
 .fc-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
