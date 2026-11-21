@@ -31,9 +31,12 @@ async function get(url) {
 async function version() {
   const v = process.env.STUDYHOMIE_VERSION || pkg.version;
   if (!/^0\.0\.0/.test(v)) return v.startsWith('v') ? v : `v${v}`;
-  // a development checkout of this package: use the latest release
-  const r = JSON.parse((await get(`https://api.github.com/repos/${REPO}/releases/latest`)).toString('utf8'));
-  return r.tag_name;
+  // a development checkout of this package: use the latest release. github.com/<repo>/releases/latest
+  // redirects to .../releases/tag/<tag> and, unlike the API, has no per-IP rate limit
+  const res = await fetch(`https://github.com/${REPO}/releases/latest`, { method: 'HEAD', redirect: 'follow', headers: { 'User-Agent': `studyhomie-npm/${pkg.version}` } });
+  const tag = (res.url.match(/\/releases\/tag\/([^/?#]+)/) || [])[1];
+  if (!tag) throw new Error(`could not find the latest release (${res.status} ${res.url})`);
+  return decodeURIComponent(tag);
 }
 
 async function install() {

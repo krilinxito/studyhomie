@@ -17,7 +17,15 @@
   if (-not [Environment]::Is64BitOperatingSystem) { throw 'StudyHomie needs 64-bit Windows.' }
 
   $v = $env:STUDYHOMIE_VERSION
-  if (-not $v) { $v = (Invoke-RestMethod "https://api.github.com/repos/$repo/releases/latest" -Headers $headers).tag_name }
+  if (-not $v) {
+    # github.com/<repo>/releases/latest redirects to .../releases/tag/<tag>; unlike the API it has
+    # no per-IP rate limit, which shared networks hit
+    $req = [Net.WebRequest]::Create("https://github.com/$repo/releases/latest")
+    $req.Method = 'HEAD'; $req.AllowAutoRedirect = $false; $req.UserAgent = 'studyhomie-installer'
+    $res = $req.GetResponse()
+    try { $loc = $res.Headers['Location'] } finally { $res.Close() }
+    if ($loc -match '/releases/tag/([^/?#]+)') { $v = $Matches[1] }
+  }
   if (-not $v) { throw 'Could not find the latest StudyHomie version.' }
   if ($v -notmatch '^v') { $v = "v$v" }
 

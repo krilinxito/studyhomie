@@ -18,8 +18,9 @@ need uname
 
 v=${STUDYHOMIE_VERSION:-}
 if [ -z "$v" ]; then
-  v=$(curl -fsSL -H 'User-Agent: studyhomie-installer' "https://api.github.com/repos/$repo/releases/latest" |
-    sed -n 's/.*"tag_name"[^"]*"\([^"]*\)".*/\1/p' | head -n 1)
+  # github.com/<repo>/releases/latest redirects to .../releases/tag/<tag>; unlike the API it has no
+  # per-IP rate limit, which shared networks (and CI runners) hit
+  v=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$repo/releases/latest" | sed -n 's#.*/releases/tag/##p')
 fi
 [ -n "$v" ] || fail "could not find the latest version"
 case "$v" in v*) ;; *) v="v$v" ;; esac
