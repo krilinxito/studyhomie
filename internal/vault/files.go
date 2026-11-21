@@ -14,7 +14,7 @@ import (
 )
 
 // Folders, in the order the vault page shows them: the ones a person browses and edits.
-var Browsable = []string{GuidesDir, ConceptsDir, ApuntesDir, FlashcardsDir, "roadmaps", "daily"}
+var Browsable = []string{GuidesDir, ConceptsDir, SourcesDir, ApuntesDir, FlashcardsDir, "roadmaps", "daily"}
 
 // File is one note of the vault, as the vault page lists it.
 type File struct {

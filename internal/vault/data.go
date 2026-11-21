@@ -30,7 +30,7 @@ const (
 
 // Categories in the order the settings page lists them.
 var Categories = []string{
-	CatGuides, CatConcepts, CatRoadmaps, CatApuntes, CatAttachments, CatDecks, CatMaterial,
+	CatGuides, CatConcepts, CatRoadmaps, CatFuentes, CatApuntes, CatAttachments, CatDecks, CatMaterial,
 	CatInteractive, CatDaily, CatSessions, CatPractice, CatUploads, CatHandoffs, CatSources, CatState,
 }
 
@@ -56,6 +56,7 @@ var catSpecs = map[string]catSpec{
 	CatHandoffs:    {dir: ".studyhomie/handoff", ext: ".md"},
 	CatSources:     {dir: ".studyhomie/material", ext: ".md"},
 	CatPractice:    {dir: PracticeDir, ext: ".json"},
+	CatFuentes:     {dir: SourcesDir, ext: ".md"},
 }
 
 // PracticeDir holds the quiz and Feynman sessions that can be resumed, one JSON file each.
@@ -231,6 +232,8 @@ func (v *Vault) RemoveItem(cat, id string, extra map[string][]byte) (TrashItem, 
 		return v.DeleteGuide(id, nil, extra)
 	case CatConcepts:
 		return v.DeleteConcept(id)
+	case CatFuentes:
+		return v.DeleteSource(id)
 	}
 	rel, err := v.ItemPath(cat, id)
 	if err != nil {

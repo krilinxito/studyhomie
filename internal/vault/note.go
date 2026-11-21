@@ -17,6 +17,21 @@ type Resource struct {
 	Title string `yaml:"title" json:"title"`
 	URL   string `yaml:"url,omitempty" json:"url,omitempty"`
 	Why   string `yaml:"why,omitempty" json:"why,omitempty"`
+
+	// What a source note adds (fuentes/): they are not written in a guide's frontmatter.
+	ID          string `yaml:"-" json:"id,omitempty"` // the source note's slug
+	Author      string `yaml:"-" json:"author,omitempty"`
+	Year        int    `yaml:"-" json:"year,omitempty"`
+	Duration    string `yaml:"-" json:"duration,omitempty"`
+	Lang        string `yaml:"-" json:"lang,omitempty"`
+	Level       string `yaml:"-" json:"level,omitempty"`
+	Reliability string `yaml:"-" json:"reliability,omitempty"`
+	DOI         string `yaml:"-" json:"doi,omitempty"`
+	ISBN        string `yaml:"-" json:"isbn,omitempty"`
+	Citations   int    `yaml:"-" json:"citations,omitempty"`
+	Summary     string `yaml:"-" json:"summary,omitempty"`
+	Area        string `yaml:"-" json:"area,omitempty"`
+	Seen        bool   `yaml:"-" json:"seen,omitempty"`
 }
 
 // Meta is the frontmatter of a topic note.
@@ -36,7 +51,9 @@ type Meta struct {
 	Materials []string   `yaml:"materials,omitempty" json:"materials,omitempty"` // vault-relative paths under material/<topic>/
 	Created   string     `yaml:"created,omitempty" json:"created,omitempty"`
 	Updated   string     `yaml:"updated,omitempty" json:"updated,omitempty"`
-	Resources []Resource `yaml:"resources,omitempty" json:"resources,omitempty"`
+	Resources []Resource `yaml:"resources,omitempty" json:"resources,omitempty"` // local simulations
+	// Sources are the external material it cites: notes of fuentes/, with why each one helps here.
+	Sources []SourceRef `yaml:"sources,omitempty" json:"sources,omitempty"`
 
 	// A guide generated with concept notes: which ones it stands on, how deep the plan went and its focus.
 	Concepts []string `yaml:"concepts,omitempty" json:"concepts,omitempty"` // every concept note of the guide
@@ -74,6 +91,9 @@ func (n Note) Links() []string {
 	var out []string
 	seen := map[string]bool{}
 	for _, m := range wikilinkRe.FindAllStringSubmatch(n.Body, -1) {
+		if strings.HasPrefix(strings.TrimSpace(m[1]), SourcesDir+"/") {
+			continue // a source note is cited, not a topic the note leans on
+		}
 		s := Slugify(m[1])
 		if s != "" && !seen[s] {
 			seen[s] = true

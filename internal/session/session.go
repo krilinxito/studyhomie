@@ -14,6 +14,7 @@ import (
 	"github.com/krilinxito/studyhomie/internal/config"
 	"github.com/krilinxito/studyhomie/internal/links"
 	"github.com/krilinxito/studyhomie/internal/provider"
+	"github.com/krilinxito/studyhomie/internal/sources"
 	"github.com/krilinxito/studyhomie/internal/stats"
 	"github.com/krilinxito/studyhomie/internal/vault"
 )
@@ -39,6 +40,9 @@ type Session struct {
 	// Card, if set, receives structured output a UI draws as rich elements. Where a
 	// card replaces text, the text is not printed; the terminal leaves this nil.
 	Card func(Card)
+	// Sources finds and checks material in public catalogues; nil leaves what the model proposed
+	// as it is and turns «Buscar más material» off.
+	Sources *sources.Client
 	// Checkpoint, if set, receives a quiz or Feynman session after every step (questions
 	// generated, an answer given), so a UI can save it and resume it later.
 	Checkpoint func(Practice)
@@ -197,33 +201,36 @@ func (s *Session) verified(ctx context.Context, in []vault.Resource) []vault.Res
 	return out
 }
 
-func (s *Session) guideBody(existing, guide string, res []vault.Resource) string {
+func (s *Session) guideBody(existing, guide string, refs []vault.SourceRef, local []vault.Resource) string {
 	body := vault.ReplaceSection(existing, s.h("Guía"), guide)
-	if lines := resourceLines(res); lines != "" {
-		body = vault.ReplaceSection(body, s.h("Recursos"), lines)
-	}
-	return body
+	return s.V.SetRecursos(body, s.h("Recursos"), refs, local)
 }
 
-// resourceLines renders resources as a Markdown list. Vault-relative links
-// (generated simulations) are written relative to the topics folder.
-func resourceLines(res []vault.Resource) string {
-	var b strings.Builder
-	for _, r := range res {
-		line := fmt.Sprintf("- **%s** (%s)", r.Title, r.Type)
-		if r.URL != "" {
-			u := r.URL
-			if !strings.HasPrefix(u, "http") {
-				u = "../" + u
-			}
-			line = fmt.Sprintf("- [%s](%s) (%s)", r.Title, u, r.Type)
-		}
-		if r.Why != "" {
-			line += " — " + r.Why
-		}
-		b.WriteString(line + "\n")
+// enrich checks the material the model proposed against its catalogue (a video must exist, a DOI
+// must resolve) and completes it: real title, author or channel, year, reliability. Without a
+// catalogue client (the terminal offline, tests) it is kept as it is.
+func (s *Session) enrich(ctx context.Context, in []vault.Resource) []vault.Resource {
+	if s.Sources == nil {
+		return in
 	}
-	return b.String()
+	var out []vault.Resource
+	for _, r := range in {
+		if !vault.External(r) {
+			out = append(out, r)
+			continue
+		}
+		checked, ok := s.Sources.Verify(ctx, r)
+		if !ok {
+			s.termf("Descarté una fuente que no existe: %s\n", r.URL)
+			continue
+		}
+		checked.Why = r.Why
+		if checked.Lang == "" && vault.YouTubeID(checked.URL) == "" {
+			checked.Lang = s.lang()
+		}
+		out = append(out, checked)
+	}
+	return out
 }
 
 // localInteractive returns the simulations already generated for a note.

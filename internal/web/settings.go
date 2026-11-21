@@ -45,7 +45,36 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 		"warning":    warning,
 		"configPath": s.ConfigPath,
 		"study":      studySettings{PassScore: &cfg.PassScore, Timeout: &cfg.Timeout, DailyGoal: intPtr(stats.NormalizeGoal(cfg.DailyGoal)), MaxParallel: intPtr(maxParallel(cfg))},
+		"sources":    sourceSettings{YouTubeKey: cfg.YouTubeKey, BraveKey: cfg.BraveKey},
 	})
+}
+
+// sourceSettings holds the optional API keys for searching YouTube and Brave Search.
+type sourceSettings struct {
+	YouTubeKey string `json:"youtubeKey"`
+	BraveKey   string `json:"braveKey"`
+}
+
+// saveSourceSettings writes the optional source API keys to studyhomie.toml.
+func (s *Server) saveSourceSettings(w http.ResponseWriter, r *http.Request) {
+	var body sourceSettings
+	if !readJSON(w, r, &body) {
+		return
+	}
+	s.pmu.Lock()
+	cfg := s.Cfg
+	cfg.YouTubeKey = strings.TrimSpace(body.YouTubeKey)
+	cfg.BraveKey = strings.TrimSpace(body.BraveKey)
+	if s.ConfigPath != "" {
+		if err := config.Write(s.ConfigPath, cfg); err != nil {
+			s.pmu.Unlock()
+			fail(w, 500, "no pude guardar "+s.ConfigPath+": "+err.Error())
+			return
+		}
+	}
+	s.Cfg = cfg
+	s.pmu.Unlock()
+	writeJSON(w, 200, sourceSettings{YouTubeKey: cfg.YouTubeKey, BraveKey: cfg.BraveKey})
 }
 
 func intPtr(v int) *int { return &v }

@@ -88,7 +88,7 @@ func (s *Session) Interactive(ctx context.Context, slug, brief string) error {
 		why = s.tr("Simulación generada para explorar el tema")
 	}
 	note.Meta.Resources = append(kept, vault.Resource{Type: "interactive", Title: s.trf("Simulación: %s", note.Meta.Title), URL: rel, Why: why})
-	note.Body = vault.ReplaceSection(note.Body, "Recursos", resourceLines(note.Meta.Resources))
+	note.Body = s.V.SetRecursos(note.Body, s.h("Recursos"), note.Meta.Sources, note.Meta.Resources)
 	if err := s.V.Save(note); err != nil {
 		return err
 	}

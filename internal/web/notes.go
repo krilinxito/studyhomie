@@ -322,8 +322,12 @@ func (s *Server) note(w http.ResponseWriter, r *http.Request) {
 				Area:  area,
 			})
 		}
+		res := s.vault().GuideResources(n)
+		if res == nil {
+			res = []vault.Resource{}
+		}
 		writeJSON(w, 200, map[string]any{
-			"slug": slug, "kind": "guide", "meta": n.Meta, "body": n.Body,
+			"slug": slug, "kind": "guide", "meta": n.Meta, "body": n.Body, "resources": res,
 			"backlinks": s.refs(back), "requires": s.refs(n.Meta.Requires), "concepts": notes, "activities": vault.ParseActivities(n.Body), "hasSimulation": simErr == nil, "apunte": s.vault().HasApunte(slug),
 		})
 		return
@@ -337,8 +341,12 @@ func (s *Server) note(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, "no existe esa nota")
 		return
 	}
+	cres := s.vault().Expand(c.Meta.Sources)
+	if cres == nil {
+		cres = []vault.Resource{}
+	}
 	writeJSON(w, 200, map[string]any{
-		"slug": id, "kind": "concept", "meta": c.Meta, "body": c.Body,
+		"slug": id, "kind": "concept", "meta": c.Meta, "body": c.Body, "resources": cres,
 		"backlinks": s.refs(back), "requires": s.refs(c.Meta.Requires), "guides": s.refs(c.Meta.Guides), "apunte": s.vault().HasApunte(id),
 	})
 }

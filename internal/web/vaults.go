@@ -90,6 +90,7 @@ func (s *Server) switchVault(path string) error {
 	s.vmu.Lock()
 	s.V = v
 	s.vmu.Unlock()
+	_, _ = v.MigrateSources()
 	go purgeTrash(v)
 	s.runs, s.main, s.seq, s.store, s.practices = map[int]*Run{}, nil, 0, nil, map[string]*practiceRec{}
 	s.pauseStalePractices()

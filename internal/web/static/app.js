@@ -768,6 +768,7 @@ function drawSettings() {
       row('', h('div', { class: 'set-actions' }, save, test), result)),
     languageSection(row),
     studySection(row),
+    sourcesSection(row),
     updateSection(row),
     ...dataSections(),
     h('p', { class: 'set-foot' }, t('Se guarda en {file}. Lo que esté en curso termina con la IA anterior.', { file: SET.data.configPath || 'studyhomie.toml' }))));
@@ -854,6 +855,28 @@ function studySection(row) {
     row(t('Tutorial'), h('button', { type: 'button', class: 'btn small', onclick: () => openTutorial(true) }, t('Ver tutorial')),
       h('p', { class: 'set-facts' }, t('Repasa en 6 pasos cómo funcionan las guías, el iceberg, el mapa, la práctica y tu racha.'))),
     row('', result));
+}
+
+// the "Fuentes externas" block of the settings page: optional API keys for YouTube Data API and Brave Search
+function sourcesSection(row) {
+  const src = SET.data.sources || {};
+  const result = h('p', { class: 'set-result', role: 'status' });
+  const say = (cls, text) => { result.className = `set-result ${cls}`; result.textContent = text; };
+  const yt = h('input', { type: 'password', value: src.youtubeKey || '', placeholder: 'AIza…', autocomplete: 'off', spellcheck: 'false', 'aria-label': t('Clave de YouTube Data API') });
+  const brave = h('input', { type: 'password', value: src.braveKey || '', placeholder: 'BSA…', autocomplete: 'off', spellcheck: 'false', 'aria-label': t('Clave de Brave Search') });
+  const save = h('button', { type: 'button', class: 'btn small', onclick: async () => {
+    save.disabled = true;
+    try {
+      SET.data.sources = await api('/api/settings/sources', { method: 'POST', body: { youtubeKey: yt.value.trim(), braveKey: brave.value.trim() } });
+      say('ok', t('Guardado.'));
+    } catch (err) { say('bad', err.message); }
+    save.disabled = false;
+  } }, t('Guardar'));
+  return h('section', { class: 'set-section' }, h('h3', {}, t('Fuentes externas')),
+    row('', h('p', { class: 'set-facts' }, t('Wikipedia, OpenAlex, Crossref, Open Library y la verificación de YouTube funcionan sin clave. Estas claves opcionales añaden búsqueda de videos y de la web.'))),
+    row('YouTube Data API', yt, h('p', { class: 'set-facts' }, t('Opcional: busca videos en YouTube con duración al pedir más material.'))),
+    row('Brave Search', brave, h('p', { class: 'set-facts' }, t('Opcional: añade resultados web al buscar más material.'))),
+    row('', h('div', { class: 'set-actions' }, save), result));
 }
 
 /* ---------- Actualizaciones ---------- */
@@ -1006,6 +1029,7 @@ const DATA_CATS = {
   guias: { label: t('Guías'), group: 'vault' },
   conceptos: { label: t('Conceptos'), group: 'vault' },
   roadmaps: { label: t('Roadmaps'), group: 'vault' },
+  fuentes: { label: t('Fuentes'), group: 'vault' },
   apuntes: { label: t('Apuntes'), group: 'vault' },
   adjuntos: { label: t('Adjuntos de apuntes'), group: 'vault' },
   flashcards: { label: t('Mazos de tarjetas'), group: 'vault' },
@@ -1650,10 +1674,9 @@ function renderReader(n) {
         }, icon('file'), h('span', {}, name)));
       }))));
   }
-  const res = m.resources || [];
-  if (res.length) {
-    article.append(h('section', { class: 'r-resources' }, h('h2', {}, t('Para seguir explorando')),
-      h('ul', { class: 'res-list' }, res.map((r) => resourceCard(r, { slug: n.slug, title })))));
+  const res = n.resources || m.resources || [];
+  if (status !== 'new' || res.length) {
+    article.append(resourcesSection(n, 'guide', title));
   }
   const back = (n.backlinks || []).filter((b) => !concepts.some((c) => c.slug === b.slug));
   const before = n.requires || [];
@@ -1685,12 +1708,51 @@ function videoPlayer(r, id) {
   return frame;
 }
 
+const LEVEL_LABEL = { introductorio: t('Introductorio'), intermedio: t('Intermedio'), avanzado: t('Avanzado') };
+const REL_LABEL = { alta: t('Fiable'), media: t('Media'), baja: t('Revisar') };
+
+function sourceBadges(r) {
+  const list = [];
+  if (r.type) list.push(h('span', { class: 'res-badge' }, TYPE[r.type] || r.type));
+  if (r.level && LEVEL_LABEL[r.level]) list.push(h('span', { class: `res-badge level-${r.level}` }, LEVEL_LABEL[r.level]));
+  if (r.reliability && REL_LABEL[r.reliability]) list.push(h('span', { class: `res-badge rel-${r.reliability}` }, REL_LABEL[r.reliability]));
+  if (r.duration) list.push(h('span', { class: 'res-badge' }, r.duration));
+  if (r.lang) list.push(h('span', { class: 'res-badge' }, String(r.lang).toUpperCase()));
+  if (r.citations > 0) list.push(h('span', { class: 'res-badge' }, tn(r.citations, '{n} cita', '{n} citas')));
+  return list.length ? h('div', { class: 'res-badges' }, ...list) : null;
+}
+
+function seenToggle(id, seen, onChange) {
+  let cur = !!seen;
+  const btn = h('button', {
+    class: `btn small ghost res-seen${cur ? ' is-seen' : ''}`, type: 'button', 'aria-pressed': String(cur),
+    onclick: async () => {
+      btn.disabled = true;
+      try {
+        await api(`/api/sources/${encodeURIComponent(id)}`, { method: 'POST', body: { seen: !cur } });
+        cur = !cur;
+        btn.setAttribute('aria-pressed', String(cur));
+        btn.classList.toggle('is-seen', cur);
+        btn.replaceChildren(icon('check'), cur ? t('Visto') : t('Marcar visto'));
+        if (onChange) onChange(cur);
+      } catch (err) { toast(err.message); }
+      btn.disabled = false;
+    },
+  }, icon('check'), cur ? t('Visto') : t('Marcar visto'));
+  return btn;
+}
+
 // One recommended resource. ctx.slug/title identify the note it belongs to (for simulations).
 function resourceCard(r, ctx = {}) {
   const external = r.url && /^https?:\/\//i.test(r.url);
   const host = external ? hostOf(r.url) : '';
+  const metaText = external
+    ? [r.author, r.year ? String(r.year) : '', host].filter(Boolean).join(' · ')
+    : [TYPE[r.type] || r.type, host].filter(Boolean).join(' · ');
+  const seenBtn = r.id ? seenToggle(r.id, r.seen, (v) => { r.seen = v; }) : null;
   const head = (titleEl) => h('div', { class: 'res-head' },
-    h('div', { class: 'res-main' }, titleEl, h('span', { class: 'res-meta' }, [TYPE[r.type] || r.type, host].filter(Boolean).join(' · '))));
+    h('div', { class: 'res-main' }, titleEl, metaText ? h('span', { class: 'res-meta' }, metaText) : null, external ? sourceBadges(r) : null),
+    seenBtn);
   const why = r.why && h('span', { class: 'why' }, r.why);
   const link = () => h('a', { href: r.url, target: '_blank', rel: 'noopener noreferrer' }, r.title);
   const yt = external && youtubeId(r.url);
@@ -1703,6 +1765,57 @@ function resourceCard(r, ctx = {}) {
       ctx.slug && h('div', {}, h('button', { class: 'btn small', type: 'button', onclick: () => chatAction({ action: 'interactive', brief: r.why || '' }, t('Simulación: {title}', { title: ctx.title })) }, t('Generar'))));
   }
   return h('li', { class: 'res' }, head(h('strong', {}, r.title)), why);
+}
+
+const FIND_FILTERS = [
+  { id: 'all', label: t('Todo'), req: {} },
+  { id: 'video', label: t('Videos'), req: { kinds: ['video'] } },
+  { id: 'read', label: t('Lecturas'), req: { kinds: ['web', 'book'] } },
+  { id: 'paper', label: t('Papers'), req: { kinds: ['paper'] } },
+  { id: 'easy', label: t('Más fácil'), req: { easy: true } },
+];
+
+// External sources section for a guide or concept, with «Buscar más material» and filter chips.
+function resourcesSection(note, kind, title) {
+  const res = note.resources || note.meta.resources || [];
+  let picked = 'all';
+  const status = h('span', { class: 'hint res-find-status', role: 'status' });
+  const chips = FIND_FILTERS.map((f) => {
+    const b = h('button', {
+      type: 'button', 'aria-pressed': String(f.id === picked),
+      onclick: () => {
+        picked = f.id;
+        chips.forEach((el, i) => el.setAttribute('aria-pressed', String(FIND_FILTERS[i].id === picked)));
+      },
+    }, f.label);
+    return b;
+  });
+  const findBtn = h('button', {
+    class: 'btn small', type: 'button',
+    onclick: async () => {
+      const f = FIND_FILTERS.find((x) => x.id === picked) || FIND_FILTERS[0];
+      findBtn.disabled = true;
+      status.textContent = t('Buscando material…');
+      try {
+        const r = await api(`/api/notes/${encodeURIComponent(note.slug)}/sources`, { method: 'POST', body: { kind, ...f.req } });
+        note.resources = r.resources || [];
+        const nAdded = (r.added || []).length;
+        toast(tn(nAdded, 'Agregué {n} fuente nueva.', 'Agregué {n} fuentes nuevas.'));
+        if (kind === 'guide') renderReader(note);
+        else renderConcepts();
+      } catch (err) {
+        status.textContent = err.message;
+      }
+      findBtn.disabled = false;
+    },
+  }, icon('search'), t('Buscar más material'));
+
+  return h('section', { class: 'r-resources' },
+    h('h2', {}, t('Para seguir explorando')),
+    res.length ? h('ul', { class: 'res-list' }, res.map((r) => resourceCard(r, { slug: note.slug, title }))) : h('p', { class: 'hint' }, t('Aún no hay fuentes guardadas para este tema.')),
+    h('div', { class: 'res-find' },
+      h('div', { class: 'seg', role: 'group', 'aria-label': t('Tipo de material') }, ...chips),
+      findBtn, status));
 }
 
 /* ---------- Conceptos: the iceberg ---------- */
@@ -2032,7 +2145,8 @@ function conceptReader(c) {
       h('div', { class: 'actions' }, notesButton(c.slug, m.title || c.slug, c.apunte),
         h('button', { class: 'btn small ghost', type: 'button', onclick: () => askAbout(t('Sobre «{title}»:', { title: m.title }) + ' ') }, icon('message-circle'), t('Preguntar')),
         h('button', { class: 'btn small ghost ghost-danger', type: 'button', title: t('Borrar {title}', { title: m.title || c.slug }), onclick: () => deleteNote(c.slug, m.title || c.slug, 'concept') }, icon('trash-2'), t('Borrar')))),
-    h('article', { class: 'r-article' }, mdBlock(stripSection(body, 'Aparece en'), { viz: vizCtx(c.slug) }),
+    h('article', { class: 'r-article' }, mdBlock(stripSection(stripSection(body, 'Aparece en'), 'Recursos'), { viz: vizCtx(c.slug) }),
+      resourcesSection(c, 'concept', m.title || c.slug),
       (c.guides || []).length ? h('section', { class: 'r-next' }, h('h2', {}, t('Aparece en')),
         c.guides.map((g) => h('button', { class: 'neighbor', type: 'button', onclick: () => openNote(g.slug) }, h('small', {}, t('Guía')), h('strong', {}, g.title)))) : null));
 }
@@ -2178,9 +2292,9 @@ async function attachToNotes(files, editor) {
 }
 
 /* ---------- Vault: your vaults, and every note in the one in use ---------- */
-const DIRS = { guias: t('Guía'), conceptos: t('Concepto'), apuntes: t('Apuntes'), flashcards: t('Tarjetas'), roadmaps: t('Roadmap'), daily: t('Diario') };
-const DIRS_PLURAL = { guias: t('guías'), conceptos: t('conceptos'), apuntes: t('apuntes'), flashcards: t('tarjetas'), roadmaps: t('roadmaps'), daily: t('días') };
-const VLT = { info: null, files: [], materials: [], hits: null, q: '', dir: '', adding: false, edit: null, timer: 0 };
+const DIRS = { guias: t('Guía'), conceptos: t('Concepto'), fuentes: t('Fuente'), apuntes: t('Apuntes'), flashcards: t('Tarjetas'), roadmaps: t('Roadmap'), daily: t('Diario') };
+const DIRS_PLURAL = { guias: t('guías'), conceptos: t('conceptos'), fuentes: t('fuentes'), apuntes: t('apuntes'), flashcards: t('tarjetas'), roadmaps: t('roadmaps'), daily: t('días') };
+const VLT = { info: null, files: [], materials: [], sources: [], srcFilter: { type: '', level: '', area: '', seen: '' }, hits: null, q: '', dir: '', adding: false, edit: null, timer: 0 };
 
 function fmtBytes(n) {
   if (n < 1024) return `${n} B`;
@@ -2193,7 +2307,8 @@ async function renderVault() {
   if (!root) return;
   if (VLT.edit) { drawEditor(); return; }
   try {
-    [VLT.info, VLT.files, VLT.materials] = await Promise.all([api('/api/vaults'), api('/api/vault/files'), api('/api/vault/materials')]);
+    const [info, files, materials, srcRes] = await Promise.all([api('/api/vaults'), api('/api/vault/files'), api('/api/vault/materials'), api('/api/sources')]);
+    VLT.info = info; VLT.files = files; VLT.materials = materials; VLT.sources = srcRes.sources || [];
   } catch (err) { root.replaceChildren(h('p', { class: 'hint', style: 'padding:24px' }, err.message)); return; }
   drawVault();
 }
@@ -2218,7 +2333,7 @@ function drawVault() {
   const root = PANE_EL.vault;
   const { vaults, root: abs, stats, canPick } = VLT.info;
   const cur = vaults.find((v) => v.current) || { name: abs.split(/[\\/]/).pop() };
-  const ONE = { guias: t('guía'), conceptos: t('concepto'), apuntes: t('nota de apuntes'), flashcards: t('mazo de tarjetas'), roadmaps: t('roadmap'), daily: t('día') };
+  const ONE = { guias: t('guía'), conceptos: t('concepto'), fuentes: t('fuente'), apuntes: t('nota de apuntes'), flashcards: t('mazo de tarjetas'), roadmaps: t('roadmap'), daily: t('día') };
   const counts = Object.keys(DIRS).filter((d) => stats.notes[d]).map((d) => `${stats.notes[d]} ${stats.notes[d] === 1 ? ONE[d] : DIRS_PLURAL[d]}`);
   if (VLT.materials.length) counts.push(tn(VLT.materials.length, '{n} archivo de material', '{n} archivos de material'));
 
@@ -2286,6 +2401,12 @@ function drawVault() {
 function drawNoteList() {
   const ul = $('#v-notes');
   if (!ul) return;
+  const oldFilters = PANE_EL.vault && PANE_EL.vault.querySelector('.src-filters');
+  if (oldFilters) oldFilters.remove();
+  if (VLT.dir === 'fuentes') {
+    drawSourcesLibrary(ul);
+    return;
+  }
   if (VLT.dir === 'material') {
     const q = slugify(VLT.q);
     const mats = VLT.materials.filter((m) => !q || slugify(`${m.topic} ${m.name}`).includes(q));
@@ -2313,6 +2434,79 @@ function drawNoteList() {
       h('button', { class: 'icon-btn', type: 'button', title: t('Editar el Markdown'), 'aria-label': t('Editar {title}', { title: f.title }), onclick: () => editVaultFile(f) }, icon('file-pen-line')),
       h('button', { class: 'icon-btn', type: 'button', title: t('Abrir en Obsidian'), 'aria-label': t('Abrir {title} en Obsidian', { title: f.title }), onclick: () => openOutside('obsidian', f) }, icon('external-link')),
       h('button', { class: 'icon-btn', type: 'button', title: t('Mostrar en la carpeta'), 'aria-label': t('Mostrar {title} en la carpeta', { title: f.title }), onclick: () => openOutside('folder', f) }, icon('folder-open'))))));
+}
+
+function drawSourcesLibrary(ul) {
+  const f = VLT.srcFilter;
+  const areas = [...new Set(VLT.sources.map((s) => s.meta.area).filter(Boolean))].sort();
+  const sel = (aria, val, opts, on) => h('select', { 'aria-label': aria, onchange: (e) => { on(e.target.value); drawNoteList(); } },
+    opts.map(([v, label]) => h('option', { value: v, selected: v === val || null }, label)));
+  const filters = h('div', { class: 'src-filters' },
+    sel(t('Tipo'), f.type, [['', t('Todos los tipos')], ['video', t('Video')], ['web', t('Web')], ['book', t('Libro')], ['paper', t('Paper')]], (v) => { f.type = v; }),
+    sel(t('Nivel'), f.level, [['', t('Todos los niveles')], ['introductorio', t('Introductorio')], ['intermedio', t('Intermedio')], ['avanzado', t('Avanzado')]], (v) => { f.level = v; }),
+    areas.length ? sel(t('Área'), f.area, [['', t('Todas las áreas')], ...areas.map((a) => [a, AREA_NAME[a] || a])], (v) => { f.area = v; }) : null,
+    sel(t('Estado'), f.seen, [['', t('Todos')], ['unseen', t('Por ver')], ['seen', t('Vistos')]], (v) => { f.seen = v; }));
+  ul.before(filters);
+
+  const q = slugify(VLT.q);
+  const list = VLT.sources.filter((s) => {
+    const m = s.meta;
+    if (f.type && m.type !== f.type) return false;
+    if (f.level && m.level !== f.level) return false;
+    if (f.area && m.area !== f.area) return false;
+    if (f.seen === 'seen' && !m.seen) return false;
+    if (f.seen === 'unseen' && m.seen) return false;
+    if (q && !slugify(`${m.title} ${m.author} ${m.summary} ${m.url}`).includes(q)) return false;
+    return true;
+  });
+  if (!list.length) {
+    ul.replaceChildren(h('li', { class: 'hint' }, (VLT.q || f.type || f.level || f.area || f.seen) ? t('Nada coincide.') : t('Aún no hay fuentes guardadas.')));
+    return;
+  }
+  ul.replaceChildren(...list.map((s) => {
+    const m = s.meta;
+    const host = m.url ? hostOf(m.url) : '';
+    const yt = m.url && youtubeId(m.url);
+    const metaLine = [m.author, m.year ? String(m.year) : '', m.area ? (AREA_NAME[m.area] || m.area) : '', host].filter(Boolean).join(' · ');
+    const titleEl = m.url && /^https?:\/\//i.test(m.url)
+      ? h('a', { class: 'src-title', href: m.url, target: '_blank', rel: 'noopener noreferrer' }, m.title || s.slug)
+      : h('strong', { class: 'src-title' }, m.title || s.slug);
+    const fileRef = { dir: 'fuentes', slug: s.slug, title: m.title || s.slug };
+    const trashSource = async () => {
+      const cited = (s.citedBy || []).map((c) => c.title).join(', ');
+      const msg = cited
+        ? t('Esta fuente se cita en: {notes}. Se moverá a la papelera y se quitará de sus enlaces.', { notes: cited })
+        : t('Se moverá a la papelera (puedes restaurarla durante 30 días).');
+      if (!await askConfirm(t('¿Mover «{title}» a la papelera?', { title: m.title || s.slug }), msg, t('Mover a la papelera'))) return;
+      try {
+        const r = await api(`/api/sources/${encodeURIComponent(s.slug)}`, { method: 'DELETE' });
+        VLT.sources = VLT.sources.filter((x) => x.slug !== s.slug);
+        drawNoteList();
+        const tid = r.trash && r.trash.id;
+        toast(t('Fuente movida a la papelera.'), tid ? {
+          label: t('Deshacer'),
+          onClick: async () => {
+            await api(`/api/trash/${encodeURIComponent(tid)}/restore`, { method: 'POST', body: {} });
+            renderVault();
+          },
+        } : undefined);
+      } catch (err) { toast(err.message); }
+    };
+    return h('li', { class: 'src-item' },
+      h('div', { class: 'src-body' },
+        h('div', { class: 'res-head' },
+          h('div', { class: 'res-main' }, titleEl, metaLine ? h('span', { class: 'res-meta' }, metaLine) : null, sourceBadges(m)),
+          seenToggle(s.slug, m.seen, (v) => { m.seen = v; })),
+        m.summary ? h('p', { class: 'src-sum' }, m.summary) : null,
+        yt ? videoPlayer(m, yt) : null,
+        (s.citedBy || []).length ? h('div', { class: 'src-cites' },
+          h('span', { class: 'hint' }, t('Citado en')),
+          ...s.citedBy.map((c) => h('button', { type: 'button', class: 'src-cite-btn', onclick: () => openNote(c.slug) }, c.title))) : null,
+        h('div', { class: 'src-actions' },
+          h('button', { class: 'btn small ghost', type: 'button', onclick: () => editVaultFile(fileRef) }, icon('file-pen-line'), t('Editar')),
+          h('button', { class: 'btn small ghost', type: 'button', onclick: () => openOutside('obsidian', fileRef) }, icon('external-link'), 'Obsidian'),
+          h('button', { class: 'btn small ghost ghost-danger', type: 'button', onclick: trashSource }, icon('trash-2'), t('Papelera')))));
+  }));
 }
 
 function openVaultFile(f) {

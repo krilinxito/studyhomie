@@ -29,6 +29,7 @@ import (
 	"github.com/krilinxito/studyhomie/internal/provider"
 	"github.com/krilinxito/studyhomie/internal/roadmap"
 	"github.com/krilinxito/studyhomie/internal/session"
+	"github.com/krilinxito/studyhomie/internal/sources"
 	"github.com/krilinxito/studyhomie/internal/update"
 	"github.com/krilinxito/studyhomie/internal/vault"
 )
@@ -59,6 +60,8 @@ type Server struct {
 	Open       func(kind, target string) error
 	// CheckLinks verifies cited URLs; nil uses the real check. Tests replace it.
 	CheckLinks func(ctx context.Context, urls []string) map[string]bool
+	// Sources finds and checks external material; nil builds one from Cfg. Tests replace it.
+	Sources *sources.Client
 	// Updater finds and installs new versions; nil (or a development build) turns updates off.
 	Updater *update.Updater
 	// Restart starts the app again on the installed version; nil when it cannot (tests).
@@ -77,6 +80,7 @@ type Server struct {
 
 func New(cfg config.Config, v *vault.Vault, p provider.Provider) *Server {
 	s := &Server{Cfg: cfg, V: v, P: p, Now: time.Now, runs: map[int]*Run{}, practices: map[string]*practiceRec{}}
+	_, _ = v.MigrateSources()
 	go purgeTrash(v)
 	s.pauseStalePractices()
 	if st, err := newStore(s.sessionsDir()); err == nil {
@@ -142,6 +146,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/settings/models", s.listModels)
 	mux.HandleFunc("POST /api/settings/test", s.testSettings)
 	mux.HandleFunc("POST /api/settings/study", s.saveStudySettings)
+	mux.HandleFunc("POST /api/settings/sources", s.saveSourceSettings)
 	mux.HandleFunc("POST /api/settings/language", s.setLanguage)
 	mux.HandleFunc("GET /api/update", s.getUpdate)
 	mux.HandleFunc("POST /api/update", s.installUpdate)
@@ -159,6 +164,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/notes/{slug}/dig", s.dig)
 	mux.HandleFunc("POST /api/notes/{slug}/activities", s.generateActivities)
 	mux.HandleFunc("POST /api/notes/{slug}/activities/{index}", s.updateActivity)
+	mux.HandleFunc("POST /api/notes/{slug}/sources", s.findSources)
+	mux.HandleFunc("GET /api/sources", s.listSources)
+	mux.HandleFunc("GET /api/sources/{slug}", s.getSource)
+	mux.HandleFunc("POST /api/sources/{slug}", s.updateSource)
+	mux.HandleFunc("DELETE /api/sources/{slug}", s.deleteSource)
 	mux.HandleFunc("GET /api/vaults", s.vaults)
 	mux.HandleFunc("POST /api/vaults", s.addVault)
 	mux.HandleFunc("POST /api/vaults/use", s.useVault)
@@ -300,11 +310,20 @@ func (s *Server) errText(err error) string {
 	return session.ErrorText(err, i18n.UI(cfg.Language))
 }
 
+// sourcesClient returns the catalogue client in use (the test override if set, else built from config).
+func (s *Server) sourcesClient() *sources.Client {
+	if s.Sources != nil {
+		return s.Sources
+	}
+	_, cfg, _ := s.backend()
+	return sources.New(cfg.YouTubeKey, cfg.BraveKey)
+}
+
 // shortSession is a session for actions that do not need a conversation with the learner:
 // they take their input from the request and send the result back in the response.
 func (s *Server) shortSession() *session.Session {
 	p, cfg, _ := s.backend()
-	return &session.Session{P: s.limit(p, nil, nil), V: s.vault(), Cfg: cfg, CheckLinks: s.CheckLinks}
+	return &session.Session{P: s.limit(p, nil, nil), V: s.vault(), Cfg: cfg, CheckLinks: s.CheckLinks, Sources: s.sourcesClient()}
 }
 
 // drain reads what is left of the request body. Go only notices that the browser closed the connection

@@ -18,6 +18,7 @@ import (
 	"github.com/krilinxito/studyhomie/internal/config"
 	"github.com/krilinxito/studyhomie/internal/providers"
 	"github.com/krilinxito/studyhomie/internal/session"
+	"github.com/krilinxito/studyhomie/internal/sources"
 	"github.com/krilinxito/studyhomie/internal/update"
 	"github.com/krilinxito/studyhomie/internal/vault"
 	"github.com/krilinxito/studyhomie/internal/web"
@@ -50,6 +51,7 @@ Uso (sin argumentos abre la interfaz web):
   studyhomie doubt <tema> "pregunta"    responde una duda y la guarda en la sección Dudas de la nota
   studyhomie interactive <tema>         genera una simulación interactiva del tema
   studyhomie graph                      temas y conexiones del vault
+  studyhomie migrate-sources            migra los recursos externos de guías viejas a fuentes/
 `
 
 // version is set at release time: go build -ldflags "-X main.version=v1.2.3".
@@ -111,6 +113,14 @@ func run(ctx context.Context, cmd string, args []string) error {
 	if cmd == "graph" {
 		return printGraph(v)
 	}
+	if cmd == "migrate-sources" {
+		n, err := v.MigrateSources()
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Listo: %d guías migradas a fuentes/.\n", n)
+		return nil
+	}
 	p, err := providers.New(cfg)
 	if err != nil {
 		return err
@@ -125,7 +135,7 @@ func run(ctx context.Context, cmd string, args []string) error {
 		}
 		return serve(ctx, cfg, v, srv, args)
 	}
-	s := &session.Session{P: p, V: v, Cfg: cfg, In: bufio.NewReader(os.Stdin), Out: os.Stdout}
+	s := &session.Session{P: p, V: v, Cfg: cfg, Sources: sources.New(cfg.YouTubeKey, cfg.BraveKey), In: bufio.NewReader(os.Stdin), Out: os.Stdout}
 
 	if cmd == "daily" {
 		field := strings.Join(args, " ")

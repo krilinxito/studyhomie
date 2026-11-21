@@ -38,8 +38,9 @@ type TrashItem struct {
 type Ref struct {
 	Dir   string `json:"dir"` // GuidesDir or ConceptsDir
 	Slug  string `json:"slug"`
-	Field string `json:"field"` // guides | requires | concepts | base
+	Field string `json:"field"` // guides | requires | concepts | base | sources
 	Value string `json:"value"`
+	Extra string `json:"extra,omitempty"` // sources: why the source helps there
 }
 
 func (v *Vault) trashRoot() string { return filepath.Join(v.Root, ".studyhomie", "trash") }
@@ -216,6 +217,14 @@ func (v *Vault) relink(refs []Ref) {
 		return append(list, val)
 	}
 	for _, r := range refs {
+		if r.Field == "sources" {
+			if (r.Dir == GuidesDir && v.Exists(r.Slug)) || (r.Dir == ConceptsDir && v.ConceptExists(r.Slug)) {
+				_ = v.SetSourcesOf(r.Dir, r.Slug, func(have []SourceRef) []SourceRef {
+					return MergeRefs(have, []SourceRef{{ID: r.Value, Why: r.Extra}})
+				}, "")
+			}
+			continue
+		}
 		switch r.Dir {
 		case GuidesDir:
 			if !v.Exists(r.Slug) {

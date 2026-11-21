@@ -133,10 +133,14 @@ func TestPrepareSavesGuideAndDropsDeadLinks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(n.Meta.Resources) != 2 || n.Meta.Resources[0].Title != "Good" || n.Meta.Resources[1].Title != "A Book" {
-		t.Errorf("resources = %+v", n.Meta.Resources)
+	// external material becomes notes of fuentes/, cited from the guide with why each one helps
+	if len(n.Meta.Resources) != 0 || len(n.Meta.Sources) != 2 || n.Meta.Sources[0].ID != "good" || n.Meta.Sources[1].ID != "a-book" || n.Meta.Sources[0].Why != "visual" {
+		t.Errorf("sources = %+v, resources = %+v", n.Meta.Sources, n.Meta.Resources)
 	}
-	if !strings.Contains(n.Body, "## Guía") || !strings.Contains(n.Body, "[Good](https://ok.example/v)") || strings.Contains(n.Body, "dead.example") {
+	if src, err := s.V.LoadSource("good"); err != nil || src.Meta.URL != "https://ok.example/v" {
+		t.Errorf("source note: %+v %v", src.Meta, err)
+	}
+	if !strings.Contains(n.Body, "## Guía") || !strings.Contains(n.Body, "[[fuentes/good|Good]] — visual") || strings.Contains(n.Body, "dead.example") {
 		t.Errorf("body wrong:\n%s", n.Body)
 	}
 	if got := s.V.LoadHandoff(slug); got != "resumen corto" {

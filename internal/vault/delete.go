@@ -96,6 +96,12 @@ func (v *Vault) DeleteConcept(id string) (TrashItem, error) {
 // unlink removes each reference from the note that holds it (the reverse of relink).
 func (v *Vault) unlink(refs []Ref) {
 	for _, r := range refs {
+		if r.Field == "sources" {
+			_ = v.SetSourcesOf(r.Dir, r.Slug, func(have []SourceRef) []SourceRef {
+				return slices.DeleteFunc(have, func(x SourceRef) bool { return x.ID == r.Value })
+			}, "")
+			continue
+		}
 		switch r.Dir {
 		case GuidesDir:
 			_ = v.Update(r.Slug, func(n *Note) error {

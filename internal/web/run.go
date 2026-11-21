@@ -385,7 +385,7 @@ func (s *Server) runSession(run *Run) (*session.Session, config.Config) {
 	}
 	sess := &session.Session{
 		P: s.limit(prov, func() { status("En cola: espera su turno para la IA…") }, func() { status("Pensando…") }),
-		V: s.vault(), Cfg: cfg, CheckLinks: s.CheckLinks,
+		V: s.vault(), Cfg: cfg, CheckLinks: s.CheckLinks, Sources: s.sourcesClient(),
 		In:  bufio.NewReader(run.in),
 		Out: outWriter{run},
 		Ask: func(kind, label, def string) {

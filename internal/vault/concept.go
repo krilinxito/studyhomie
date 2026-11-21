@@ -20,15 +20,16 @@ const (
 // hand-made Obsidian vault (titulo, aliases, tags, categoria), plus requiere and guias so a
 // prerequisite can be told apart from a "see also" link.
 type ConceptMeta struct {
-	Title    string   `yaml:"titulo" json:"title"`
-	Aliases  []string `yaml:"aliases,omitempty" json:"aliases,omitempty"`
-	Tags     []string `yaml:"tags,omitempty" json:"tags,omitempty"`
-	Category string   `yaml:"categoria,omitempty" json:"category,omitempty"`
-	Summary  string   `yaml:"resumen,omitempty" json:"summary,omitempty"`
-	Requires []string `yaml:"requiere,omitempty" json:"requires,omitempty"` // ids of the concepts it builds on
-	Guides   []string `yaml:"guias,omitempty" json:"guides,omitempty"`      // slugs of the guides that use it
-	Created  string   `yaml:"creado,omitempty" json:"created,omitempty"`
-	Updated  string   `yaml:"actualizado,omitempty" json:"updated,omitempty"`
+	Title    string      `yaml:"titulo" json:"title"`
+	Aliases  []string    `yaml:"aliases,omitempty" json:"aliases,omitempty"`
+	Tags     []string    `yaml:"tags,omitempty" json:"tags,omitempty"`
+	Category string      `yaml:"categoria,omitempty" json:"category,omitempty"`
+	Summary  string      `yaml:"resumen,omitempty" json:"summary,omitempty"`
+	Requires []string    `yaml:"requiere,omitempty" json:"requires,omitempty"` // ids of the concepts it builds on
+	Guides   []string    `yaml:"guias,omitempty" json:"guides,omitempty"`      // slugs of the guides that use it
+	Sources  []SourceRef `yaml:"fuentes,omitempty" json:"sources,omitempty"`   // external material, with why it helps
+	Created  string      `yaml:"creado,omitempty" json:"created,omitempty"`
+	Updated  string      `yaml:"actualizado,omitempty" json:"updated,omitempty"`
 }
 
 // Concept is one concept note.

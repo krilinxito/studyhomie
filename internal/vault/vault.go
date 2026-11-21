@@ -21,7 +21,7 @@ type Vault struct {
 	mu sync.Mutex // serializes Update
 }
 
-var subdirs = []string{GuidesDir, ConceptsDir, "roadmaps", "daily", "interactive"}
+var subdirs = []string{GuidesDir, ConceptsDir, SourcesDir, "roadmaps", "daily", "interactive"}
 
 // Open creates the vault layout if needed, moving notes from the old layout.
 func Open(root string) (*Vault, error) {
