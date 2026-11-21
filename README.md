@@ -3,9 +3,27 @@
 **Aprende con intuición y comprueba que puedes explicarlo.**
 Un asistente de estudio con IA que corre en tu computadora: un programa de consola con una interfaz web local, y tus notas en un vault de Markdown compatible con Obsidian.
 
-Le preguntas desde un **chat** (con archivos o imágenes adjuntas) y escribe una guía de estudio con visuales interactivos, mapea todo lo que ese tema da por sabido hasta lo básico (un «iceberg» de conceptos), guarda tus propios apuntes en el vault y te hace practicar: preguntas que piden razonar y explicarlo con tus palabras. Funciona con la IA que ya tengas: Claude Code, Codex, Antigravity, cualquier API conocida o un modelo local.
+Le preguntas desde un **chat** (con archivos o imágenes adjuntas) y escribe una guía de estudio con visuales interactivos, mapea lo que ese tema da por sabido, nivel por nivel y hasta lo básico si quieres (un «iceberg» de conceptos), guarda tus propios apuntes en el vault y te hace practicar: preguntas que piden razonar y explicarlo con tus palabras. Funciona con la IA que ya tengas: Claude Code, Codex, Antigravity, cualquier API conocida o un modelo local.
 
 ![Chat de estudio con guía y visual interactivo](docs/img/nota.png)
+
+## Instalación
+
+Todo lo que hace, con el narval de guía: **<https://studyhomie.maxi42.space>**
+
+| Sistema o gestor | Comando |
+|---|---|
+| Windows (PowerShell) | `irm https://studyhomie.maxi42.space/install.ps1 \| iex` |
+| macOS y Linux | `curl -fsSL https://studyhomie.maxi42.space/install.sh \| sh` |
+| npm (cualquier sistema) | `npm install -g studyhomie` |
+| Scoop | `scoop bucket add studyhomie https://github.com/krilinxito/scoop-bucket` y `scoop install studyhomie` |
+| Homebrew | `brew install krilinxito/tap/studyhomie` |
+| Chocolatey | `choco install studyhomie` |
+| Go 1.24+ | `go install github.com/krilinxito/studyhomie/cmd/studyhomie@latest` |
+
+Los scripts bajan el binario del último release, verifican su SHA-256 contra `checksums.txt` y lo dejan en `%LOCALAPPDATA%\Programs\StudyHomie` (Windows, agregado a tu `PATH`) o en `~/.local/bin`. Si lo instalaste con npm, Scoop, Homebrew o Chocolatey, la app no se actualiza sola: te muestra el comando de ese gestor.
+
+Después, en una carpeta para tus estudios: `studyhomie init` y `studyhomie`.
 
 ## Instálalo con tu agente de IA
 
@@ -57,9 +75,19 @@ $env:Path += ";$gobin"
 export PATH="$(go env GOPATH)/bin:$PATH"
 ```
 
-**B. Binario listo, sin Go.**
+**B. Binario listo, sin Go.** Con el script de instalación (verifica el SHA-256 y agrega la carpeta al `PATH`):
 
-Windows (PowerShell):
+```powershell
+# Windows (PowerShell)
+irm https://studyhomie.maxi42.space/install.ps1 | iex
+```
+
+```sh
+# macOS / Linux (queda en ~/.local/bin)
+curl -fsSL https://studyhomie.maxi42.space/install.sh | sh
+```
+
+Si el script no se puede descargar, hazlo a mano. Windows (PowerShell):
 
 ```powershell
 $v = (Invoke-RestMethod https://api.github.com/repos/krilinxito/studyhomie/releases/latest).tag_name
@@ -244,7 +272,8 @@ En el plan de `guide`, `s` (o Enter) lo aprueba, `g` escribe solo la guía, `n` 
 
 ## Qué hace
 
-- **Un iceberg de conceptos.** Cada guía mapea todo lo que da por sabido, nivel por nivel, hasta lo básico. Mapear es barato: solo títulos y una frase. «Escribir ahora» (0 a 4) decide cuántos niveles se escriben de entrada como notas; lo de más abajo queda en gris y se escribe con un clic en **Explicar** solo si lo necesitas.
+- **Un iceberg de conceptos.** Cada guía mapea lo que da por sabido, nivel por nivel. «Escribir ahora» (0 a 4) decide cuántos niveles se mapean y se escriben de entrada como notas. En el panel Conceptos el iceberg está dibujado: la guía en la punta y un nivel por franja de agua. Al fondo, **Bajar un nivel más** mapea lo que necesita el último nivel (solo títulos y una frase, es barato); eso queda punteado y se escribe con un clic en **Explicar** solo si lo necesitas. Cuando lo de abajo ya es lo básico, te lo dice.
+- **Mapas conectados.** Antes de crear un concepto, el planner mira los que ya tienes y reutiliza la nota aunque la nombre un poco distinto («Probabilidad condicionada» es tu «Probabilidad condicional»). En el mapa, un concepto que usan varias guías aparece una sola vez, con un anillo y una arista hacia cada una. Se pueden ocultar los conceptos por explicar y, en el mapa de una conversación, los que escribió otra.
 - **Nada se da por sabido en silencio.** La guía enlaza cada término que asume. Si ese concepto aún no tiene nota, el enlace sale en gris con «explicar».
 - **Plan editable.** Antes de escribir te muestra el árbol: desmarcas lo que ya sabes, agregas lo que falte, y decides si escribe guía y notas, solo la guía, o nada.
 - **Intuición sin plantillas.** Nada de «imagina que tienes…». Las guías arrancan con un problema concreto con números, reinventan la idea (el intento ingenuo, por qué falla y el arreglo), la llevan a los casos extremos y dejan la fórmula para el final.
@@ -332,7 +361,7 @@ Todo es opcional; sin el archivo se usan estos valores. `studyhomie init` lo cre
 | `vaults` | `[]` | Todos los vaults agregados, para cambiar entre ellos |
 | `interests` | lista amplia | Campos de los que sale el reto diario |
 | `depth` | `1` | Niveles de conceptos que se escriben de entrada fuera del chat |
-| `iceberg` | `true` | Mapear siempre los conceptos hasta lo básico |
+| `iceberg` | `true` | Con profundidad 0 (solo la guía), mapear igual el primer nivel de conceptos, para explicarlos o bajar desde ahí |
 | `parallel` | `3` | Notas de concepto que se escriben a la vez |
 | `context_window` / `compact_at` | `200000` / `0.6` | Cuándo se resume una conversación larga |
 | `pass_score` | `70` | Nota (0–100, prueba o Feynman) que necesita un tema de un roadmap para desbloquear el siguiente |
@@ -345,7 +374,7 @@ StudyHomie busca versiones nuevas en GitHub Releases al arrancar y cada pocas ho
 
 Al actualizar, la app descarga el archivo de tu sistema, comprueba su sha256 contra el `checksums.txt` de la release, reemplaza su propio binario y se reinicia sola; la pestaña del navegador se recarga cuando la versión nueva responde. Desde la consola: `studyhomie update`.
 
-Si el binario está en una carpeta sin permiso de escritura (p. ej. una carpeta del sistema), la app te lo dice y puedes descargar la versión a mano desde [Releases](https://github.com/krilinxito/studyhomie/releases/latest). Las compilaciones locales (`go build`, versión `dev`) nunca se actualizan solas.
+Si el binario está en una carpeta sin permiso de escritura (p. ej. una carpeta del sistema), la app te lo dice y puedes descargar la versión a mano desde [Releases](https://github.com/krilinxito/studyhomie/releases/latest). Las compilaciones locales (`go build`, versión `dev`) nunca se actualizan solas. Si lo instalaste con npm, Scoop, Homebrew o Chocolatey, el aviso te da el comando de ese gestor (por ejemplo `brew upgrade studyhomie`) en lugar de reemplazar el binario.
 
 ## Tu vault
 

@@ -292,3 +292,40 @@ func TestMode(t *testing.T) {
 		}
 	}
 }
+
+func TestManaged(t *testing.T) {
+	cases := []struct{ exe, manager string }{
+		{`C:\Users\ana\scoop\apps\studyhomie\0.5.0\studyhomie.exe`, "Scoop"},
+		{`C:\ProgramData\chocolatey\lib\studyhomie\tools\studyhomie_v0.5.0_windows_amd64\studyhomie.exe`, "Chocolatey"},
+		{"/opt/homebrew/Cellar/studyhomie/0.5.0/bin/studyhomie", "Homebrew"},
+		{"/usr/local/Cellar/studyhomie/0.5.0/bin/studyhomie", "Homebrew"},
+		{"/home/linuxbrew/.linuxbrew/Cellar/studyhomie/0.5.0/bin/studyhomie", "Homebrew"},
+		{`C:\Users\ana\AppData\Roaming\npm\node_modules\studyhomie\vendor\studyhomie.exe`, "npm"},
+		{"/usr/lib/node_modules/studyhomie/vendor/studyhomie", "npm"},
+		{`C:\Users\ana\AppData\Local\Programs\StudyHomie\studyhomie.exe`, ""},
+		{`C:\Users\ana\go\bin\studyhomie.exe`, ""},
+		{"/home/ana/.local/bin/studyhomie", ""},
+	}
+	for _, c := range cases {
+		m, cmd := Managed(c.exe)
+		if m != c.manager || (m == "") != (cmd == "") {
+			t.Errorf("Managed(%q) = %q, %q; want %q", c.exe, m, cmd, c.manager)
+		}
+	}
+}
+
+func TestManagedDoesNotInstall(t *testing.T) {
+	f := newFake(t, "v0.3.0", "linux", []byte("nuevo"))
+	u := newUpdater(t, f, "v0.2.0", "linux")
+	u.Manager, u.Upgrade = "Homebrew", "brew upgrade studyhomie"
+	st := u.Check(context.Background(), false)
+	if !st.Available || st.Manager != "Homebrew" || st.Upgrade != "brew upgrade studyhomie" {
+		t.Fatalf("status = %+v", st)
+	}
+	if _, err := u.Install(context.Background()); err == nil || !strings.Contains(err.Error(), "brew upgrade studyhomie") {
+		t.Fatalf("Install = %v; want the brew command", err)
+	}
+	if b, _ := os.ReadFile(u.Exe); string(b) != "viejo" {
+		t.Fatalf("binary was replaced: %q", b)
+	}
+}

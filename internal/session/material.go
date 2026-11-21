@@ -66,6 +66,15 @@ func (s *Session) Material(ctx context.Context, paths []string, o RoadmapOpts) (
 	if err := s.V.SaveMaterial(mslug, text.String()); err != nil {
 		return "", err
 	}
+	// Copy the original files into vault/material/<mslug>/ so they are visible in Obsidian and the Vault panel.
+	var copied []string
+	for _, p := range paths {
+		if abs, err := filepath.Abs(p); err == nil {
+			if rel, err := s.V.CopyMaterial(mslug, abs); err == nil {
+				copied = append(copied, rel)
+			}
+		}
+	}
 	chunks := material.Split(text.String(), chunkSize)
 	s.printf("Material «%s»: %d fragmentos.\n\n", title, len(chunks))
 
@@ -80,8 +89,31 @@ func (s *Session) Material(ctx context.Context, paths []string, o RoadmapOpts) (
 	if o.Reach == 0 {
 		o.Reach = roadmap.ReachFocused
 	}
-	return s.buildRoadmap(ctx, roadmapReq{subject: title, scope: scope + "\n", outline: material.Outline(chunks, outlineBudget),
+	rslug, err := s.buildRoadmap(ctx, roadmapReq{subject: title, scope: scope + "\n", outline: material.Outline(chunks, outlineBudget),
 		materialSlug: mslug, source: "material", opts: o})
+	if err == nil && len(copied) > 0 {
+		if rm, err2 := s.V.LoadFrom("roadmaps", rslug); err2 == nil {
+			rm.Meta.Materials = copied
+			rm.Body = vault.ReplaceSection(rm.Body, s.h("Material"), materialLines(copied))
+			_ = s.V.SaveIn("roadmaps", rm)
+		}
+	}
+	return rslug, err
+}
+
+// materialLines renders vault/material/<topic>/<file> entries as Obsidian wikilinks.
+func materialLines(rels []string) string {
+	var b strings.Builder
+	for _, rel := range rels {
+		ext := strings.ToLower(filepath.Ext(rel))
+		switch ext {
+		case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf":
+			fmt.Fprintf(&b, "- ![[%s]]\n", rel)
+		default:
+			fmt.Fprintf(&b, "- [[%s]]\n", rel)
+		}
+	}
+	return b.String()
 }
 
 // grounding returns the parts of the topic's source material that best match it,

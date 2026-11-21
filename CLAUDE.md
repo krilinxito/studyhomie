@@ -10,6 +10,7 @@ go test ./...                                 # tests
 go vet ./...
 gofmt -l .                                    # CI falla si lista algo
 node --check internal/web/static/app.js       # sintaxis del frontend (no tiene build ni tests JS)
+cd site && npm ci && npm run build            # la web (astro check + build)
 ```
 
 **Después de cada cambio, recompila e instala:** `go build -o studyhomie.exe ./cmd/studyhomie` (el exe de la raíz del repo) y `go install ./cmd/studyhomie`. Este segundo es el que importa: el comando `studyhomie` del usuario es `%USERPROFILE%\go\bin\studyhomie.exe`, el del PATH, no el del repo. Windows no deja sobrescribir un `.exe` en uso, pero sí renombrarlo: si la app está abierta, mueve el de `go\bin` a `studyhomie.exe.old` antes del `go install` y avisa al usuario que reinicie la app.
@@ -27,14 +28,19 @@ Para probarla a mano: `studyhomie init --provider claude-cli` en una carpeta tem
 | `internal/prompts` | Prompts embebidos (`*.md`). `Get(name, lang)` reemplaza `{{language}}` y, en los prompts que lee el estudiante, agrega `style.md`. |
 | `internal/provider/*`, `internal/providers` | Backends de IA intercambiables (Claude CLI, Codex, APIs, modelos locales) y su catálogo. |
 | `internal/web` | Servidor HTTP + SSE (`run.go`: un flujo a la vez, eventos `out`/`ask`/`card`/`done`), API JSON (`server.go`, `settings.go`, `updates.go`…) y frontend en `static/`. |
-| `internal/viz` | Valida y limpia los widgets ` ```viz ` de las guías. |
+| `internal/viz` | Valida y limpia los widgets ` ```viz ` de las guías, el registro de librerías (`three`, `tone`, `jsxgraph`, `katex`, `leaflet`, `matter`, `p5`) y la validación HTML de los widgets interactivos. |
+| `internal/stats` | Gamificación por vault (`vault/.studyhomie/stats.json`): eventos de XP, racha diaria con congeladores, calendario de 18 semanas y progreso por área. |
+| `internal/cards` | Flashcards coleccionables por rareza (`vault/flashcards/*.md`, compatible con Obsidian *Spaced Repetition*), planificador FSRS-4.5 e import/export Anki (TSV). |
 | `internal/update` | Autoactualización desde GitHub Releases. |
 | `internal/config` | `studyhomie.toml` (`Default()` tiene los valores por defecto). |
 | `internal/i18n` | Idiomas: catálogos, `T`/`Sprintf`, encabezados de sección en cada idioma. |
+| `site/` | La web pública (Astro, GitHub Pages, studyhomie.maxi42.space): una sola página que es un iceberg, con el narval de la app (`narval.js`/`narval.css` se importan desde `internal/web/static`, no se copian). Textos en `site/src/i18n/{es,en,fr,zh,pt}.ts` (el español define el tipo). Los scripts `install.ps1`/`install.sh` viven en `site/public/`. |
+| `npm/` | El paquete `studyhomie` de npm: baja el binario del release de su misma versión (en `postinstall` o en la primera ejecución). |
+| `packaging/` | `render.mjs` genera el manifiesto de Scoop, la fórmula de Homebrew y el paquete de Chocolatey desde `checksums.txt`. `release.yml` los publica en cada release; `packaging.yml` los prueba en Windows, macOS y Linux. |
 
 ## Modelo de datos (vault)
 
-- `guias/<slug>.md`: una guía o un tema de roadmap. Los campos de `vault.Meta` son `status` (`new` → `prepared` → `tested` → `explained`), `mastery` (0–100), `roadmap`, `order`, `block`, `concepts`, `pending` (el iceberg que todavía no tiene nota)…
+- `guias/<slug>.md`: una guía o un tema de roadmap. Los campos de `vault.Meta` son `status` (`new` → `prepared` → `tested` → `explained`), `mastery` (0–100), `area` (área canónica para widgets y stats), `roadmap`, `order`, `block`, `concepts`, `pending` (el iceberg que todavía no tiene nota)…
 - `conceptos/<id>.md`: notas de concepto (`vault.Concept`).
 - `roadmaps/<slug>.md`: la nota de la ruta, con `reach` (cuánto abarca) y `guide_depth`.
 - `apuntes/`, `daily/`, `interactive/`; y `.studyhomie/` (oculto para Obsidian): handoff de cada guía, material fuente, sesiones del chat.
@@ -42,7 +48,8 @@ Para probarla a mano: `studyhomie init --provider claude-cli` en una carpeta tem
 
 ## Dos profundidades
 
-- **Profundidad de guía** (`GuideReq.Depth`, 0–4, selector «Escribir ahora» del chat): cuántos niveles de conceptos previos se escriben como notas. El planner (`prompts/plan.md`) mapea hasta lo básico (`maxMapDepth`), y lo que queda más abajo de `Depth` va a `pending`. Es **aglomerativo**: junta todo lo que el tema da por sabido.
+- **Profundidad de guía** (`GuideReq.Depth`, 0–4, selector «Escribir ahora» del chat): cuántos niveles de conceptos previos se mapean y se escriben como notas. El tope es **estricto**: el planner (`prompts/plan.md`) mapea `mapDepth(Depth, Iceberg)` niveles (con `Depth=0` e `iceberg`, el nivel 1 queda en `pending`). «Bajar un nivel más» (`Session.Dig`, `prompts/dig.md`, `POST /api/notes/{slug}/dig`) mapea el nivel siguiente bajo los conceptos más hondos y lo deja en `pending`. Es **aglomerativo**: junta todo lo que el tema da por sabido.
+- **Conceptos reutilizados:** `conceptIndex` (`session/iceberg.go`) busca en el vault por id y por `vault.ConceptKey` (sin acentos, artículos, plurales ni orden de palabras, raíz de 7 letras), así que el plan, `Dig` y `Explain` enlazan la nota que ya existe aunque la IA la escriba distinto. Al planner le llegan los conceptos existentes más relevantes (`relevant`, hasta 150).
 - **Profundidad de roadmap** (`reach`, 1–3: enfocado / con bases / desde cero): cuánto del campo abarca la ruta. El roadmap es **lineal**: una secuencia numerada. Solo se escribe la guía del tema 1. El tema N+1 se desbloquea cuando el N tiene `mastery ≥ pass_score` (70 por defecto, en Ajustes) con estado `tested` o `explained`. En ese momento `Session.advance` escribe su guía. `Guide()` rechaza los temas bloqueados (`checkUnlocked`), y las guías de roadmap no piden aprobar el plan (`GuideReq.Auto`).
 
 ## Idiomas (i18n)

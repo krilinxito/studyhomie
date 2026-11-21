@@ -25,13 +25,15 @@ type Meta struct {
 	Status    string     `yaml:"status,omitempty" json:"status,omitempty"` // new | prepared | tested | explained
 	Source    string     `yaml:"source,omitempty" json:"source,omitempty"` // roadmap | material | daily | adhoc
 	Mastery   int        `yaml:"mastery,omitempty" json:"mastery,omitempty"`
-	Summary   string     `yaml:"summary,omitempty" json:"summary,omitempty"`   // what the learner should understand (roadmap)
-	Field     string     `yaml:"field,omitempty" json:"field,omitempty"`       // knowledge field (daily)
-	Roadmap   string     `yaml:"roadmap,omitempty" json:"roadmap,omitempty"`   // slug of the roadmap this topic belongs to
-	Order     int        `yaml:"order,omitempty" json:"order,omitempty"`       // position within the roadmap
-	Block     string     `yaml:"block,omitempty" json:"block,omitempty"`       // field of the roadmap it belongs to ("Linux", "Redes"…)
-	Requires  []string   `yaml:"requires,omitempty" json:"requires,omitempty"` // slugs of prerequisite topics
-	Material  string     `yaml:"material,omitempty" json:"material,omitempty"` // slug of the source material, if any
+	Summary   string     `yaml:"summary,omitempty" json:"summary,omitempty"`     // what the learner should understand (roadmap)
+	Field     string     `yaml:"field,omitempty" json:"field,omitempty"`         // knowledge field (daily)
+	Area      string     `yaml:"area,omitempty" json:"area,omitempty"`           // canonical area (matematicas, fisica, musica…)
+	Roadmap   string     `yaml:"roadmap,omitempty" json:"roadmap,omitempty"`     // slug of the roadmap this topic belongs to
+	Order     int        `yaml:"order,omitempty" json:"order,omitempty"`         // position within the roadmap
+	Block     string     `yaml:"block,omitempty" json:"block,omitempty"`         // field of the roadmap it belongs to ("Linux", "Redes"…)
+	Requires  []string   `yaml:"requires,omitempty" json:"requires,omitempty"`   // slugs of prerequisite topics
+	Material  string     `yaml:"material,omitempty" json:"material,omitempty"`   // slug of the source material, if any
+	Materials []string   `yaml:"materials,omitempty" json:"materials,omitempty"` // vault-relative paths under material/<topic>/
 	Created   string     `yaml:"created,omitempty" json:"created,omitempty"`
 	Updated   string     `yaml:"updated,omitempty" json:"updated,omitempty"`
 	Resources []Resource `yaml:"resources,omitempty" json:"resources,omitempty"`

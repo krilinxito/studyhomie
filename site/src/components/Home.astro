@@ -1,0 +1,299 @@
+---
+// The whole page is one iceberg: the tip above the water, every section one level deeper,
+// the narval diving alongside, and the install at the base.
+import { Image } from 'astro:assets';
+import Base from '../layouts/Base.astro';
+import Narval from './Narval.astro';
+import Cmd from './Cmd.astro';
+import Logo from './Logo.astro';
+import type { Mood } from '../lib/narval';
+import { dict, fill, pathOf, LANGS, NAMES, HTML_LANG, type Lang } from '../i18n';
+import { CMD, METHODS, THEN, REPO, latestVersion } from '../lib/install';
+import shot from '../../../docs/img/nota.png';
+
+interface Props { lang: Lang }
+const { lang } = Astro.props;
+const t = dict(lang);
+const version = await latestVersion();
+
+// words (and the spaces between them) for the scroll-revealed sentences; Segmenter also splits Chinese
+const seg = new Intl.Segmenter(HTML_LANG[lang], { granularity: 'word' });
+const words = (s: string) => [...seg.segment(s)].map((x) => x.segment);
+const answer = words(t.practice.a);
+const aiParts: { text: string; strong?: boolean }[] = [{ text: t.ai.lead + ' ' }];
+t.ai.list.forEach((name, i) => {
+  if (i > 0) aiParts.push({ text: i === t.ai.list.length - 1 ? ` ${t.ai.or} ` : ', ' });
+  aiParts.push({ text: name, strong: true });
+});
+aiParts.push({ text: lang === 'zh' ? '。' : '.' });
+
+// the moods the diving narval goes through, one per level
+const DIVER: Mood[] = ['mirando', 'estudiando', 'concentrado', 'celebrando', 'preocupado', 'feliz', 'dormido', 'normal'];
+// depth of each level, in meters, shown in its heading and by the gauge
+const DEPTH = [12, 30, 55, 80, 110, 150, 200, 260];
+const level = (n: number) => `−${DEPTH[n - 1]} m`;
+// e^{iθ} in the card's text becomes a superscript
+const sup = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\^\{([^}]+)\}/g, '<sup>$1</sup>');
+
+const mastery = ['92', '85', '74', '', ''];
+const at = [0, 0.25, 0.45, 0.65, 0.85];
+const files = [
+  'estudios/',
+  '  studyhomie.toml',
+  '  vault/',
+  '    guias/transformada-de-fourier.md',
+  '    conceptos/numeros-complejos.md',
+  '    conceptos/formula-de-euler.md',
+  '    roadmaps/calculo-i.md',
+  '    apuntes/clase-03.md',
+  '    flashcards/formula-de-euler.md',
+];
+const bubbles = Array.from({ length: 18 }, (_, i) => ({
+  x: (i * 37 + 11) % 100, y: 4 + ((i * 53) % 92), d: 8 + ((i * 7) % 9), delay: -((i * 13) % 17), s: 4 + ((i * 5) % 9),
+}));
+---
+<Base lang={lang}>
+  <header class="top">
+    <a class="brand" href={pathOf(lang)}><Logo /><span>StudyHomie</span></a>
+    <nav class="top-nav">
+      <a class="top-install" href="#instalar">{t.nav.install}</a>
+      <a class="icon-link" href={REPO} aria-label="GitHub">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path class="fill" d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.04-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.56-.29-5.25-1.28-5.25-5.68 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.41-2.7 5.38-5.26 5.67.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>
+      </a>
+      <button class="icon-link" type="button" data-theme-toggle aria-label={t.foot.theme}>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2"></circle><path d="M12 2.5v2M12 19.5v2M4.6 4.6 6 6M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4"></path></svg>
+      </button>
+    </nav>
+  </header>
+
+  <!-- how deep you are, and the narval that dives with you -->
+  <div class="gauge" aria-hidden="true">
+    <span class="gauge-line"><span class="gauge-dot"></span></span>
+    <span class="gauge-m" data-gauge>0 m</span>
+  </div>
+  <div class="diver" aria-hidden="true" data-diver>
+    <span class="diver-art">{DIVER.map((m, i) => <Narval mood={m} class={`m-${m}${i === 1 ? ' on' : ''}`} />)}</span>
+    <span class="diver-say" data-diver-say></span>
+  </div>
+
+  <main id="main">
+    <!-- the surface: what you see -->
+    <section class="hero">
+      <div class="hero-in">
+        <p class="kicker">{t.hero.kicker}</p>
+        <h1>{t.hero.title}</h1>
+        <p class="lead">{t.hero.lead}</p>
+        <div class="hero-cmd" data-oscmd>
+          <Cmd code={CMD.win} copy={t.install.copy} copied={t.install.copied} os="win" />
+          <Cmd code={CMD.unix} copy={t.install.copy} copied={t.install.copied} os="unix" hidden />
+          <p class="hero-os">
+            <button type="button" data-os-pick="win" aria-pressed="true">Windows</button>
+            <button type="button" data-os-pick="unix" aria-pressed="false">macOS · Linux</button>
+            {version && <span class="ver">{version}</span>}
+            <a class="text-link" href="#instalar">{t.hero.other}</a>
+          </p>
+        </div>
+      </div>
+      <svg class="tip" viewBox="0 0 600 320" preserveAspectRatio="none" aria-hidden="true">
+        <polygon class="tip-a" points="40,320 170,120 225,165 330,8 470,92 560,320"/>
+        <polygon class="tip-b" points="330,8 470,92 560,320 380,320 395,170"/>
+        <polygon class="tip-c" points="170,120 225,165 150,320 40,320"/>
+      </svg>
+      <figure class="hero-nv">
+        <Narval mood="mirando" />
+        <figcaption>{t.hero.say}</figcaption>
+      </figure>
+      <svg class="waterline" viewBox="0 0 1200 44" preserveAspectRatio="none" aria-hidden="true"><path d="M0,22 Q75,6 150,22 T300,22 T450,22 T600,22 T750,22 T900,22 T1050,22 T1200,22 V44 H0 Z"/></svg>
+      <a class="scroll-cue" href="#pregunta"><span>{t.hero.scroll}</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6"></path></svg></a>
+    </section>
+
+    <!-- under the water: one level per section -->
+    <div class="sea" data-sea>
+      <svg class="ice" viewBox="0 0 600 3000" preserveAspectRatio="none" aria-hidden="true">
+        <defs>
+          <linearGradient id="ice-fill" x1="0" y1="0" x2="0" y2="1">
+            <stop class="s0" offset="0"/><stop class="s1" offset=".45"/><stop class="s2" offset="1"/>
+          </linearGradient>
+        </defs>
+        <polygon class="ice-body" fill="url(#ice-fill)" points="30,0 570,0 588,180 560,420 596,700 575,980 590,1260 548,1540 566,1820 520,2100 470,2400 400,2640 330,2860 290,2990 250,2870 170,2700 110,2480 70,2200 92,1900 46,1600 64,1300 20,1000 48,720 8,420 36,200"/>
+        <polyline class="ice-facet" points="30,0 210,380 120,760 260,1180 160,1640 300,2100 290,2990"/>
+        <polyline class="ice-facet" points="570,0 420,520 520,980 380,1500 470,1960 400,2640"/>
+        <polyline class="ice-facet" points="210,380 420,520 260,1180 380,1500 160,1640"/>
+      </svg>
+      <div class="bubbles" aria-hidden="true">{bubbles.map((b) => <span style={`--x:${b.x}%;--y:${b.y}%;--d:${b.d}s;--delay:${b.delay}s;--s:${b.s}px`}></span>)}</div>
+
+      <section class="lvl shallow" id="pregunta" data-p="view" data-mood="estudiando" data-say={t.ask.say} data-depth={DEPTH[0]} style="--from:var(--w0);--to:var(--w1)">
+        <div class="split">
+          <div class="copy rv">
+            <p class="k"><span>{level(1)}</span>{t.ask.k}</p>
+            <h2>{t.ask.title}</h2>
+            <p>{t.ask.body}</p>
+            <p class="say-inline">{t.ask.say}</p>
+          </div>
+          <div class="on-ice shot">
+            <Image src={shot} alt={t.ask.alt} widths={[640, 960, 1400]} sizes="(max-width: 960px) 100vw, 640px" loading="lazy" />
+          </div>
+        </div>
+      </section>
+
+      <section class="lvl shallow" id="iceberg" data-mood="concentrado" data-say={t.berg.say} data-depth={DEPTH[1]} style="--from:var(--w1);--to:var(--w2)">
+        <div class="split">
+          <div class="copy rv">
+            <p class="k"><span>{level(2)}</span>{t.berg.k}</p>
+            <h2>{t.berg.title}</h2>
+            <p>{t.berg.body}</p>
+            <p class="meta">{t.berg.meta}</p>
+            <p class="say-inline">{t.berg.say}</p>
+          </div>
+          <div class="on-ice concepts">
+            <p class="concepts-tip rv">{t.berg.topic}</p>
+            <ol>
+              {t.berg.levels.map((names, i) => (
+                <li class="rv" style={`--i:${i + 1}`}>
+                  <span class="concepts-lvl">{fill(t.berg.level, { n: i + 1 })}</span>
+                  <span class="concepts-names">{names.join(' · ')}</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+        </div>
+      </section>
+
+      <section class="lvl shallow" id="roadmaps" data-p="view" data-mood="celebrando" data-say={t.road.say} data-depth={DEPTH[2]} style="--from:var(--w2);--to:var(--w3)">
+        <div class="split">
+          <div class="copy rv">
+            <p class="k"><span>{level(3)}</span>{t.road.k}</p>
+            <h2>{t.road.title}</h2>
+            <p>{t.road.body}</p>
+            <p class="meta">{t.road.unlock}</p>
+            <p class="say-inline">{t.road.say}</p>
+          </div>
+          <div class="on-ice road">
+            <ol class="stops">
+              {t.road.topics.map((name, i) => (
+                <li class="stop" data-at={at[i]}>
+                  <span class="stop-dot">
+                    <b>{i + 1}</b>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V8a4 4 0 0 1 8 0v3"></path></svg>
+                  </span>
+                  <span class="stop-name">{name}</span>
+                  {mastery[i] && <span class="stop-score">{mastery[i]}<small>/100</small></span>}
+                </li>
+              ))}
+            </ol>
+          </div>
+        </div>
+      </section>
+
+      <section class="lvl deepw" id="practica" data-p="view" data-mood="preocupado" data-mood-end="feliz" data-say={t.practice.sayBefore} data-say-end={t.practice.sayAfter} data-depth={DEPTH[3]} style="--from:var(--w3);--to:var(--w4)">
+        <div class="split">
+          <div class="copy rv">
+            <p class="k"><span>{level(4)}</span>{t.practice.k}</p>
+            <h2>{t.practice.title}</h2>
+            <p>{t.practice.body}</p>
+            <p class="say-inline">{t.practice.sayAfter}</p>
+          </div>
+          <div class="on-ice qa">
+            <p class="q">{t.practice.q}</p>
+            <p class="a" style={`--n:${answer.length}`}>{answer.map((w, i) => <span style={`--i:${i}`}>{w}</span>)}</p>
+            <p class="score">{t.practice.score}</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="lvl deepw cards" id="cromos" data-p="track" data-mood="feliz" data-say={t.cards.say} data-depth={DEPTH[4]} style="--from:var(--w4);--to:var(--w5)">
+        <div class="cards-stage">
+          <div class="split">
+            <div class="copy">
+              <p class="k"><span>{level(5)}</span>{t.cards.k}</p>
+              <h2>{t.cards.title}</h2>
+              <p>{t.cards.body}</p>
+              <p class="say-inline">{t.cards.say}</p>
+            </div>
+            <div class="on-ice card-3d">
+              <div class="card">
+                <div class="face front">
+                  <span class="rarity">{t.cards.rarity}</span>
+                  <span class="card-eq">e<sup>iθ</sup></span>
+                  <span class="card-name">{t.cards.front}</span>
+                </div>
+                <div class="face back"><span set:html={sup(t.cards.back)} /></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="lvl deepw" id="vault" data-mood="dormido" data-say={t.vault.say} data-depth={DEPTH[5]} style="--from:var(--w5);--to:var(--w6)">
+        <div class="split">
+          <div class="copy rv">
+            <p class="k"><span>{level(6)}</span>{t.vault.k}</p>
+            <h2>{t.vault.title}</h2>
+            <p>{t.vault.body}</p>
+            <p class="say-inline">{t.vault.say}</p>
+          </div>
+          <pre class="on-ice tree" aria-label="vault">{files.map((f, i) => <span class="rv" style={`--i:${i}`}>{f + '\n'}</span>)}</pre>
+        </div>
+      </section>
+
+      <section class="lvl deepw" id="ia" data-p="view" data-mood="normal" data-depth={DEPTH[6]} style="--from:var(--w6);--to:var(--w7)">
+        <div class="split">
+          <div class="copy rv">
+            <p class="k"><span>{level(7)}</span>{t.ai.k}</p>
+            <h2>{t.ai.title}</h2>
+            <p>{t.ai.tail}</p>
+          </div>
+          <p class="on-ice ai-line" style={`--n:${aiParts.length}`}>{aiParts.map((part, i) => part.strong ? <strong style={`--i:${i}`}>{part.text}</strong> : <span style={`--i:${i}`}>{part.text}</span>)}</p>
+        </div>
+      </section>
+    </div>
+
+    <!-- the base -->
+    <section class="seabed" id="instalar" data-mood="feliz" data-depth={DEPTH[7]}>
+      <div class="seabed-in">
+        <div class="install-head rv">
+          <figure class="base-nv"><Narval mood="feliz" /><figcaption>{t.install.say}</figcaption></figure>
+          <p class="k"><span>{level(8)}</span>{t.install.k}{version && <span class="ver">{t.install.latest}: {version}</span>}</p>
+          <h2>{t.install.title}</h2>
+          <p class="lead">{t.install.lead}</p>
+        </div>
+        <dl class="methods">
+          {METHODS.map((m) => (
+            <div class="method rv">
+              <dt>{t.install.methods[m]}</dt>
+              <dd><Cmd code={CMD[m]} copy={t.install.copy} copied={t.install.copied} /></dd>
+            </div>
+          ))}
+        </dl>
+        <div class="then rv">
+          <h3>{t.install.then}</h3>
+          <Cmd code={THEN} copy={t.install.copy} copied={t.install.copied} />
+          <p class="note" set:html={t.install.thenNote.replace(/`([^`]+)`/g, '<code>$1</code>')} />
+        </div>
+        <div class="agent rv">
+          <h3>{t.install.agentTitle}</h3>
+          <p>{t.install.agentBody}</p>
+          <Cmd code={t.install.agentPrompt} copy={t.install.copy} copied={t.install.copied} />
+        </div>
+      </div>
+      <svg class="floor" viewBox="0 0 1200 120" preserveAspectRatio="none" aria-hidden="true">
+        <path class="floor-b" d="M0,70 C160,40 300,90 470,62 S800,30 960,58 S1140,80 1200,60 V120 H0 Z"/>
+        <path class="floor-a" d="M0,92 C200,70 330,104 560,84 S900,66 1060,86 S1170,96 1200,88 V120 H0 Z"/>
+      </svg>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="foot-in">
+      <div class="foot-brand"><Logo /><div><strong>StudyHomie</strong><p>{t.foot.tag}</p></div></div>
+      <nav class="foot-links">
+        <a href={REPO}>{t.foot.source}</a>
+        <a href={`${REPO}/releases`}>{t.foot.releases}</a>
+        <a href={`${REPO}/blob/main/LICENSE`}>{t.foot.license}</a>
+      </nav>
+      <nav class="foot-langs" aria-label={t.foot.lang}>
+        {LANGS.map((l) => <a href={pathOf(l)} hreflang={HTML_LANG[l]} lang={HTML_LANG[l]} data-lang={l} aria-current={l === lang ? 'page' : undefined}>{NAMES[l]}</a>)}
+      </nav>
+    </div>
+  </footer>
+</Base>

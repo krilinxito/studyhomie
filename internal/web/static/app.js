@@ -115,7 +115,7 @@ const store = {
 const STATUS = { new: t('Por descubrir'), prepared: t('Guía lista'), tested: t('Comprobado'), explained: t('Explicado') };
 const SECTION = { 'Guía': t('La guía'), 'Conceptos base': t('Conceptos base'), 'Dudas': t('Dudas'), 'Prueba': t('Preguntas'), 'Feynman': t('Explicación'), 'Conexiones': t('Conexiones') };
 const TYPE = { video: t('Video'), web: t('Web'), book: t('Libro'), paper: t('Paper'), interactive: t('Interactivo') };
-const DEPTH = [t('solo la guía'), t('1 nivel de conceptos'), '2 niveles', '3 niveles', t('hasta lo básico')];
+const DEPTH = [t('solo la guía'), t('1 nivel de conceptos'), t('{n} niveles', { n: 2 }), t('{n} niveles', { n: 3 }), t('{n} niveles', { n: 4 })];
 const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 const smoothness = () => (reducedMotion() ? 'auto' : 'smooth');
@@ -320,12 +320,14 @@ const S = {
 /* ---------- theme ---------- */
 const effectiveTheme = () => document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 function applyTheme() {
-  $('#btn-theme use').setAttribute('href', `icons.svg#i-${effectiveTheme() === 'dark' ? 'sun' : 'moon'}`);
+  const th = effectiveTheme();
+  $('#btn-theme use').setAttribute('href', `icons.svg#i-${th === 'dark' ? 'sun' : 'moon'}`);
   if (S.cy) S.cy.style(cyStyle());
-  // widgets read their colours when drawn: draw what is open again
+  // widgets read their colours when drawn: draw what is open again and sync live iframes
   if (S.note) renderReader(S.note);
   renderConcepts();
   renderPractice();
+  if (window.Viz && Viz.syncTheme) Viz.syncTheme(th);
 }
 $('#btn-theme').addEventListener('click', () => {
   const next = effectiveTheme() === 'dark' ? 'light' : 'dark';
@@ -338,9 +340,9 @@ $('#btn-theme').addEventListener('click', () => {
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (!document.documentElement.dataset.theme) applyTheme(); });
 
 /* ---------- the dock: panels you can drag, split, stack and float ---------- */
-const PANES = { chat: t('Chat'), chats: t('Conversaciones'), guide: t('Guía'), concepts: t('Conceptos'), map: t('Mapa'), practice: t('Practicar'), notes: t('Apuntes'), vault: t('Vault'), settings: t('Ajustes') };
+const PANES = { chat: t('Chat'), chats: t('Conversaciones'), guide: t('Guía'), concepts: t('Conceptos'), map: t('Mapa'), practice: t('Practicar'), notes: t('Apuntes'), progress: t('Progreso'), vault: t('Vault'), settings: t('Ajustes') };
 const STUDY = ['guide', 'concepts', 'map', 'practice', 'notes']; // the study panel: closed until there is something to show
-const NEAR_STUDY = [...STUDY, 'vault', 'settings']; // panels that open next to the study group
+const NEAR_STUDY = [...STUDY, 'progress', 'vault', 'settings']; // panels that open next to the study group
 
 function createDock() {
   for (const el of $$('#panes > .pane')) PANE_EL[el.dataset.pane] = el;
@@ -373,9 +375,10 @@ function createDock() {
     drawGroupActions();
   });
   dock.onDidMaximizedGroupChange?.(() => drawGroupActions());
-  dock.onDidRemovePanel?.(() => syncPanelButton());
-  dock.onDidAddPanel?.(() => syncPanelButton());
-  dock.onDidActivePanelChange((p) => { if (p) onShown(p.id); });
+  dock.onDidRemovePanel?.(() => { syncPanelButton(); syncSidebarButton(); });
+  dock.onDidAddPanel?.(() => { syncPanelButton(); syncSidebarButton(); });
+  dock.onDidActivePanelChange((p) => { if (p) onShown(p.id); syncSidebarButton(); });
+  syncSidebarButton();
 }
 
 // a tab dropped on a box's tab bar or the middle of its content: it joins that box. Taking the last
@@ -399,6 +402,13 @@ function setLayoutEditing(on) {
 $('#edit-done').addEventListener('click', () => setLayoutEditing(false));
 $('#edit-reset').addEventListener('click', () => { store.set('dock', null); defaultLayout(); toast(t('Diseño restablecido.')); });
 
+const DEFAULT_CHATS_W = 222;
+// dockview rounds a requested width against the rest of the grid, so the width it gives back is
+// remembered: closing the list keeps the stored width unless the user dragged it to a new one
+function sizeChats(group, w) {
+  group.api.setSize({ width: w });
+  S.chatsGot = Math.round(group.api.width);
+}
 function defaultLayout() {
   const dock = S.dock;
   dock.clear();
@@ -411,8 +421,59 @@ function defaultLayout() {
   dock.addPanel({ id: 'chats', component: 'chats', title: PANES.chats, position: { referencePanel: 'chat', direction: 'left' } });
   dock.getPanel('chat').api.setActive();
   // sizes apply once the dock has its own width
-  requestAnimationFrame(() => { try { dock.getPanel('chats')?.group.api.setSize({ width: 250 }); } catch { /* a nicety */ } });
+  requestAnimationFrame(() => { try { const g = dock.getPanel('chats')?.group; if (g) sizeChats(g, DEFAULT_CHATS_W); } catch { /* a nicety */ } });
+  syncSidebarButton();
 }
+
+// on a phone the list of chats is a tab next to the chat, so "open" means it is the one showing
+function chatsOpen() {
+  const p = S.dock && S.dock.getPanel('chats');
+  return !!p && (!isPhone() || p.api.isVisible);
+}
+function syncSidebarButton() {
+  const b = $('#btn-sidebar');
+  if (!b) return;
+  const open = chatsOpen();
+  b.setAttribute('aria-pressed', String(open));
+  b.title = open ? t('Ocultar conversaciones') : t('Mostrar conversaciones');
+}
+function toggleChats() {
+  const dock = S.dock;
+  if (!dock) return;
+  const p = dock.getPanel('chats');
+  if (isPhone()) {
+    if (chatsOpen()) dock.getPanel('chat')?.api.setActive();
+    else show('chats');
+    syncSidebarButton();
+    return;
+  }
+  if (p) {
+    const w = Math.round(p.api.width);
+    if (w >= 150 && (S.chatsGot == null || Math.abs(w - S.chatsGot) > 3)) store.set('chatsW', w);
+    p.api.close();
+    syncSidebarButton();
+    return;
+  }
+  show('chats');
+  const w = Math.max(170, Math.min(300, store.get('chatsW', DEFAULT_CHATS_W)));
+  requestAnimationFrame(() => {
+    try {
+      const g = dock.getPanel('chats')?.group;
+      if (g && !g.panels.some((x) => x.id === 'chat')) sizeChats(g, w);
+    } catch { /* non-fatal */ }
+  });
+  dock.getPanel('chat')?.api.setActive();
+  syncSidebarButton();
+}
+$('#btn-sidebar')?.addEventListener('click', toggleChats);
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'b') {
+    const tag = (document.activeElement && document.activeElement.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    e.preventDefault();
+    toggleChats();
+  }
+});
 
 // room for the study panel: about half the dock, with the list of chats kept narrow
 function sizeStudy(group) {
@@ -420,7 +481,7 @@ function sizeStudy(group) {
   const W = $('#dock').clientWidth;
   try {
     const chats = dock.getPanel('chats');
-    if (chats && chats.group !== group && !chats.group.panels.some((p) => p.id === 'chat') && chats.api.width > 300) chats.group.api.setSize({ width: 250 });
+    if (chats && chats.group !== group && !chats.group.panels.some((p) => p.id === 'chat') && chats.api.width > 240) sizeChats(chats.group, DEFAULT_CHATS_W);
     group.api.setSize({ width: Math.round(Math.min(W - 520, Math.max(420, W * 0.48))) });
   } catch { /* sizes are a nicety */ }
 }
@@ -494,8 +555,11 @@ function groupActions(group) {
       try { max = group.api.isMaximized(); } catch { return; }
       const full = !!document.fullscreenElement;
       const holdsChat = group.panels.some((p) => p.id === 'chat' || p.id === 'chats');
-      if (group.panels.every((p) => p.id === 'chats')) { element.replaceChildren(); return; } // the list of chats needs none
       const btn = (name, title, onclick) => h('button', { class: 'icon-btn', type: 'button', title, 'aria-label': title, onclick }, icon(name));
+      if (group.panels.every((p) => p.id === 'chats')) {
+        element.replaceChildren(btn('panel-left-close', t('Ocultar conversaciones'), toggleChats));
+        return;
+      }
       element.replaceChildren(...[
         full ? btn('minimize-2', t('Salir de pantalla completa'), () => document.exitFullscreen().catch(() => {}))
           : btn('fullscreen', t('Pantalla completa'), () => fullScreen(group)),
@@ -537,10 +601,12 @@ function onShown(id) {
   if (id === 'concepts') renderConcepts();
   if (id === 'practice') renderPractice();
   if (id === 'notes') renderNotes();
+  if (id === 'progress') renderProgress();
   if (id === 'vault') renderVault();
   if (id === 'settings') renderSettings();
 }
 $('#btn-settings').addEventListener('click', () => show('settings'));
+$('#btn-progress').addEventListener('click', () => show('progress'));
 
 /* ---------- Ajustes: which AI answers ---------- */
 const capitalize = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
@@ -738,11 +804,33 @@ function studySection(row) {
       say('ok', t('Guardado.'));
     } catch (err) { say('bad', err.message); }
   });
+  const goalIn = h('input', { type: 'number', min: 10, max: 500, step: 10, value: study.dailyGoal ?? 50, class: 'set-num', 'aria-label': t('Meta diaria de XP') });
+  const presets = [30, 50, 100];
+  let presetBtns = [];
+  const saveGoal = async (v) => {
+    if (!Number.isFinite(v) || v < 10 || v > 500) { say('bad', t('Pon un número de 10 a 500.')); return; }
+    try {
+      SET.data.study = await api('/api/settings/study', { method: 'POST', body: { dailyGoal: v } });
+      goalIn.value = v;
+      presetBtns.forEach((b, i) => b.setAttribute('aria-pressed', String(presets[i] === v)));
+      say('ok', t('Guardado.'));
+      loadStats();
+    } catch (err) { say('bad', err.message); }
+  };
+  goalIn.addEventListener('change', () => saveGoal(Math.round(Number(goalIn.value))));
+  presetBtns = presets.map((v) => h('button', {
+    type: 'button', class: 'btn small', 'aria-pressed': String((study.dailyGoal ?? 50) === v),
+    onclick: () => saveGoal(v),
+  }, `${v} XP`));
   return h('section', { class: 'set-section' }, h('h3', {}, t('Estudio')),
+    row(t('Meta diaria de XP'), h('div', { class: 'set-inline goal-presets' }, ...presetBtns, goalIn, h('span', {}, 'XP')),
+      h('p', { class: 'set-facts' }, t('XP que necesitas cada día para mantener tu racha. Ganas 1 congelador cada 7 días seguidos (máx. 2).'))),
     row(t('Nota para avanzar'), h('div', { class: 'set-inline' }, input, h('span', {}, '/ 100')),
       h('p', { class: 'set-facts' }, t('En un roadmap, el tema siguiente se desbloquea (y se escribe su guía) cuando sacas esta nota o más en la prueba o explicándolo.'))),
     row(t('Límite por respuesta'), h('div', { class: 'set-inline' }, limit, h('span', {}, t('minutos'))),
       h('p', { class: 'set-facts' }, t('Si la IA tarda más que esto en una respuesta, la corto y te aviso, en vez de esperar para siempre. Las guías que buscan en la web tienen el triple. 0 es sin límite.'))),
+    row(t('Tutorial'), h('button', { type: 'button', class: 'btn small', onclick: () => openTutorial(true) }, t('Ver tutorial')),
+      h('p', { class: 'set-facts' }, t('Repasa en 6 pasos cómo funcionan las guías, el iceberg, el mapa, la práctica y tu racha.'))),
     row('', result));
 }
 
@@ -768,11 +856,23 @@ function drawUpdateBar() {
   const show = !!st && st.enabled && st.available && !st.skipped && st.mode !== 'never' && !laterFor(st.latest);
   $('#update-bar').hidden = !show || UPD.busy;
   if (!show) return;
+  const managed = !!st.manager && !st.staged;
   $('#update-text').replaceChildren(st.staged
     ? h('span', {}, h('strong', {}, t('StudyHomie {version} ya está instalado.', { version: st.latest })), ' ', t('Se usa al reiniciar.'))
-    : h('span', {}, h('strong', {}, t('Hay una versión nueva')), ' ' + t('({latest}). Tienes la {current}.', { latest: st.latest, current: st.current })));
-  $('#update-go span').textContent = st.staged ? t('Reiniciar ahora') : t('Actualizar');
-  $('#update-go use').setAttribute('href', `icons.svg#i-${st.staged ? 'refresh-cw' : 'download'}`);
+    : h('span', {}, h('strong', {}, t('Hay una versión nueva')), ' ' + t('({latest}). Tienes la {current}.', { latest: st.latest, current: st.current }),
+      managed ? [' ', t('Instalaste StudyHomie con {manager}; actualízalo con', { manager: st.manager }), ' ', h('code', {}, st.upgrade)] : null));
+  $('#update-go span').textContent = st.staged ? t('Reiniciar ahora') : managed ? t('Copiar comando') : t('Actualizar');
+  $('#update-go use').setAttribute('href', `icons.svg#i-${st.staged ? 'refresh-cw' : managed ? 'copy' : 'download'}`);
+}
+
+// installed with Scoop, Homebrew, Chocolatey or npm: that manager updates it, so the app hands over its command
+async function copyUpgrade() {
+  const cmd = UPD.st && UPD.st.upgrade;
+  if (!cmd) return;
+  try {
+    await navigator.clipboard.writeText(cmd);
+    toast(t('Comando copiado: pégalo en una terminal.'));
+  } catch { toast(cmd); }
 }
 
 function fmtDay(iso) {
@@ -817,7 +917,9 @@ function updateFoot(state = {}) {
     st.staged ? null : btn('ghost', t('Omitir esta versión'), skipUpdate),
     h('span', { class: 'spacer' }),
     btn('', t('Más tarde'), () => { setLater(st.latest); drawUpdateBar(); $('#update-dialog').close(); }),
-    btn('primary', st.staged ? t('Reiniciar ahora') : t('Actualizar'), () => installUpdate(), st.staged ? 'refresh-cw' : 'download')));
+    st.manager && !st.staged
+      ? btn('primary', t('Copiar comando'), copyUpgrade, 'copy')
+      : btn('primary', st.staged ? t('Reiniciar ahora') : t('Actualizar'), () => installUpdate(), st.staged ? 'refresh-cw' : 'download')));
 }
 
 async function skipUpdate() {
@@ -832,6 +934,7 @@ async function skipUpdate() {
 async function installUpdate(force = false) {
   const st = UPD.st;
   if (!st || UPD.busy) return;
+  if (st.manager && !st.staged) { copyUpgrade(); return; }
   openUpdateDialog();
   UPD.busy = true;
   drawUpdateBar();
@@ -960,6 +1063,7 @@ async function openNote(slug, { quiet = false } = {}) {
         if (!quiet) show('guide');
       }
     });
+    loadStats();
   } catch (err) { toast(err.message); }
 }
 
@@ -986,6 +1090,62 @@ function closeGuide() {
   renderReader(null);
   renderConcepts();
   renderPractice();
+}
+
+// Confirmation modal for deleting guides or concepts from lists, readers, or the Map.
+let confirmResolve = null;
+function askConfirm(title, body, okLabel = t('Borrar')) {
+  const dlg = $('#confirm-dialog');
+  if (!dlg) return Promise.resolve(false);
+  $('#confirm-title').textContent = title;
+  $('#confirm-body').textContent = body;
+  $('#confirm-ok').textContent = okLabel;
+  return new Promise((resolve) => {
+    confirmResolve = resolve;
+    if (!dlg.open) dlg.showModal();
+  });
+}
+function finishConfirm(ok) {
+  const dlg = $('#confirm-dialog');
+  if (dlg && dlg.open) dlg.close();
+  const r = confirmResolve;
+  confirmResolve = null;
+  if (r) r(ok);
+}
+$('#confirm-ok').addEventListener('click', () => finishConfirm(true));
+$('#confirm-cancel').addEventListener('click', () => finishConfirm(false));
+$('#confirm-close').addEventListener('click', () => finishConfirm(false));
+$('#confirm-dialog').addEventListener('cancel', (e) => { e.preventDefault(); finishConfirm(false); });
+
+async function deleteNote(slug, title, kind = 'guide') {
+  const isConcept = kind === 'concept';
+  const ok = await askConfirm(
+    isConcept ? t('¿Borrar el concepto «{title}»?', { title }) : t('¿Borrar la guía «{title}»?', { title }),
+    isConcept
+      ? t('Se eliminará esta nota de concepto del vault.')
+      : t('Se eliminará la guía del vault. Sus conceptos compartidos se conservan.'),
+  );
+  if (!ok) return;
+  try {
+    await api(`/api/notes/${encodeURIComponent(slug)}`, { method: 'DELETE' });
+    hideMapNodeBar();
+    if (S.concept && S.concept.slug === slug) S.concept = null;
+    if (S.guide === slug) {
+      S.note = null; S.guide = ''; S.concept = null;
+      store.set('guide', '');
+    }
+    await loadGraph();
+    if (S.guide) await reloadGuide();
+    else {
+      renderReader(null);
+      renderConcepts();
+      renderPractice();
+    }
+    loadStats();
+    toast(isConcept ? t('Concepto borrado.') : t('Guía borrada.'));
+  } catch (err) {
+    toast(err.message);
+  }
 }
 
 // wikilinks and simulation links rendered anywhere in the app
@@ -1052,9 +1212,12 @@ async function explainConcept(ref, { guide = S.guide, title = ref, el } = {}) {
   }
 }
 
-function openSim(slug, title) {
+function openSim(slugOrSrc, title) {
   $('#sim-title').textContent = title || t('Simulación');
-  $('#sim-frame').src = `/interactive/${encodeURIComponent(slug)}.html`;
+  const raw = String(slugOrSrc || '');
+  const path = raw.startsWith('/interactive/') ? raw : raw.startsWith('interactive/') ? `/${raw}` : `/interactive/${encodeURIComponent(raw)}.html`;
+  const sep = path.includes('?') ? '&' : '?';
+  $('#sim-frame').src = `${path}${sep}theme=${encodeURIComponent(effectiveTheme())}`;
   $('#sim-dialog').showModal();
 }
 $('#sim-close').addEventListener('click', () => $('#sim-dialog').close());
@@ -1063,10 +1226,17 @@ $('#sim-dialog').addEventListener('close', () => { $('#sim-frame').src = 'about:
 /* ---------- Guía: the guide as an article ---------- */
 const statusChip = (status) => h('span', { class: 'chip status', style: `--c: var(--s-${status})` }, STATUS[status] || status);
 
-// widgets in a note can build their own page on demand
-const vizCtx = (slug) => ({
-  generate: async (spec) => (await api(`/api/notes/${encodeURIComponent(slug)}/viz`, { method: 'POST', body: { brief: spec.brief } })).src,
-});
+// widgets in a note can build, regenerate, repair and expand their own page on demand
+const vizCtx = (slug) => {
+  const url = `/api/notes/${encodeURIComponent(slug)}/viz`;
+  return {
+    theme: effectiveTheme,
+    generate: async (spec) => (await api(url, { method: 'POST', body: { brief: spec.brief } })).src,
+    regenerate: async (spec) => (await api(url, { method: 'POST', body: { brief: spec.brief, force: true } })).src,
+    fix: async (spec, fixError) => (await api(url, { method: 'POST', body: { brief: spec.brief, fixError } })).src,
+    expand: (src, title) => openSim(src, title),
+  };
+};
 
 /* ---------- Roadmaps: a numbered path, each topic unlocked by passing the one before ---------- */
 const roadmapOf = (slug) => S.roadmaps.find((r) => r.slug === slug);
@@ -1128,9 +1298,13 @@ function guideList() {
     h('p', { class: 'rm-hint' }, roadmapHint(roadmapOf(k))),
     roadmapPath(roadmapOf(k))) : h('section', { class: 'dg' },
     h('h3', {}, k ? groupTitle(k) : t('Tus guías')),
-    h('ul', {}, groups.get(k).sort((a, b) => (a.order || 0) - (b.order || 0) || a.label.localeCompare(b.label)).map((n) => h('li', {},
+    h('ul', {}, groups.get(k).sort((a, b) => (a.order || 0) - (b.order || 0) || a.label.localeCompare(b.label)).map((n) => h('li', { class: 'dg-row' },
       h('button', { class: 'dn', type: 'button', style: `--lc: ${lineColor(n.group)}`, onclick: () => openNote(n.id) },
-        h('i', { class: `st st-${n.status}`, title: STATUS[n.status] || n.status }), n.label)))))));
+        h('i', { class: `st st-${n.status}`, title: STATUS[n.status] || n.status }), n.label),
+      h('button', {
+        class: 'icon-btn del-btn', type: 'button', title: t('Borrar {title}', { title: n.label }), 'aria-label': t('Borrar {title}', { title: n.label }),
+        onclick: (e) => { e.stopPropagation(); deleteNote(n.id, n.label, 'guide'); },
+      }, icon('trash-2'))))))));
 }
 
 // the end of a roadmap guide: what unlocks the next topic, or the way to it
@@ -1188,16 +1362,33 @@ function renderReader(n) {
         icon('mountain-snow'), tn(concepts.length, '{n} concepto', '{n} conceptos') + (under ? ' · ' + t('{n} bajo el agua', { n: under }) : '')) : null,
       status !== 'new' ? h('button', { class: 'btn small', type: 'button', onclick: () => show('practice') }, icon('target'), t('Practicar')) : null,
       notesButton(n.slug, title, n.apunte),
-      h('button', { class: 'btn small ghost', type: 'button', onclick: () => askAbout(t('Sobre «{title}»:', { title }) + ' ') }, icon('message-circle'), t('Preguntar')))));
+      h('button', { class: 'btn small ghost', type: 'button', onclick: () => askAbout(t('Sobre «{title}»:', { title }) + ' ') }, icon('message-circle'), t('Preguntar')),
+      h('button', { class: 'btn small ghost ghost-danger', type: 'button', title: t('Borrar {title}', { title }), onclick: () => deleteNote(n.slug, title, 'guide') }, icon('trash-2'), t('Borrar')))));
 
   const article = h('article', { class: 'r-article' });
-  const bodySrc = stripEmoji(stripSection(n.body, 'Recursos')).trim();
+  const bodySrc = stripEmoji(stripSection(stripSection(stripSection(n.body, 'Recursos'), 'Material'), 'Actividades')).trim();
   if (bodySrc) {
     const md = mdBlock(bodySrc, { viz: vizCtx(n.slug) });
     for (const hd of $$('h2', md)) hd.textContent = SECTION[sectionKey(hd.textContent)] || hd.textContent;
     article.append(md);
   } else {
     article.append(h('p', { class: 'r-empty' }, t('Esta nota aún no tiene guía. Pídela en el chat.')));
+  }
+  if (status !== 'new' || (n.activities && n.activities.length)) {
+    article.append(activitiesSection(n, { inPractice: false }));
+  }
+  const mats = m.materials || [];
+  if (mats.length) {
+    article.append(h('section', { class: 'r-materials' }, h('h2', {}, t('Material fuente')),
+      h('ul', { class: 'mat-list' }, mats.map((rel) => {
+        const parts = String(rel).replace(/^material\//, '').split('/');
+        const topic = parts[0] || n.slug;
+        const name = parts.slice(1).join('/') || rel;
+        return h('li', {}, h('a', {
+          class: 'mat-chip', href: `/api/material/${encodeURIComponent(topic)}/${encodeURIComponent(name)}`,
+          target: '_blank', rel: 'noopener noreferrer',
+        }, icon('file'), h('span', {}, name)));
+      }))));
   }
   const res = m.resources || [];
   if (res.length) {
@@ -1275,6 +1466,7 @@ const levelName = (l) => (l === 1 ? t('Lo que el tema usa directamente') : l ===
 function renderConcepts() {
   const root = PANE_EL.concepts;
   if (!root) return;
+  if (S.bergObs) { S.bergObs.disconnect(); S.bergObs = null; }
   root.replaceChildren();
   if (S.concept) { root.append(conceptReader(S.concept)); return; }
   const n = S.note;
@@ -1289,13 +1481,40 @@ function renderConcepts() {
     const keys = [...levels.keys()].sort((a, b) => a - b);
     let i = 0;
     const pill = (c, isPending) => {
+      const id = c.slug || c.id;
+      const title = c.title || id || '';
+      const sharedText = (c.guides || 0) > 1 ? tn(c.guides - 1, 'también en otra guía', 'también en {n} guías más') : '';
+      const actionHint = isPending ? t('Aún sin nota: pulsa para explicarlo') : t('Abrir la nota');
       const el = h('button', {
-        class: `ice-pill${isPending ? ' pending' : ''}${S.lit === (c.slug || c.id) ? ' lit' : ''}`, type: 'button', style: `--i:${i++}`,
-        title: isPending ? t('Aún sin nota: pulsa para explicarlo') : t('Abrir la nota'),
-        onclick: () => (isPending ? explainConcept(c.id, { guide: n.slug, title: c.title, el }) : openNote(c.slug)),
-      }, h('strong', {}, c.title), c.summary ? h('small', {}, c.summary) : null, isPending ? h('span', { class: 'go' }, t('Explicar')) : null);
+        class: `ice-pill${isPending ? ' pending' : ''}${S.lit === id ? ' lit' : ''}`, type: 'button', style: `--i:${i++}`,
+        'data-id': id, 'data-requires': (c.requires || []).join(' '),
+        'data-title': title,
+        'data-summary': c.summary || '',
+        'data-shared': sharedText,
+        'data-hint': actionHint,
+        title: [title, c.summary, sharedText, actionHint].filter(Boolean).join(' · '),
+        onclick: () => (isPending ? explainConcept(c.id, { guide: n.slug, title, el }) : openNote(c.slug)),
+      },
+      h('strong', {}, title),
+      (c.guides || 0) > 1 ? h('span', { class: 'shared', title: sharedText }, `×${c.guides}`) : null,
+      isPending ? h('span', { class: 'go', 'aria-label': t('Explicar') }, '+') : null);
       return el;
     };
+    const deepest = keys[keys.length - 1];
+    const bergTipCard = h('div', { class: 'berg-tooltip', hidden: true, 'aria-hidden': 'true' });
+    const berg = h('div', { class: 'berg', style: `--levels:${keys.length}` },
+      h('div', { class: 'berg-tip' }, h('span', { class: 'tip', 'data-id': n.slug, 'data-requires': (n.meta.base || []).join(' ') }, n.meta.title)),
+      h('ol', { class: 'berg-levels' }, keys.map((l) => {
+        const g = levels.get(l);
+        return h('li', { class: `berg-level${l > 1 ? ' deep' : ''}`, 'data-level': l, style: `--l:${l}; --water: var(--water-${Math.min(l, 5)})` },
+          h('h3', {},
+            h('span', { class: 'lvl-tag' }, String(l).padStart(2, '0')),
+            h('span', {}, levelName(l)),
+            g.pending.length ? h('small', {}, `· ${t('{n} por explicar', { n: g.pending.length })}`) : null),
+          h('div', { class: 'ice-pills' }, g.written.map((c) => pill(c, !c.exists)), g.pending.map((p) => pill(p, true))));
+      })),
+      h('div', { class: 'berg-floor', style: `--l:${deepest + 1}` }, digButton(n, deepest)),
+      bergTipCard);
     box.append(
       h('header', { class: 'c-head' },
         h('p', { class: 'eyebrow' }, t('Lo que hay debajo')),
@@ -1303,21 +1522,17 @@ function renderConcepts() {
         h('p', { class: 'hint' }, pending.length
           ? t('Lo blanco ya tiene nota. Lo punteado está mapeado pero sin escribir: explícalo solo si lo necesitas.')
           : t('Cada nivel sostiene al de arriba. Si algo no se entiende, baja un nivel.'))),
-      h('div', { class: 'iceberg' },
-        h('div', { class: 'ice-tip' }, h('span', { class: 'tip' }, n.meta.title), h('span', { class: 'ice-wave', 'aria-hidden': 'true' })),
-        h('ol', { class: 'ice-levels' }, keys.map((l) => {
-          const g = levels.get(l);
-          return h('li', { class: `ice-level${l > 1 ? ' deep' : ''}`, style: `--fade:${Math.max(0, 1 - (l - 1) * 0.22)}` },
-            h('h3', {}, levelName(l), h('small', {}, g.pending.length ? t('{n} por explicar', { n: g.pending.length }) : '')),
-            h('div', { class: 'ice-pills' }, g.written.map((c) => pill(c, !c.exists)), g.pending.map((p) => pill(p, true))));
-        }))),
+      berg,
       h('div', { class: 'ice-legend' },
         h('span', {}, h('i', { class: 'st st-concept' }), t('Con nota')),
         h('span', {}, h('i', { class: 'st st-pending' }), t('Por explicar (se escribe al pulsarlo)'))));
     S.lit = '';
+    S.bergObs = new ResizeObserver(() => drawBerg(berg));
+    S.bergObs.observe(berg);
   } else if (n) {
     box.append(h('div', { class: 'panel-empty' }, h('h3', {}, t('Esta guía no tiene conceptos mapeados')),
-      h('p', {}, t('Las guías nuevas mapean todo lo que dan por sabido. También puedes pedir en el chat la nota de un concepto concreto.'))));
+      h('p', {}, t('Las guías nuevas mapean lo que dan por sabido, hasta la profundidad que elijas. Puedes mapearlo ahora, nivel por nivel.')),
+      digButton(n, 0)));
   }
   const all = ((S.graph && S.graph.nodes) || []).filter((x) => x.kind === 'concept');
   if (all.length) {
@@ -1326,11 +1541,221 @@ function renderConcepts() {
     box.append(h('details', { class: 'all-concepts', open: !n || null },
       h('summary', {}, t('Todos tus conceptos ({n})', { n: all.length })),
       [...byCat].sort((a, b) => a[0].localeCompare(b[0])).map(([cat, list]) => h('section', { class: 'dg' }, h('h3', {}, cat),
-        h('div', { class: 'links' }, list.sort((a, b) => a.label.localeCompare(b.label)).map((c) => h('button', { type: 'button', onclick: () => openNote(c.id) }, c.label)))))));
+        h('div', { class: 'links' }, list.sort((a, b) => a.label.localeCompare(b.label)).map((c) => h('span', { class: 'c-chip' },
+          h('button', { type: 'button', onclick: () => openNote(c.id) }, c.label),
+          h('button', {
+            class: 'icon-btn del-btn', type: 'button', title: t('Borrar {title}', { title: c.label }), 'aria-label': t('Borrar {title}', { title: c.label }),
+            onclick: (e) => { e.stopPropagation(); deleteNote(c.id, c.label, 'concept'); },
+          }, icon('trash-2')))))))));
   } else if (!n) {
     box.append(h('div', { class: 'panel-empty' }, h('h3', {}, t('Aún no hay conceptos')), h('p', {}, t('Cuando pidas una guía, aquí verás su iceberg: lo que tiene nota y lo que queda por explicar.'))));
   }
   root.append(box);
+}
+
+// The button at the bottom of the iceberg: maps one more level under the deepest concepts.
+function digButton(n, deepest) {
+  const label = deepest ? t('Bajar un nivel más') : t('Mapear lo que da por sabido');
+  const btn = h('button', { class: 'btn small dig', type: 'button', onclick: async () => {
+    btn.disabled = true;
+    btn.replaceChildren(icon('loader'), t('Mapeando…'));
+    btn.classList.add('working');
+    try {
+      const r = await api(`/api/notes/${encodeURIComponent(n.slug)}/dig`, { method: 'POST', body: {} });
+      const added = r.added || [];
+      if (added.length) S.lit = added[0].id;
+      await loadGraph().catch(() => {});
+      if (S.guide === n.slug) await reloadGuide(); else renderConcepts();
+      toast(added.length ? tn(added.length, 'Mapeé un concepto más abajo.', 'Mapeé {n} conceptos más abajo.')
+        : t('Llegaste al fondo: lo que hay debajo ya es lo básico.'));
+    } catch (err) {
+      toast(err.message);
+      btn.disabled = false;
+      btn.classList.remove('working');
+      btn.replaceChildren(icon('chevrons-down'), label);
+    }
+  } }, icon('chevrons-down'), label);
+  return h('div', { class: 'dig-box' }, btn,
+    deepest ? h('small', {}, t('Mapea lo que necesita el nivel {n}. Se queda por explicar hasta que lo pulses.', { n: deepest })) : null);
+}
+
+// position of an element inside the iceberg box, ignoring the pills' entrance transforms
+function offsetIn(el, root) {
+  let x = 0, y = 0;
+  for (let e = el; e && e !== root; e = e.offsetParent) { x += e.offsetLeft; y += e.offsetTop; }
+  return { x, y, w: el.offsetWidth, h: el.offsetHeight };
+}
+
+// Draws the iceberg behind the pills: smooth sky-to-abyss gradient, faceted crystalline ice peak
+// and submerged keel, shimmering waterline, subtle depth hairlines, and interactive dependency edges.
+let bergSvgSeq = 0;
+function drawBerg(berg) {
+  if (!berg.isConnected || !berg.offsetWidth) return;
+  const NS = 'http://www.w3.org/2000/svg';
+  const el = (tag, attrs) => { const e = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); return e; };
+  const W = berg.offsetWidth, H = berg.offsetHeight;
+  const tip = offsetIn(berg.querySelector('.tip'), berg);
+  const bands = [...berg.querySelectorAll('.berg-level')];
+  const floor = offsetIn(berg.querySelector('.berg-floor'), berg);
+  const waterY = tip.y + tip.h + 2;
+  const cx = W / 2;
+  const gid = `bg${++bergSvgSeq}`;
+  const svg = el('svg', { class: 'berg-art', width: W, height: H, viewBox: `0 0 ${W} ${H}`, 'aria-hidden': 'true' });
+
+  // Gradients for sky, continuous ocean depth, and faceted crystal ice
+  const defs = el('defs', {});
+  const mkGrad = (id, x1, y1, x2, y2, stops) => {
+    const g = el('linearGradient', { id, x1, y1, x2, y2 });
+    for (const [offset, color, opacity] of stops) {
+      const s = el('stop', { offset, 'stop-color': color });
+      if (opacity != null) s.setAttribute('stop-opacity', String(opacity));
+      g.append(s);
+    }
+    return g;
+  };
+  defs.append(
+    mkGrad(`${gid}-sky`, '0%', '0%', '0%', '100%', [
+      ['0%', 'var(--sky)', 1],
+      ['100%', 'var(--water-1)', 0.45],
+    ]),
+    mkGrad(`${gid}-sea`, '0%', '0%', '0%', '100%', [
+      ['0%', 'var(--water-1)', 1],
+      ['28%', 'var(--water-2)', 1],
+      ['58%', 'var(--water-3)', 1],
+      ['84%', 'var(--water-4)', 1],
+      ['100%', 'var(--water-5)', 1],
+    ]),
+    mkGrad(`${gid}-ice`, '0%', '0%', '0%', '100%', [
+      ['0%', 'var(--ice)', 0.28],
+      ['48%', 'var(--ice)', 0.14],
+      ['100%', 'var(--ice)', 0.05],
+    ]),
+    mkGrad(`${gid}-shade`, '0%', '0%', '100%', '100%', [
+      ['0%', 'var(--water-4)', 0.08],
+      ['100%', 'var(--water-5)', 0.28],
+    ]),
+    mkGrad(`${gid}-foam`, '0%', '0%', '0%', '100%', [
+      ['0%', '#ffffff', 0.34],
+      ['100%', '#ffffff', 0],
+    ]),
+  );
+  svg.append(defs);
+
+  // Sky + continuous ocean depth gradient
+  svg.append(el('rect', { x: 0, y: 0, width: W, height: waterY, fill: `url(#${gid}-sky)` }));
+  svg.append(el('rect', { x: 0, y: waterY, width: W, height: Math.max(0, H - waterY), fill: `url(#${gid}-sea)` }));
+  svg.append(el('rect', { x: 0, y: waterY, width: W, height: 18, fill: `url(#${gid}-foam)` }));
+
+  // Subtle horizontal depth dividers between levels
+  const tops = bands.map((b, i) => (i ? (offsetIn(b, berg).y + offsetIn(bands[i - 1], berg).y + bands[i - 1].offsetHeight) / 2 : waterY));
+  for (let i = 1; i < tops.length; i++) {
+    svg.append(el('line', { class: 'berg-divider', x1: 18, y1: tops[i], x2: W - 18, y2: tops[i] }));
+  }
+
+  // Sculpted underwater iceberg silhouette: smoothly widens below the waterline without awkward pinches,
+  // hugs each level's pills, and tapers naturally to a crystalline keel
+  const jag = (k) => ((k * 37) % 7) - 3;
+  const left = [], right = [];
+  const tipL = Math.max(18, tip.x - 14), tipR = Math.min(W - 18, tip.x + tip.w + 14);
+  let hullSpan = Math.max((tipR - tipL) / 2 + 24, W * 0.34);
+  bands.forEach((b, i) => {
+    const pills = [...b.querySelectorAll('.ice-pill')].map((p) => offsetIn(p, berg));
+    const pillSpan = pills.length ? Math.max(...pills.map((p) => Math.max(cx - p.x, p.x + p.w - cx))) + 18 : hullSpan;
+    const targetSpan = Math.min(W * 0.48, Math.max(hullSpan, pillSpan, W * (0.34 + i * 0.055)));
+    hullSpan = targetSpan;
+    const lo = Math.max(10, cx - targetSpan), hi = Math.min(W - 10, cx + targetSpan);
+    const y = i ? tops[i] : waterY, y2 = i + 1 < bands.length ? tops[i + 1] : floor.y;
+    left.push([lo + jag(i), (y + y2) / 2]);
+    right.push([hi + jag(i + 1), (y + y2) / 2]);
+  });
+  const bottom = Math.min(H - 10, floor.y + 18);
+  const keelPts = [[cx - Math.min(hullSpan * 0.45, 76), bottom - 14], [cx - 4, bottom], [cx + Math.min(hullSpan * 0.42, 70), bottom - 16]];
+  const rightRev = [...right].reverse();
+  const body = [[tipL, waterY], ...left, ...keelPts, ...rightRev, [tipR, waterY]];
+  svg.append(el('path', { class: 'berg-body', fill: `url(#${gid}-ice)`, d: `M${body.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join('L')}Z` }));
+
+  // Subtle crystalline right-side shadow facet underwater for depth
+  const rightFacet = [[cx + 4, waterY], [cx - 6, bottom], [cx + 42, bottom - 14], ...rightRev, [tipR, waterY]];
+  svg.append(el('path', { class: 'berg-facet', fill: `url(#${gid}-shade)`, d: `M${rightFacet.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join('L')}Z` }));
+
+  // Two-tone faceted peak above water
+  const peakY = Math.max(6, tip.y - 22);
+  const ridgeX = tip.x + tip.w * 0.45;
+  const pLeft = [[tipL, waterY], [tip.x + tip.w * 0.12, tip.y + 2], [ridgeX, peakY], [cx + 4, waterY]];
+  const pRight = [[ridgeX, peakY], [tip.x + tip.w * 0.74, tip.y - 2], [tip.x + tip.w * 0.9, tip.y + 7], [tipR, waterY], [cx + 4, waterY]];
+  const pFull = [[tipL, waterY], [tip.x + tip.w * 0.12, tip.y + 2], [ridgeX, peakY], [tip.x + tip.w * 0.74, tip.y - 2], [tip.x + tip.w * 0.9, tip.y + 7], [tipR, waterY]];
+  svg.append(el('path', { class: 'berg-peak', d: `M${pFull.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join('L')}Z` }));
+  svg.append(el('path', { class: 'berg-peak-lit', d: `M${pLeft.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join('L')}Z` }));
+  svg.append(el('path', { class: 'berg-peak-shade', d: `M${pRight.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join('L')}Z` }));
+
+  // Gentle animated waterline
+  svg.append(el('path', { class: 'berg-wave', d: `M0,${waterY} ${Array.from({ length: Math.ceil(W / 28) + 2 }, () => `q7,-3.5 14,0 t14,0`).join(' ')}` }));
+
+  // Dependency lines from each concept to what it stands on
+  const at = new Map([...berg.querySelectorAll('[data-id]')].map((e) => [e.dataset.id, e]));
+  const edges = el('g', { class: 'berg-edges' });
+  for (const [id, e] of at) {
+    const a = offsetIn(e, berg);
+    for (const r of (e.dataset.requires || '').split(' ').filter(Boolean)) {
+      const t2 = at.get(r);
+      if (!t2) continue;
+      const b = offsetIn(t2, berg);
+      if (b.y <= a.y + 4) continue;
+      const x1 = a.x + a.w / 2, y1 = a.y + a.h, x2 = b.x + b.w / 2, y2 = b.y, my = (y1 + y2) / 2;
+      edges.append(el('path', { d: `M${x1.toFixed(1)},${y1.toFixed(1)} C${x1.toFixed(1)},${my.toFixed(1)} ${x2.toFixed(1)},${my.toFixed(1)} ${x2.toFixed(1)},${y2.toFixed(1)}`, 'data-from': id, 'data-to': r, class: t2.classList.contains('pending') ? 'pend' : '' }));
+    }
+  }
+  svg.append(edges);
+  berg.querySelector('.berg-art')?.remove();
+  berg.prepend(svg);
+
+  // Interactive hover/focus: highlight dependency paths, related chips, and show glass summary tooltip
+  if (!berg.dataset.hover) {
+    berg.dataset.hover = '1';
+    const tipCard = berg.querySelector('.berg-tooltip');
+    const showTip = (chip) => {
+      if (!tipCard || !chip || !chip.classList.contains('ice-pill')) {
+        if (tipCard) tipCard.hidden = true;
+        return;
+      }
+      const title = chip.dataset.title || '';
+      const summary = chip.dataset.summary || '';
+      const shared = chip.dataset.shared || '';
+      const hint = chip.dataset.hint || '';
+      tipCard.replaceChildren(
+        h('strong', {}, title),
+        summary ? h('p', {}, summary) : null,
+        h('small', {}, [shared, hint].filter(Boolean).join(' · ')));
+      tipCard.hidden = false;
+      const pos = offsetIn(chip, berg);
+      const bw = berg.offsetWidth;
+      const tw = Math.min(280, bw - 24);
+      tipCard.style.maxWidth = `${tw}px`;
+      const th = tipCard.offsetHeight;
+      const leftPos = Math.max(12, Math.min(bw - tipCard.offsetWidth - 12, pos.x + pos.w / 2 - tipCard.offsetWidth / 2));
+      const above = pos.y - th - 10 > 8;
+      tipCard.style.left = `${leftPos}px`;
+      tipCard.style.top = `${above ? pos.y - th - 8 : pos.y + pos.h + 8}px`;
+    };
+    const lightUp = (target) => {
+      const id = target?.dataset?.id || '';
+      const rel = new Set(id ? [id] : []);
+      for (const p of berg.querySelectorAll('.berg-edges path')) {
+        const hot = !!id && (p.dataset.from === id || p.dataset.to === id);
+        p.classList.toggle('hot', hot);
+        if (hot) { rel.add(p.dataset.from); rel.add(p.dataset.to); }
+      }
+      for (const pillEl of berg.querySelectorAll('.ice-pill')) {
+        pillEl.classList.toggle('rel', !!id && pillEl.dataset.id !== id && rel.has(pillEl.dataset.id));
+        pillEl.classList.toggle('dim', !!id && !rel.has(pillEl.dataset.id));
+      }
+      showTip(target);
+    };
+    berg.addEventListener('pointerover', (e) => lightUp(e.target.closest('[data-id]')));
+    berg.addEventListener('pointerleave', () => lightUp(null));
+    berg.addEventListener('focusin', (e) => lightUp(e.target.closest('[data-id]')));
+    berg.addEventListener('focusout', (e) => { if (!berg.contains(e.relatedTarget)) lightUp(null); });
+  }
 }
 
 function conceptReader(c) {
@@ -1345,7 +1770,8 @@ function conceptReader(c) {
       (m.aliases || []).length ? h('div', { class: 'chips' }, m.aliases.map((a) => h('span', { class: 'chip' }, a))) : null,
       (c.requires || []).length ? h('div', { class: 'c-req' }, h('span', { class: 'hint' }, t('Se apoya en')), h('div', { class: 'links' }, c.requires.map((l) => h('button', { type: 'button', onclick: () => (writtenNode(l.slug) ? openNote(l.slug) : explainConcept(l.slug, { title: l.title, guide: owningGuide(l.slug) })) }, l.title)))) : null,
       h('div', { class: 'actions' }, notesButton(c.slug, m.title || c.slug, c.apunte),
-        h('button', { class: 'btn small ghost', type: 'button', onclick: () => askAbout(t('Sobre «{title}»:', { title: m.title }) + ' ') }, icon('message-circle'), t('Preguntar')))),
+        h('button', { class: 'btn small ghost', type: 'button', onclick: () => askAbout(t('Sobre «{title}»:', { title: m.title }) + ' ') }, icon('message-circle'), t('Preguntar')),
+        h('button', { class: 'btn small ghost ghost-danger', type: 'button', title: t('Borrar {title}', { title: m.title || c.slug }), onclick: () => deleteNote(c.slug, m.title || c.slug, 'concept') }, icon('trash-2'), t('Borrar')))),
     h('article', { class: 'r-article' }, mdBlock(stripSection(body, 'Aparece en'), { viz: vizCtx(c.slug) }),
       (c.guides || []).length ? h('section', { class: 'r-next' }, h('h2', {}, t('Aparece en')),
         c.guides.map((g) => h('button', { class: 'neighbor', type: 'button', onclick: () => openNote(g.slug) }, h('small', {}, t('Guía')), h('strong', {}, g.title)))) : null));
@@ -1492,9 +1918,9 @@ async function attachToNotes(files, editor) {
 }
 
 /* ---------- Vault: your vaults, and every note in the one in use ---------- */
-const DIRS = { guias: t('Guía'), conceptos: t('Concepto'), apuntes: t('Apuntes'), roadmaps: t('Roadmap'), daily: t('Diario') };
-const DIRS_PLURAL = { guias: t('guías'), conceptos: t('conceptos'), apuntes: t('apuntes'), roadmaps: t('roadmaps'), daily: t('días') };
-const VLT = { info: null, files: [], hits: null, q: '', dir: '', adding: false, edit: null, timer: 0 };
+const DIRS = { guias: t('Guía'), conceptos: t('Concepto'), apuntes: t('Apuntes'), flashcards: t('Tarjetas'), roadmaps: t('Roadmap'), daily: t('Diario') };
+const DIRS_PLURAL = { guias: t('guías'), conceptos: t('conceptos'), apuntes: t('apuntes'), flashcards: t('tarjetas'), roadmaps: t('roadmaps'), daily: t('días') };
+const VLT = { info: null, files: [], materials: [], hits: null, q: '', dir: '', adding: false, edit: null, timer: 0 };
 
 function fmtBytes(n) {
   if (n < 1024) return `${n} B`;
@@ -1507,7 +1933,7 @@ async function renderVault() {
   if (!root) return;
   if (VLT.edit) { drawEditor(); return; }
   try {
-    [VLT.info, VLT.files] = await Promise.all([api('/api/vaults'), api('/api/vault/files')]);
+    [VLT.info, VLT.files, VLT.materials] = await Promise.all([api('/api/vaults'), api('/api/vault/files'), api('/api/vault/materials')]);
   } catch (err) { root.replaceChildren(h('p', { class: 'hint', style: 'padding:24px' }, err.message)); return; }
   drawVault();
 }
@@ -1532,8 +1958,9 @@ function drawVault() {
   const root = PANE_EL.vault;
   const { vaults, root: abs, stats, canPick } = VLT.info;
   const cur = vaults.find((v) => v.current) || { name: abs.split(/[\\/]/).pop() };
-  const ONE = { guias: t('guía'), conceptos: t('concepto'), apuntes: t('nota de apuntes'), roadmaps: t('roadmap'), daily: t('día') };
+  const ONE = { guias: t('guía'), conceptos: t('concepto'), apuntes: t('nota de apuntes'), flashcards: t('mazo de tarjetas'), roadmaps: t('roadmap'), daily: t('día') };
   const counts = Object.keys(DIRS).filter((d) => stats.notes[d]).map((d) => `${stats.notes[d]} ${stats.notes[d] === 1 ? ONE[d] : DIRS_PLURAL[d]}`);
+  if (VLT.materials.length) counts.push(tn(VLT.materials.length, '{n} archivo de material', '{n} archivos de material'));
 
   // the vaults: one row each, the one in use first
   const vaultRows = h('ul', { class: 'v-list' }, vaults.map((v) => h('li', { class: v.current ? 'on' : null },
@@ -1568,9 +1995,13 @@ function drawVault() {
       drawNoteList();
     }, 220);
   });
+  const segItems = [
+    ['', t('Todas')],
+    ...Object.entries(DIRS).filter(([d]) => stats.notes[d]).map(([d]) => [d, DIRS_PLURAL[d][0].toUpperCase() + DIRS_PLURAL[d].slice(1)]),
+    ...(VLT.materials.length ? [['material', t('Material')]] : []),
+  ];
   const seg = h('div', { class: 'seg', role: 'group', 'aria-label': t('Carpeta') },
-    [['', t('Todas')], ...Object.entries(DIRS).filter(([d]) => stats.notes[d]).map(([d]) => [d, DIRS_PLURAL[d][0].toUpperCase() + DIRS_PLURAL[d].slice(1)])]
-      .map(([d, label]) => h('button', { type: 'button', 'aria-pressed': String(VLT.dir === d), onclick: () => { VLT.dir = d; drawVault(); } }, label)));
+    segItems.map(([d, label]) => h('button', { type: 'button', 'aria-pressed': String(VLT.dir === d), onclick: () => { VLT.dir = d; drawVault(); } }, label)));
 
   root.replaceChildren(h('div', { class: 'vault' },
     h('p', { class: 'eyebrow' }, t('Vault')),
@@ -1595,6 +2026,21 @@ function drawVault() {
 function drawNoteList() {
   const ul = $('#v-notes');
   if (!ul) return;
+  if (VLT.dir === 'material') {
+    const q = slugify(VLT.q);
+    const mats = VLT.materials.filter((m) => !q || slugify(`${m.topic} ${m.name}`).includes(q));
+    if (!mats.length) { ul.replaceChildren(h('li', { class: 'hint' }, VLT.q ? t('Nada coincide.') : t('Aún no hay archivos de material.'))); return; }
+    ul.replaceChildren(...mats.map((m) => {
+      const href = `/api/material/${encodeURIComponent(m.topic)}/${encodeURIComponent(m.name)}`;
+      return h('li', {},
+        h('a', { class: 'v-open v-mat-link', href, target: '_blank', rel: 'noopener noreferrer' },
+          h('strong', {}, m.name),
+          h('small', {}, `${t('Material')} · ${m.topic} · ${fmtBytes(m.size)} · ${when(m.updated)}`)),
+        h('div', { class: 'v-actions' },
+          h('a', { class: 'icon-btn', href, target: '_blank', rel: 'noopener noreferrer', title: t('Abrir archivo'), 'aria-label': t('Abrir archivo') }, icon('external-link'))));
+    }));
+    return;
+  }
   const rows = VLT.hits || VLT.files.filter((f) => !VLT.q.trim() || slugify(f.title).includes(slugify(VLT.q)));
   const list = rows.filter((f) => !VLT.dir || f.dir === VLT.dir);
   if (!list.length) { ul.replaceChildren(h('li', { class: 'hint' }, VLT.q ? t('Nada coincide.') : t('Aún no hay notas aquí.'))); return; }
@@ -1677,16 +2123,408 @@ function drawEditor() {
 }
 $('#btn-vault').addEventListener('click', () => { VLT.edit = null; show('vault'); });
 
-/* ---------- Practicar ---------- */
+/* ---------- Progreso: XP, streak, freezes, calendar & area stats ---------- */
+const AREA_NAME = {
+  matematicas: t('Matemáticas'),
+  fisica: t('Física'),
+  electronica: t('Electrónica'),
+  quimica: t('Química'),
+  biologia: t('Biología'),
+  medicina: t('Medicina'),
+  informatica: t('Informática'),
+  musica: t('Música'),
+  historia: t('Historia'),
+  'ciencias-sociales': t('Ciencias sociales'),
+  economia: t('Economía'),
+  lenguas: t('Lenguas'),
+  arte: t('Arte'),
+  filosofia: t('Filosofía'),
+  general: t('General'),
+};
+const EV_KIND = {
+  guide: t('Guía generada'),
+  read: t('Guía leída'),
+  quiz: t('Prueba completada'),
+  feynman: t('Explicación Feynman'),
+  concept: t('Concepto explicado'),
+  doubt: t('Duda resuelta'),
+  flashcard: t('Repaso de tarjetas'),
+  activity: t('Actividad completada'),
+};
+const fmtMinutes = (mins) => {
+  const m = Math.max(0, Math.round(mins || 0));
+  if (m >= 60) return t('{h} h {m} min', { h: Math.floor(m / 60), m: m % 60 });
+  return t('{m} min', { m });
+};
+
+async function loadStats() {
+  try {
+    const prevMet = !!(S.stats && S.stats.goalMet);
+    const hadStats = !!S.stats;
+    S.stats = await api('/api/stats');
+    drawStreakPill();
+    if (hadStats && !prevMet && S.stats.goalMet) {
+      flashNarval('celebrando', 8000);
+      narvalSay('celebrando', Phrases.pick('goalMet'), { force: true });
+    } else {
+      renderNarval();
+      if (!NARVAL.warnedRisk && S.stats.atRisk) {
+        NARVAL.warnedRisk = true;
+        narvalSay('preocupado', Phrases.pick('atRisk'));
+      }
+    }
+    if (S.dock && S.dock.getPanel('progress')) drawProgress();
+  } catch { /* non-fatal */ }
+}
+
+function drawStreakPill() {
+  const st = S.stats;
+  const btn = $('#btn-progress');
+  if (!st || !btn) return;
+  $('#streak-count').textContent = String(st.streak || 0);
+  const pct = Math.min(100, Math.round(((st.todayXP || 0) / Math.max(1, st.dailyGoal || 50)) * 100));
+  $('#streak-bar').style.width = `${pct}%`;
+  btn.classList.toggle('met', !!st.goalMet);
+  btn.classList.toggle('risk', !!st.atRisk);
+  btn.title = `${t('Progreso, racha y XP')} · ${st.todayXP}/${st.dailyGoal} XP`;
+}
+
+async function renderProgress() {
+  if (!S.stats) await loadStats();
+  else { drawProgress(); loadStats(); }
+}
+
+function drawProgress() {
+  const root = PANE_EL.progress;
+  const st = S.stats;
+  if (!root || !st) return;
+
+  const pct = Math.min(100, Math.round(((st.todayXP || 0) / Math.max(1, st.dailyGoal || 50)) * 100));
+  const left = Math.max(0, (st.dailyGoal || 50) - (st.todayXP || 0));
+  const streakSub = st.atRisk
+    ? h('span', { class: 'prog-warn' }, t('Racha en riesgo hoy'))
+    : st.lostStreak
+      ? h('span', { class: 'prog-warn' }, t('Tu racha se reinició ayer'))
+      : h('span', {}, t('Mejor racha: {n}', { n: st.longest || 0 }));
+
+  const freezeIcons = [];
+  for (let i = 0; i < (st.maxFreezes || 2); i++) {
+    freezeIcons.push(h('span', { class: `freeze-pip${i < (st.freezes || 0) ? ' on' : ''}`, 'aria-hidden': 'true' }, icon('snowflake')));
+  }
+
+  const kpis = h('div', { class: 'prog-grid' },
+    h('div', { class: `prog-card${st.goalMet ? ' met' : ''}` },
+      h('span', { class: 'prog-label' }, t('Meta de hoy')),
+      h('strong', { class: 'prog-val' }, `${st.todayXP} / ${st.dailyGoal} XP`),
+      h('div', { class: 'prog-track' }, h('i', { style: `width:${pct}%` })),
+      h('small', {}, st.goalMet ? t('Meta cumplida') : t('Faltan {xp} XP', { xp: left }))),
+    h('div', { class: `prog-card${st.atRisk ? ' risk' : ''}` },
+      h('span', { class: 'prog-label' }, t('Racha')),
+      h('strong', { class: 'prog-val prog-flame' }, icon('flame'), tn(st.streak || 0, '{n} día', '{n} días')),
+      h('small', {}, streakSub)),
+    h('div', { class: 'prog-card' },
+      h('span', { class: 'prog-label' }, t('Congeladores')),
+      h('strong', { class: 'prog-val prog-freezes' }, ...freezeIcons, h('span', {}, `${st.freezes || 0} / ${st.maxFreezes || 2}`)),
+      h('small', {}, st.nextFreezeIn > 0
+        ? tn(st.nextFreezeIn, 'Falta {n} día para ganar otro', 'Faltan {n} días para ganar otro')
+        : t('Al máximo'))),
+    h('div', { class: 'prog-card' },
+      h('span', { class: 'prog-label' }, t('Total')),
+      h('strong', { class: 'prog-val' }, `${st.totalXP || 0} XP`),
+      h('small', { class: 'prog-time' }, icon('clock'), fmtMinutes(st.totalMinutes))),
+  );
+
+  // GitHub-style calendar heatmap (18 weeks = 126 days, columns = weeks, rows = days)
+  const calDays = st.calendar || [];
+  const cells = [];
+  for (const d of calDays) {
+    const tip = d.frozen
+      ? t('{date} · protegido con congelador', { date: d.date })
+      : t('{date} · {xp} XP', { date: d.date, xp: d.xp });
+    cells.push(h('span', {
+      class: `cal-cell l${d.level || 0}${d.frozen ? ' frozen' : ''}`,
+      title: tip,
+      'aria-label': tip,
+    }));
+  }
+  const calendarSec = h('section', { class: 'prog-sec' },
+    h('div', { class: 'prog-sec-head' },
+      h('h3', {}, t('Actividad')),
+      h('span', { class: 'hint' }, t('Últimas 18 semanas'))),
+    h('div', { class: 'cal-wrap' }, h('div', { class: 'cal-grid', role: 'img', 'aria-label': t('Actividad') }, ...cells)),
+    h('div', { class: 'cal-legend' },
+      h('span', {}, t('Menos')),
+      ...[0, 1, 2, 3, 4].map((lv) => h('i', { class: `cal-cell l${lv}` })),
+      h('span', {}, t('Más')),
+      h('span', { class: 'cal-frozen-key' }, h('i', { class: 'cal-cell l0 frozen' }), t('Protegido con congelador'))),
+  );
+
+  // Per-area horizontal bars
+  const areas = st.areas || [];
+  const maxXP = Math.max(1, ...areas.map((a) => a.xp || 0));
+  const areaBody = areas.length === 0
+    ? h('p', { class: 'hint' }, t('Empieza una guía o una prueba en el chat para ver tu progreso aquí.'))
+    : h('ul', { class: 'area-list' }, areas.map((a, idx) => {
+      const w = a.xp > 0 ? Math.max(4, Math.round((a.xp / maxXP) * 100)) : 0;
+      const meta = [];
+      if (a.guides) meta.push(tn(a.guides, '{n} guía', '{n} guías'));
+      if (a.masteredGuides) meta.push(tn(a.masteredGuides, '{n} dominada', '{n} dominadas'));
+      if (a.avgMastery) meta.push(t('Dominio medio {score}%', { score: a.avgMastery }));
+      if (a.concepts) meta.push(tn(a.concepts, '{n} concepto', '{n} conceptos'));
+      if (a.minutes) meta.push(fmtMinutes(a.minutes));
+      return h('li', { class: 'area-row' },
+        h('div', { class: 'area-head' },
+          h('strong', {}, AREA_NAME[a.area] || a.area),
+          h('span', { class: 'area-xp' }, `${a.xp} XP`)),
+        h('div', { class: 'area-track' }, h('i', { style: `width:${w}%;background:var(--l${idx % 8})` })),
+        meta.length ? h('small', { class: 'area-meta' }, meta.join(' · ')) : null);
+    }));
+  const areasSec = h('section', { class: 'prog-sec' },
+    h('div', { class: 'prog-sec-head' }, h('h3', {}, t('Progreso por área'))),
+    areaBody);
+
+  // Recent XP events
+  const recent = st.recent || [];
+  const recentSec = recent.length === 0 ? null : h('section', { class: 'prog-sec' },
+    h('div', { class: 'prog-sec-head' }, h('h3', {}, t('Actividad reciente'))),
+    h('ul', { class: 'recent-list' }, recent.map((ev) => {
+      const label = EV_KIND[ev.kind] || ev.kind;
+      const areaLabel = AREA_NAME[ev.area] || ev.area || '';
+      const clickable = ev.topic && nodeOf(ev.topic);
+      const titleEl = clickable
+        ? h('button', { class: 'recent-link', type: 'button', onclick: () => openNote(ev.topic) }, ev.title || ev.topic)
+        : h('span', {}, ev.title || ev.topic || label);
+      return h('li', {},
+        h('div', { class: 'recent-main' },
+          titleEl,
+          h('small', {}, [label, areaLabel, ev.score ? `${ev.score}/100` : '', ev.date].filter(Boolean).join(' · '))),
+        h('span', { class: 'recent-xp' }, `+${ev.xp} XP`));
+    })));
+
+  // Collectible flashcards summary in Progreso
+  const cs = st.cards;
+  const rarOrder = ['common', 'rare', 'epic', 'legendary'];
+  const cardsSec = !cs || !cs.total ? null : h('section', { class: 'prog-sec' },
+    h('div', { class: 'prog-sec-head' },
+      h('h3', {}, t('Colección de tarjetas')),
+      h('span', { class: 'hint' }, t('{got} de {total} coleccionadas', { got: cs.collected || 0, total: cs.total }))),
+    h('div', { class: 'rar-summary' }, rarOrder.map((r) => h('div', { class: `rar-pill rar-${r}` },
+      h('span', { class: 'rar-name' }, RARITY_LABEL[r]),
+      h('strong', {}, `${(cs.byRarity && cs.byRarity[r]) || 0} / ${(cs.totals && cs.totals[r]) || 0}`)))));
+
+  const nvMood = st.goalMet ? 'celebrando' : st.atRisk ? 'preocupado' : st.lostStreak ? 'triste' : st.todayXP > 0 ? 'feliz' : 'mirando';
+  const nvLine = st.goalMet ? Phrases.pick('goalMet')
+    : st.atRisk ? Phrases.pick('atRisk')
+      : st.lostStreak ? Phrases.pick('lostStreak')
+        : Phrases.pick('pet');
+  const nvArt = h('span', { class: 'prog-narval-art', 'aria-hidden': 'true' }, window.Narval ? Narval.svg(nvMood) : null);
+  const nvText = h('strong', {}, nvLine);
+  const nvBanner = window.Narval ? h('button', {
+    class: 'prog-narval', type: 'button',
+    onclick: () => {
+      const m = ['feliz', 'celebrando', 'mirando'][Math.floor(Math.random() * 3)];
+      nvArt.replaceChildren(Narval.svg(m));
+      nvText.textContent = Phrases.pick('pet');
+      flashNarval(m, 3500);
+    },
+  }, nvArt, h('div', { class: 'prog-narval-copy' }, nvText, h('small', {}, t('Pulsa para saludar')))) : null;
+
+  root.replaceChildren(h('div', { class: 'prog' },
+    h('div', { class: 'prog-head' },
+      h('h2', {}, t('Progreso')),
+      h('button', { class: 'btn small ghost', type: 'button', onclick: () => show('settings') }, icon('settings'), t('Meta diaria de XP'))),
+    nvBanner,
+    kpis,
+    cardsSec,
+    calendarSec,
+    areasSec,
+    recentSec));
+}
+
+/* ---------- Practicar & Collectible FSRS Flashcards ---------- */
+const RARITY_LABEL = {
+  common: t('Común'),
+  rare: t('Rara'),
+  epic: t('Épica'),
+  legendary: t('Legendaria'),
+};
+const RARITY_XP = { common: 5, rare: 8, epic: 12, legendary: 18 };
+const CARDS = { data: null, scope: 'guide', revealed: false, busy: false, expanded: null };
+
+/* ---------- Practical Activities (checklist in note + optional AI feedback) ---------- */
+const ACT_LEVEL = { easy: t('Fácil'), medium: t('Media'), challenge: t('Reto') };
+const ACTS = { busySlug: '', openKey: '', sendingKey: '', drafts: {} };
+
+function syncActivities(slug, list) {
+  if (!S.note || S.note.slug !== slug) return;
+  S.note.activities = list || [];
+  renderReader(S.note);
+  renderPractice();
+}
+
+async function generateActivitiesFor(slug, { silent = false } = {}) {
+  if (!slug || ACTS.busySlug === slug) return;
+  ACTS.busySlug = slug;
+  if (S.note && S.note.slug === slug) { renderReader(S.note); renderPractice(); }
+  try {
+    const r = await api(`/api/notes/${encodeURIComponent(slug)}/activities`, { method: 'POST', body: {} });
+    const list = r.activities || [];
+    syncActivities(slug, list);
+    if (!silent) toast(tn(list.length, 'Se generó {n} actividad práctica.', 'Se generaron {n} actividades prácticas.'));
+  } catch (err) {
+    if (!silent) toast(err.message);
+  } finally {
+    if (ACTS.busySlug === slug) ACTS.busySlug = '';
+    if (S.note && S.note.slug === slug) { renderReader(S.note); renderPractice(); }
+  }
+}
+
+function activitiesSection(n, { inPractice = false } = {}) {
+  const list = n.activities || [];
+  const doneCount = list.filter((a) => a.done).length;
+  const busy = ACTS.busySlug === n.slug;
+  const cls = inPractice ? 'p-card act-sec' : 'r-activities act-sec';
+
+  const genBtn = h('button', {
+    class: `btn small${list.length ? ' ghost' : ' primary'}`, type: 'button', disabled: busy,
+    onclick: () => generateActivitiesFor(n.slug),
+  }, icon('sparkles'), busy ? t('Proponiendo actividades…') : list.length ? t('Regenerar actividades') : t('Proponer actividades'));
+
+  const head = h('div', { class: 'act-head' },
+    h('div', { class: 'act-title' },
+      inPractice ? h('h3', {}, t('Actividades prácticas')) : h('h2', {}, t('Actividades prácticas')),
+      list.length ? h('span', { class: 'chip act-prog' }, t('{done} de {total} hechas', { done: doneCount, total: list.length })) : null),
+    genBtn);
+
+  if (list.length === 0) {
+    return h('section', { class: cls },
+      head,
+      h('p', { class: 'hint' }, t('Propón 3–5 ejercicios prácticos, experimentos o mini-proyectos graduados para poner este tema a prueba. Se guardan como checklist en tu nota.')));
+  }
+
+  const updateItem = async (idx, payload, key) => {
+    ACTS.sendingKey = key;
+    if (S.note && S.note.slug === n.slug) { renderReader(S.note); renderPractice(); }
+    try {
+      const r = await api(`/api/notes/${encodeURIComponent(n.slug)}/activities/${idx}`, { method: 'POST', body: payload });
+      const all = r.activities || [];
+      if (payload.wantFeedback) ACTS.openKey = '';
+      delete ACTS.drafts[key];
+      syncActivities(n.slug, all);
+      loadStats();
+      const allDone = all.length > 0 && all.every((a) => a.done);
+      if (r.xpGained > 0) {
+        toast(allDone
+          ? t('¡Todas las actividades completadas! +{xp} XP', { xp: r.xpGained })
+          : t('¡Actividad completada! +{xp} XP', { xp: r.xpGained }));
+        flashNarval(allDone ? 'celebrando' : 'feliz', 5000);
+        if (allDone) narvalSay('celebrando', Phrases.pick('activitiesDone'), { force: true });
+      } else if (payload.wantFeedback) {
+        toast(t('Feedback guardado.'));
+      } else if (payload.submission) {
+        toast(t('Resultado guardado.'));
+      }
+    } catch (err) {
+      toast(err.message);
+    } finally {
+      if (ACTS.sendingKey === key) ACTS.sendingKey = '';
+      if (S.note && S.note.slug === n.slug) { renderReader(S.note); renderPractice(); }
+    }
+  };
+
+  const itemsEl = h('ul', { class: 'act-list' }, list.map((a) => {
+    const key = `${n.slug}:${a.index}`;
+    const lvl = a.level || 'medium';
+    const isOpen = ACTS.openKey === key;
+    const sending = ACTS.sendingKey === key;
+
+    let drawer = null;
+    if (isOpen) {
+      const ta = h('textarea', {
+        class: 'act-input', rows: 3,
+        placeholder: t('Pega aquí lo que observaste, tu cálculo, código o conclusión…'),
+        oninput: (e) => { ACTS.drafts[key] = e.target.value; },
+      });
+      ta.value = ACTS.drafts[key] ?? a.submission ?? '';
+      drawer = h('div', { class: 'act-drawer' },
+        ta,
+        h('div', { class: 'actions' },
+          h('button', {
+            class: 'btn small primary', type: 'button', disabled: sending,
+            onclick: () => {
+              const sub = ta.value.trim();
+              if (!sub) { ta.focus(); return; }
+              updateItem(a.index, { done: true, submission: sub, wantFeedback: true }, key);
+            },
+          }, icon('sparkles'), sending ? t('Evaluando…') : t('Guardar y pedir feedback')),
+          h('button', {
+            class: 'btn small', type: 'button', disabled: sending,
+            onclick: () => {
+              const sub = ta.value.trim();
+              ACTS.openKey = '';
+              updateItem(a.index, { done: true, submission: sub, wantFeedback: false }, key);
+            },
+          }, t('Solo guardar')),
+          h('button', {
+            class: 'btn small ghost', type: 'button', disabled: sending,
+            onclick: () => { ACTS.openKey = ''; renderReader(n); renderPractice(); },
+          }, t('Cancelar'))));
+    }
+
+    return h('li', { class: `act-item lvl-${lvl}${a.done ? ' done' : ''}` },
+      h('div', { class: 'act-row' },
+        h('button', {
+          class: `act-check${a.done ? ' checked' : ''}`, type: 'button', disabled: sending,
+          role: 'checkbox', 'aria-checked': String(!!a.done),
+          'aria-label': a.title || a.prompt,
+          onclick: () => updateItem(a.index, { done: !a.done }, key),
+        }, a.done ? '✓' : ''),
+        h('div', { class: 'act-body' },
+          h('div', { class: 'act-meta' },
+            h('span', { class: `act-lvl lvl-${lvl}` }, ACT_LEVEL[lvl] || lvl),
+            a.kind ? h('span', { class: 'act-kind' }, a.kind) : null,
+            h('span', { class: 'act-xp' }, `+${a.xp || 20} XP`)),
+          h('strong', { class: 'act-name' }, a.title),
+          a.prompt && a.prompt !== a.title ? h('p', { class: 'act-prompt' }, mdInline(a.prompt)) : null),
+        h('button', {
+          class: 'btn small ghost act-reply-btn', type: 'button', disabled: sending,
+          onclick: () => {
+            ACTS.openKey = isOpen ? '' : key;
+            renderReader(n);
+            renderPractice();
+          },
+        }, icon('message-circle'), a.submission ? t('Editar resultado') : t('Enviar resultado'))),
+      a.submission ? h('div', { class: 'act-note act-sub' },
+        h('span', { class: 'act-note-lbl' }, t('Tu resultado')),
+        mdBlock(a.submission)) : null,
+      a.feedback ? h('div', { class: 'act-note act-fb' },
+        h('span', { class: 'act-note-lbl' }, icon('sparkles'), t('Feedback de la IA')),
+        mdBlock(a.feedback)) : null,
+      drawer);
+  }));
+
+  return h('section', { class: cls }, head, itemsEl);
+}
+
+function fmtInterval(mins) {
+  if (!mins || mins < 60) return t('{m} min', { m: Math.max(1, Math.round(mins || 10)) });
+  if (mins < 60 * 24) return t('{h} h', { h: Math.round(mins / 60) });
+  return tn(Math.round(mins / (60 * 24)), '{n} día', '{n} días');
+}
+
 const STEP_RANK = { new: 0, prepared: 1, tested: 2, explained: 3 };
 function renderPractice() {
   const root = PANE_EL.practice;
   if (!root) return;
   root.replaceChildren();
   const n = S.note;
+  const fcHost = h('div', { id: 'fc-host' });
   if (!n) {
-    root.append(h('div', { class: 'panel-empty' }, h('h3', {}, t('Abre una guía para practicar')),
-      h('p', {}, t('Las preguntas, la explicación con tus palabras y el repaso de conceptos trabajan sobre la guía abierta.')), guideList() || ''));
+    root.append(h('div', { class: 'practice' },
+      h('div', { class: 'panel-empty', style: 'padding-top:12px;padding-bottom:18px' }, h('h3', {}, t('Practicar y tarjetas')),
+        h('p', {}, t('Abre una guía para preguntas y método Feynman, o repasa tus tarjetas coleccionables e importa mazos de Anki.')), guideList() || ''),
+      fcHost));
+    loadFlashcards(fcHost, null);
     return;
   }
   const m = n.meta;
@@ -1705,6 +2543,8 @@ function renderPractice() {
       m.mastery ? h('div', { class: 'mastery' }, h('div', { class: 'row' }, h('span', {}, t('Lo que llevas')), h('span', {}, `${m.mastery}/100`)), h('div', { class: 'bar' }, h('i', { style: `width:${m.mastery}%` }))) : null),
     h('ol', { class: 'sequence', 'aria-label': t('Cómo afianzarlo') }, steps.map((s, i) => h('li', {},
       h('span', { class: `step${i === current ? ' go' : ''}`, 'data-state': s.done ? 'done' : i === current ? 'current' : 'todo' }, h('span', { class: 'step-n' }, s.done ? '✓' : String(i + 1)), s.label)))),
+    fcHost,
+    activitiesSection(n, { inPractice: true }),
     h('section', { class: 'p-card' },
       h('h3', {}, t('Preguntas')),
       h('p', { class: 'hint' }, t('Piden razonar o predecir, no memorizar. Se corrigen al final y el resultado queda en la guía.')),
@@ -1717,49 +2557,262 @@ function renderPractice() {
       h('h3', {}, t('Explícamelo tú')),
       h('p', { class: 'hint' }, t('Me lo explicas como a alguien que no sabe nada. Te señalo los huecos y te pregunto lo que preguntaría un novato.')),
       h('button', { class: 'btn primary small', type: 'button', onclick: () => chatAction({ action: 'feynman' }, t('Quiero explicar «{title}»', { title })) }, t('Empezar a explicar'))),
-    flashcards(n),
     h('section', { class: 'p-card' },
       h('h3', {}, t('Simulación')),
       h('p', { class: 'hint' }, t('Una página interactiva para jugar con el tema, aparte de los visuales de la guía.')),
       n.hasSimulation
         ? h('button', { class: 'btn small', type: 'button', onclick: () => openSim(n.slug, title) }, t('Abrir simulación'))
         : h('button', { class: 'btn small', type: 'button', onclick: () => chatAction({ action: 'interactive', brief: '' }, t('Simulación de «{title}»', { title })) }, t('Generar simulación')))));
+  loadFlashcards(fcHost, n);
 }
 
-// Flashcards from the concept notes: the name on the front, "En una frase" on the back. No model call.
-function flashcards(n) {
-  const list = (n.concepts || []).filter((c) => c.exists);
-  const sec = h('section', { class: 'p-card' }, h('h3', {}, t('Repaso de conceptos')));
-  if (!list.length) { sec.append(h('p', { class: 'hint' }, t('Cuando la guía tenga notas de concepto, aquí podrás repasarlas como tarjetas.'))); return sec; }
-  let i = 0, known = 0, seen = 0;
-  const deck = [...list].sort(() => Math.random() - 0.5);
-  const cache = new Map();
-  const card = h('div', { class: 'flash' });
-  const score = h('p', { class: 'hint' });
-  const flip = () => { card.classList.remove('flip'); void card.offsetWidth; card.classList.add('flip'); };
-  function show1() {
-    const c = deck[i];
-    card.replaceChildren(h('p', { class: 'eyebrow' }, t('Tarjeta {n} de {total}', { n: i + 1, total: deck.length })), h('h4', {}, c.title),
-      h('button', { class: 'btn small yellow', type: 'button', onclick: reveal }, t('Dar la vuelta')));
-    score.textContent = seen ? t('Sabías {known} de {seen}.', { known, seen }) : '';
-    async function reveal() {
-      let text = cache.get(c.slug);
-      if (text == null) {
-        try { const full = await api(`/api/notes/${encodeURIComponent(c.slug)}`); text = sectionOf(full.body, 'En una frase') || c.summary || ''; } catch { text = c.summary || ''; }
-        cache.set(c.slug, text);
-      }
-      flip();
-      card.replaceChildren(h('p', { class: 'eyebrow' }, c.title), mdBlock(text || '_Sin resumen._'),
-        h('div', { class: 'actions' },
-          h('button', { class: 'btn small green', type: 'button', onclick: () => next(true) }, t('Lo sabía')),
-          h('button', { class: 'btn small', type: 'button', onclick: () => next(false) }, t('A repasar')),
-          h('button', { class: 'btn small ghost', type: 'button', onclick: () => openNote(c.slug) }, t('Abrir la nota'))));
-    }
+async function loadFlashcards(host, note) {
+  const deckParam = note && CARDS.scope === 'guide' ? `?deck=${encodeURIComponent(note.slug)}` : '';
+  try {
+    CARDS.data = await api(`/api/cards${deckParam}`);
+    CARDS.revealed = false;
+    drawFlashcards(host, note);
+  } catch (err) {
+    host.replaceChildren(h('p', { class: 'hint' }, err.message));
   }
-  function next(ok) { seen++; if (ok) known++; i = (i + 1) % deck.length; flip(); show1(); }
-  sec.append(h('p', { class: 'hint' }, t('Di la idea en una frase antes de dar la vuelta a la tarjeta.')), card, score);
-  show1();
-  return sec;
+}
+
+/* ---------- 3D Trading-Card Cromo tilt & foil sheen ---------- */
+const RARITY_MARK = { common: '◆', rare: '◆◆', epic: '◆◆◆', legendary: '❖' };
+function bindCromoTilt(el, maxDeg = 9) {
+  if (reducedMotion()) return el;
+  el.addEventListener('pointermove', (e) => {
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    const px = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+    const py = Math.max(0, Math.min(1, (e.clientY - r.top) / r.height));
+    el.style.setProperty('--mx', `${(px * 100).toFixed(1)}%`);
+    el.style.setProperty('--my', `${(py * 100).toFixed(1)}%`);
+    el.style.setProperty('--rx', `${((0.5 - py) * maxDeg * 2).toFixed(2)}deg`);
+    el.style.setProperty('--ry', `${((px - 0.5) * maxDeg * 2).toFixed(2)}deg`);
+    el.classList.add('tilting');
+  });
+  el.addEventListener('pointerleave', () => {
+    el.classList.remove('tilting');
+    el.style.setProperty('--rx', '0deg');
+    el.style.setProperty('--ry', '0deg');
+    el.style.setProperty('--mx', '50%');
+    el.style.setProperty('--my', '50%');
+  });
+  return el;
+}
+
+function drawFlashcards(host, note) {
+  const data = CARDS.data;
+  if (!data || !host) return;
+  const queue = data.queue || [];
+  const cards = data.cards || [];
+  const decks = data.decks || [];
+  const activeDeck = note ? decks.find((d) => d.slug === note.slug || d.topic === note.slug) : null;
+  const collected = cards.filter((c) => c.collected).length;
+
+  const importInput = h('input', { type: 'file', accept: '.txt,.tsv,.csv', hidden: true });
+  importInput.addEventListener('change', async () => {
+    const f = importInput.files && importInput.files[0];
+    importInput.value = '';
+    if (!f) return;
+    const fd = new FormData();
+    fd.append('file', f, f.name);
+    try {
+      const r = await api('/api/cards/import', { method: 'POST', body: fd });
+      toast(tn(r.total, 'Importada {n} tarjeta desde Anki.', 'Importadas {n} tarjetas desde Anki.'));
+      CARDS.scope = 'all';
+      await loadFlashcards(host, note);
+      loadStats();
+    } catch (err) { toast(err.message); }
+  });
+
+  const generateMore = async () => {
+    if (!note || CARDS.busy) return;
+    CARDS.busy = true;
+    drawFlashcards(host, note);
+    try {
+      const r = await api('/api/cards/generate', { method: 'POST', body: { slug: note.slug } });
+      const nAdded = r.added ?? r.count ?? 0;
+      toast(nAdded > 0
+        ? tn(nAdded, 'Se añadió {n} carta nueva al mazo.', 'Se añadieron {n} cartas nuevas al mazo.')
+        : t('No aparecieron cartas nuevas esta vez; prueba de nuevo.'));
+      CARDS.scope = 'guide';
+      await loadFlashcards(host, note);
+      loadStats();
+    } catch (err) { toast(err.message); } finally {
+      CARDS.busy = false;
+      drawFlashcards(host, note);
+    }
+  };
+
+  const genBtn = note ? h('button', {
+    class: 'btn small primary', type: 'button', disabled: CARDS.busy, onclick: generateMore,
+  }, icon('sparkles'), CARDS.busy ? t('Generando tarjetas…') : activeDeck ? t('Generar más tarjetas') : t('Generar tarjetas')) : null;
+
+  const exportHref = activeDeck && CARDS.scope === 'guide'
+    ? `/api/cards/export?deck=${encodeURIComponent(activeDeck.slug)}`
+    : '/api/cards/export';
+
+  const scopeSeg = note ? h('div', { class: 'seg', role: 'group', 'aria-label': t('Mazo') },
+    h('button', { type: 'button', 'aria-pressed': String(CARDS.scope === 'guide'), onclick: () => { CARDS.scope = 'guide'; loadFlashcards(host, note); } }, t('Esta guía')),
+    h('button', { type: 'button', 'aria-pressed': String(CARDS.scope === 'all'), onclick: () => { CARDS.scope = 'all'; loadFlashcards(host, note); } }, t('Todos los mazos'))) : null;
+
+  // Review stage: physical 3D trading card (cromo) with pointer tilt, holographic foil, and smooth 180deg flip!
+  let stage;
+  if (queue.length > 0) {
+    const c = queue[0];
+    const rar = c.rarity || 'common';
+    const ivls = c.intervals || {};
+    const idxInAll = Math.max(0, cards.findIndex((x) => x.deck === c.deck && x.id === c.id));
+    const serial = `#${String(idxInAll + 1).padStart(2, '0')} / ${String(Math.max(cards.length, 1)).padStart(2, '0')}`;
+    const rate = async (rating) => {
+      try {
+        const res = await api('/api/cards/review', { method: 'POST', body: { deck: c.deck, cardId: c.id, rating } });
+        if (res.newlyCollected) {
+          toast(t('¡Tarjeta {rarity} coleccionada! +{xp} XP', { rarity: RARITY_LABEL[rar] || rar, xp: res.xpGained }));
+          const big = rar === 'legendary' || rar === 'epic';
+          flashNarval(big ? 'celebrando' : 'feliz', 5000);
+          if (big) narvalSay('celebrando', Phrases.pick('cardCollected'));
+        }
+        await loadFlashcards(host, note);
+        loadStats();
+      } catch (err) { toast(err.message); }
+    };
+
+    const ratingsBar = h('div', { class: `fc-ratings${CARDS.revealed ? ' open' : ''}`, hidden: !CARDS.revealed },
+      h('button', { class: 'btn small fc-r1', type: 'button', onclick: () => rate(1) }, h('strong', {}, t('Otra vez')), h('small', {}, fmtInterval(ivls[1]))),
+      h('button', { class: 'btn small fc-r2', type: 'button', onclick: () => rate(2) }, h('strong', {}, t('Difícil')), h('small', {}, fmtInterval(ivls[2]))),
+      h('button', { class: 'btn small fc-r3', type: 'button', onclick: () => rate(3) }, h('strong', {}, t('Bien')), h('small', {}, fmtInterval(ivls[3]))),
+      h('button', { class: 'btn small fc-r4', type: 'button', onclick: () => rate(4) }, h('strong', {}, t('Fácil')), h('small', {}, fmtInterval(ivls[4]))));
+
+    const flipper = h('div', { class: `cromo-flipper${CARDS.revealed ? ' flipped' : ''}` },
+      // Front face (Question)
+      h('div', { class: 'cromo-face cromo-front' },
+        h('div', { class: 'cromo-foil', 'aria-hidden': 'true' }),
+        h('div', { class: 'cromo-frame' },
+          h('div', { class: 'cromo-top' },
+            h('span', { class: `cromo-rar rar-${rar}` }, h('i', { class: 'cromo-mark' }, RARITY_MARK[rar] || '◆'), RARITY_LABEL[rar] || rar),
+            h('span', { class: 'cromo-xp' }, `+${RARITY_XP[rar] || 5} XP`)),
+          h('div', { class: 'cromo-body fc-front' }, mdBlock(c.front)),
+          h('div', { class: 'cromo-foot' },
+            h('span', { class: 'cromo-deck' }, `${c.deckTitle} · ${serial}`),
+            h('span', { class: 'cromo-cue' }, t('Pulsa para girar ↻'))))),
+      // Back face (Answer)
+      h('div', { class: 'cromo-face cromo-back' },
+        h('div', { class: 'cromo-foil', 'aria-hidden': 'true' }),
+        h('div', { class: 'cromo-frame' },
+          h('div', { class: 'cromo-top' },
+            h('span', { class: `cromo-rar rar-${rar}` }, h('i', { class: 'cromo-mark' }, RARITY_MARK[rar] || '◆'), t('Respuesta')),
+            h('span', { class: 'cromo-cue' }, t('Girar ↺'))),
+          h('div', { class: 'cromo-body fc-back' }, mdBlock(c.back)),
+          h('div', { class: 'cromo-foot' },
+            h('span', { class: 'cromo-deck' }, (c.tags || []).length ? c.tags.map((tg) => `#${tg}`).join(' ') : c.deckTitle),
+            h('span', { class: 'cromo-serial' }, serial)))));
+
+    const toggleFlip = () => {
+      CARDS.revealed = !CARDS.revealed;
+      flipper.classList.toggle('flipped', CARDS.revealed);
+      ratingsBar.hidden = !CARDS.revealed;
+      ratingsBar.classList.toggle('open', CARDS.revealed);
+    };
+    const cromoTilt = bindCromoTilt(h('div', {
+      class: `cromo-tilt rar-${rar}`, role: 'button', tabindex: 0,
+      'aria-label': t('Dar la vuelta'),
+      onclick: toggleFlip,
+      onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleFlip(); } },
+    }, flipper), 8);
+
+    stage = h('div', { class: 'cromo-stage' },
+      h('div', { class: 'cromo-queue-bar' },
+        h('span', { class: 'fc-meta' }, tn(queue.length, '{n} para hoy', '{n} para hoy')),
+        h('button', { class: 'btn small ghost', type: 'button', onclick: toggleFlip }, icon('rotate-ccw'), t('Dar la vuelta'))),
+      cromoTilt,
+      ratingsBar);
+  } else if (cards.length > 0) {
+    stage = h('div', { class: 'fc-done-row' },
+      window.Narval ? h('span', { class: 'fc-done-art', 'aria-hidden': 'true' }, Narval.svg('feliz')) : null,
+      h('div', { class: 'fc-done-copy' },
+        h('p', { class: 'hint fc-done' }, t('¡Al día! No tienes tarjetas pendientes por ahora. Vuelve cuando toque el próximo repaso.')),
+        note ? h('button', { class: 'btn small', type: 'button', disabled: CARDS.busy, onclick: generateMore }, icon('sparkles'), t('Generar más tarjetas')) : null));
+  } else {
+    stage = h('p', { class: 'hint' }, t('Genera tarjetas coleccionables desde la guía o importa un mazo de Anki (.txt) para empezar a repasar con FSRS.'));
+  }
+
+  // Collectible Binder Album: mini 3D flip-and-tilt cromos!
+  const albumSec = cards.length === 0 ? null : h('div', { class: 'fc-album' },
+    h('div', { class: 'fc-album-head' },
+      h('strong', {}, t('Colección')),
+      h('span', { class: 'hint' }, t('{got} de {total} coleccionadas', { got: collected, total: cards.length }))),
+    h('div', { class: 'fc-grid' }, cards.map((c, idx) => {
+      const rar = c.rarity || 'common';
+      const serial = `#${String(idx + 1).padStart(2, '0')}`;
+      if (!c.collected) {
+        return h('div', { class: `cromo-mini locked rar-${rar}`, 'aria-label': t('Por coleccionar') },
+          h('div', { class: 'cromo-mini-frame' },
+            h('div', { class: 'cromo-mini-top' },
+              h('span', { class: `cromo-rar rar-${rar}` }, RARITY_MARK[rar] || '◆'),
+              h('span', { class: 'cromo-serial' }, serial)),
+            h('div', { class: 'fc-tile-locked' },
+              h('span', {}, RARITY_MARK[rar] || '?'),
+              h('small', {}, RARITY_LABEL[rar] || rar),
+              h('small', {}, t('Por coleccionar')))));
+      }
+      const key = `${c.deck}:${c.id}`;
+      const isFlipped = CARDS.expanded === key;
+      const miniFlip = h('div', { class: `cromo-flipper${isFlipped ? ' flipped' : ''}` },
+        h('div', { class: 'cromo-face cromo-front cromo-mini-face' },
+          h('div', { class: 'cromo-foil', 'aria-hidden': 'true' }),
+          h('div', { class: 'cromo-mini-frame' },
+            h('div', { class: 'cromo-mini-top' },
+              h('span', { class: `cromo-rar rar-${rar}` }, RARITY_MARK[rar] || '◆', ' ', RARITY_LABEL[rar] || rar),
+              h('span', { class: 'cromo-serial' }, serial)),
+            h('strong', { class: 'cromo-mini-q' }, c.front),
+            h('span', { class: 'cromo-mini-cue' }, '↻'))),
+        h('div', { class: 'cromo-face cromo-back cromo-mini-face' },
+          h('div', { class: 'cromo-foil', 'aria-hidden': 'true' }),
+          h('div', { class: 'cromo-mini-frame' },
+            h('div', { class: 'cromo-mini-top' },
+              h('span', { class: `cromo-rar rar-${rar}` }, t('Respuesta')),
+              h('span', { class: 'cromo-serial' }, serial)),
+            h('p', { class: 'cromo-mini-a' }, c.back),
+            h('span', { class: 'cromo-mini-cue' }, '↺'))));
+      const tile = bindCromoTilt(h('button', {
+        type: 'button',
+        class: `cromo-mini unlocked rar-${rar}`,
+        onclick: () => {
+          const nowFlipped = !miniFlip.classList.contains('flipped');
+          miniFlip.classList.toggle('flipped', nowFlipped);
+          CARDS.expanded = nowFlipped ? key : null;
+        },
+      }, miniFlip), 10);
+      return tile;
+    })));
+
+  // Imported / unguided decks -> one-click "Crear guía" (with concepts left in pending iceberg!)
+  const unguided = decks.filter((d) => !d.hasGuide);
+  const ankiGuidesSec = unguided.length === 0 ? null : h('div', { class: 'fc-anki-decks' },
+    h('strong', {}, t('Mazos sin guía')),
+    h('p', { class: 'hint' }, t('Crea una guía a partir de tus tarjetas importadas; los conceptos previos quedarán bajo el agua en el iceberg para explicarlos cuando quieras.')),
+    h('ul', { class: 'fc-deck-list' }, unguided.map((d) => h('li', {},
+      h('div', {}, h('strong', {}, d.title), h('small', {}, tn(d.total, '{n} tarjeta', '{n} tarjetas'))),
+      h('button', {
+        class: 'btn small primary', type: 'button',
+        onclick: () => chatAction({ action: 'deck-guide', deck: d.slug }, t('Crear guía desde el mazo «{title}»', { title: d.title })),
+      }, icon('sparkles'), t('Crear guía'))))));
+
+  host.replaceChildren(h('section', { class: 'p-card fc-studio' },
+    h('div', { class: 'fc-head' },
+      h('h3', {}, t('Tarjetas coleccionables')),
+      scopeSeg),
+    h('div', { class: 'actions fc-tools' },
+      genBtn,
+      h('button', { class: 'btn small', type: 'button', onclick: () => importInput.click() }, icon('download'), t('Importar Anki')),
+      decks.length ? h('a', { class: 'btn small ghost', href: exportHref, download: '' }, icon('external-link'), t('Exportar a Anki')) : null,
+      importInput),
+    stage,
+    albumSec,
+    ankiGuidesSec));
 }
 
 /* ---------- Mapa ---------- */
@@ -1775,11 +2828,16 @@ function cyStyle() {
       'z-index-compare': 'manual', 'z-index': 10, 'overlay-opacity': 0, 'transition-property': 'opacity, background-color', 'transition-duration': '200ms' } },
     { selector: 'node[kind = "concept"]', style: { width: 12, height: 12, 'border-width': 2, 'font-size': 11.5, 'font-weight': 500 } },
     { selector: 'node[kind = "pending"]', style: { width: 10, height: 10, 'border-width': 1.5, 'border-style': 'dashed', 'border-color': muted, 'background-color': surface, color: muted, 'font-size': 11, 'font-weight': 400 } },
+    // a concept several guides stand on: one node, ringed, with an edge to each guide
+    { selector: 'node[shared > 1]', style: { width: 15, height: 15, 'outline-width': 2, 'outline-color': muted, 'outline-offset': 2, 'outline-opacity': .8 } },
+    { selector: '.gone', style: { display: 'none' } },
     { selector: 'edge', style: {
       width: 3, 'line-color': lineOf(-1), 'curve-style': 'bezier', 'line-cap': 'round', opacity: .75,
       'z-index-compare': 'manual', 'z-index': 1, 'overlay-opacity': 0 } },
     { selector: 'edge[kind="related"]', style: { 'line-style': 'dashed', width: 1.2, opacity: .45, 'line-color': muted } },
     { selector: 'edge[pend = 1]', style: { 'line-style': 'dotted', width: 1.5, 'line-color': line, opacity: 1 } },
+    // from a concept to a guide drawn in another block: bowed, so it does not run over the nodes between
+    { selector: 'edge[cross = 1]', style: { 'curve-style': 'unbundled-bezier', 'control-point-distances': 70, 'control-point-weights': .5 } },
     { selector: 'node.grouplabel', style: {
       width: 1, height: 1, 'background-opacity': 0, 'border-width': 0, label: 'data(label)', 'font-size': 15, 'font-weight': 700,
       color: ink, 'text-halign': 'right', 'text-valign': 'center', 'text-margin-x': 6, 'text-wrap': 'none', 'text-background-opacity': 0, events: 'no' } },
@@ -1861,6 +2919,37 @@ async function loadGraph() {
   await drawMap();
 }
 
+let mapSelectedNode = null;
+function hideMapNodeBar() {
+  mapSelectedNode = null;
+  const bar = $('#map-node-bar');
+  if (bar) bar.hidden = true;
+}
+function showMapNodeBar(node) {
+  const bar = $('#map-node-bar');
+  if (!bar || !node || node.hasClass('grouplabel')) { hideMapNodeBar(); return; }
+  const id = node.id();
+  const label = node.data('label') || id;
+  const kind = node.data('kind') || 'guide';
+  if (kind === 'pending') { hideMapNodeBar(); return; }
+  mapSelectedNode = { id, label, kind };
+  bar.replaceChildren(
+    h('span', { class: 'map-node-kind' }, kind === 'concept' ? t('Concepto') : t('Guía')),
+    h('span', { class: 'map-node-name', title: label }, label),
+    h('button', { class: 'btn small', type: 'button', onclick: () => openNote(id, { quiet: false }) }, icon('book-open'), t('Abrir')),
+    h('button', { class: 'btn small ghost ghost-danger', type: 'button', onclick: () => deleteNote(id, label, kind) }, icon('trash-2'), t('Borrar')),
+    h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('Cerrar'), onclick: hideMapNodeBar }, icon('x')));
+  bar.hidden = false;
+}
+document.addEventListener('keydown', (e) => {
+  if ((e.key === 'Delete' || e.key === 'Backspace') && mapSelectedNode && isShown('map')) {
+    const tag = (document.activeElement && document.activeElement.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    e.preventDefault();
+    deleteNote(mapSelectedNode.id, mapSelectedNode.label, mapSelectedNode.kind);
+  }
+});
+
 // The map shows the chat that is open, or every chat: S.graph stays the whole vault either way.
 S.mapScope = store.get('mapScope', 'chat');
 async function drawMap() {
@@ -1872,6 +2961,7 @@ async function drawMap() {
     if ((S.run && S.run.id) !== chatID) return; // the chat changed meanwhile
   }
   for (const b of $$('#map-scope button')) b.setAttribute('aria-pressed', String(b.dataset.scope === S.mapScope));
+  renderMapHide();
   const emptyChat = S.mapScope === 'chat' && !g.nodes.length;
   $('#map-empty').hidden = g.nodes.length > 0;
   $('#map-empty-title').textContent = emptyChat ? t('Esta conversación aún no tiene guías') : t('Tu mapa está vacío');
@@ -1885,25 +2975,38 @@ async function drawMap() {
   const lineOf = (k) => (S.lines.has(k) ? S.lines.get(k) : -1);
   const lineOfNode = new Map(g.nodes.map((n) => [n.id, lineOf(n.group)]));
   const kindOf = new Map(g.nodes.map((n) => [n.id, n.kind]));
+  const groupOf = new Map(g.nodes.map((n) => [n.id, n.group]));
   if (!S.cy) {
     S.cy = cytoscape({ container: $('#cy'), elements: [], style: cyStyle(), minZoom: .15, maxZoom: 3 });
     S.cy.on('tap', 'node', (ev) => {
       const n = ev.target;
       if (n.hasClass('grouplabel')) return;
-      if (n.data('kind') === 'pending') explainConcept(n.id(), { guide: (n.data('grp') || '').replace(/^g:/, '') || S.guide, title: n.data('label') });
-      else openNote(n.id(), { quiet: false });
+      if (n.data('kind') === 'pending') {
+        hideMapNodeBar();
+        explainConcept(n.id(), { guide: (n.data('grp') || '').replace(/^g:/, '') || S.guide, title: n.data('label') });
+      } else {
+        showMapNodeBar(n);
+        openNote(n.id(), { quiet: false });
+      }
     });
+    S.cy.on('cxttap', 'node', (ev) => {
+      const n = ev.target;
+      if (n.hasClass('grouplabel')) return;
+      n.select();
+      showMapNodeBar(n);
+    });
+    S.cy.on('tap', (ev) => { if (ev.target === S.cy) hideMapNodeBar(); });
     new ResizeObserver(() => fitMap()).observe($('#cy'));
   }
   if (same) {
-    for (const n of g.nodes) S.cy.getElementById(n.id).data({ status: n.status, label: n.label, line: lineOfNode.get(n.id) });
+    for (const n of g.nodes) S.cy.getElementById(n.id).data({ status: n.status, label: n.label, line: lineOfNode.get(n.id), shared: n.shared || 0, foreign: n.foreign ? 1 : 0 });
   } else {
     S.cy.elements().remove();
     const { pos, labels } = layeredLayout(g);
     S.cy.add([
-      ...g.nodes.map((n) => ({ group: 'nodes', data: { id: n.id, label: n.label, status: n.status, kind: n.kind, grp: n.group, line: lineOfNode.get(n.id) }, position: pos[n.id] })),
+      ...g.nodes.map((n) => ({ group: 'nodes', data: { id: n.id, label: n.label, status: n.status, kind: n.kind, grp: n.group, line: lineOfNode.get(n.id), shared: n.shared || 0, foreign: n.foreign ? 1 : 0 }, position: pos[n.id] })),
       ...labels.map((l) => ({ group: 'nodes', data: { id: `gl:${l.group}`, label: l.label, grp: l.group, line: lineOf(l.group) }, position: { x: l.x, y: l.y }, classes: 'grouplabel', selectable: false, grabbable: false })),
-      ...g.edges.map((e, i) => ({ group: 'edges', data: { id: `e${i}`, source: e.from, target: e.to, kind: e.kind, line: lineOfNode.get(e.to), pend: kindOf.get(e.from) === 'pending' || kindOf.get(e.to) === 'pending' ? 1 : 0 } })),
+      ...g.edges.map((e, i) => ({ group: 'edges', data: { id: `e${i}`, source: e.from, target: e.to, kind: e.kind, line: lineOfNode.get(e.to), pend: kindOf.get(e.from) === 'pending' || kindOf.get(e.to) === 'pending' ? 1 : 0, cross: groupOf.get(e.from) !== groupOf.get(e.to) ? 1 : 0 } })),
     ]);
     S.needsFit = g.nodes.length > 0;
     fitMap();
@@ -1917,6 +3020,24 @@ for (const b of $$('#map-scope button')) {
   b.addEventListener('click', () => { S.mapScope = b.dataset.scope; store.set('mapScope', S.mapScope); drawMap(); });
 }
 $('#map-see-all').addEventListener('click', () => { S.mapScope = 'all'; store.set('mapScope', 'all'); drawMap(); });
+
+// What the map leaves out: the concepts still to explain, and (in a chat's map) the concepts
+// another conversation wrote that this one only links.
+S.mapHide = { pending: false, foreign: false, ...store.get('mapHide', {}) };
+function renderMapHide() {
+  for (const b of $$('#map-hide button')) {
+    b.setAttribute('aria-pressed', String(!!S.mapHide[b.dataset.hide]));
+    if (b.dataset.hide === 'foreign') b.hidden = S.mapScope !== 'chat';
+  }
+}
+for (const b of $$('#map-hide button')) {
+  b.addEventListener('click', () => {
+    S.mapHide[b.dataset.hide] = !S.mapHide[b.dataset.hide];
+    store.set('mapHide', S.mapHide);
+    renderMapHide();
+    applyFilters();
+  });
+}
 
 // Cytoscape cannot fit a graph into a hidden panel, so a new layout waits until the map is on screen.
 function fitMap() {
@@ -1948,6 +3069,7 @@ function applyFilters() {
       const okQ = !q || slugify(n.data('label')).includes(q) || n.id().includes(q);
       const okR = !S.filter || n.data('grp') === S.filter;
       n.toggleClass('dim', !(okQ && okR));
+      n.toggleClass('gone', (S.mapHide.pending && n.data('kind') === 'pending') || (S.mapHide.foreign && S.mapScope === 'chat' && n.data('foreign') === 1));
     });
     S.cy.edges().forEach((e) => e.toggleClass('dim', e.source().hasClass('dim') || e.target().hasClass('dim')));
   });
@@ -1983,8 +3105,157 @@ function resetTranscript() {
   requestAnimationFrame(() => T.anim?.enable());
 }
 
+/* ---------- Narval mascot state & onboarding tutorial ---------- */
+const NARVAL = { mood: 'normal', flash: '', flashTimer: 0, sleeping: false, idleTimer: 0, phase: '', popTimer: 0, lastPop: 0, warnedRisk: false };
+const IDLE_SLEEP_MS = 4 * 60 * 1000;
+const NARVAL_POP_COOLDOWN_MS = 12 * 1000;
+
+function pickNarvalMood() {
+  if (NARVAL.flash) return NARVAL.flash;
+  if (S.working) return (NARVAL.phase === 'quiz' || NARVAL.phase === 'feynman') ? 'concentrado' : 'estudiando';
+  if (NARVAL.sleeping) return 'dormido';
+  const st = S.stats;
+  if (st) {
+    if (st.goalMet) return 'feliz';
+    if (st.atRisk) return 'preocupado';
+    if (st.lostStreak) return 'triste';
+  }
+  return (S.graph && S.graph.nodes && S.graph.nodes.length === 0) ? 'mirando' : 'normal';
+}
+
+function renderNarval() {
+  if (!window.Narval) return;
+  const mood = pickNarvalMood();
+  NARVAL.mood = mood;
+  const hdr = $('#hdr-narval');
+  if (hdr) hdr.replaceChildren(Narval.svg(mood));
+  const wel = $('#welcome-narval');
+  if (wel) wel.replaceChildren(Narval.svg(mood));
+  const wk = $('#working-narval');
+  if (wk) wk.replaceChildren(Narval.svg((NARVAL.phase === 'quiz' || NARVAL.phase === 'feynman') ? 'concentrado' : 'estudiando'));
+  const mapEmpty = $('#map-empty-narval');
+  if (mapEmpty && !mapEmpty.firstChild) mapEmpty.replaceChildren(Narval.svg('mirando'));
+}
+
+function narvalSay(mood, text, { ms = 5500, force = false } = {}) {
+  const pop = $('#narval-pop');
+  if (!pop || !window.Narval || !text) return;
+  const now = Date.now();
+  if (!force && now - NARVAL.lastPop < NARVAL_POP_COOLDOWN_MS) return;
+  NARVAL.lastPop = now;
+  clearTimeout(NARVAL.popTimer);
+  pop.replaceChildren(
+    h('span', { class: 'narval-pop-art', 'aria-hidden': 'true' }, Narval.svg(mood || 'feliz')),
+    h('span', { class: 'narval-pop-text' }, text));
+  pop.hidden = false;
+  pop.onclick = () => { clearTimeout(NARVAL.popTimer); pop.hidden = true; };
+  NARVAL.popTimer = setTimeout(() => { pop.hidden = true; }, ms);
+}
+
+function flashNarval(mood, ms = 7000) {
+  clearTimeout(NARVAL.flashTimer);
+  NARVAL.flash = mood;
+  renderNarval();
+  NARVAL.flashTimer = setTimeout(() => { NARVAL.flash = ''; renderNarval(); }, ms);
+}
+
+function resetNarvalIdle() {
+  clearTimeout(NARVAL.idleTimer);
+  if (NARVAL.sleeping) {
+    NARVAL.sleeping = false;
+    renderNarval();
+    narvalSay('mirando', Phrases.pick('wakeUp'));
+  }
+  NARVAL.idleTimer = setTimeout(() => {
+    if (!S.working) { NARVAL.sleeping = true; renderNarval(); }
+  }, IDLE_SLEEP_MS);
+}
+for (const ev of ['pointerdown', 'keydown']) window.addEventListener(ev, resetNarvalIdle, { passive: true });
+resetNarvalIdle();
+
+const TUTORIAL_STEPS = () => [
+  {
+    mood: 'feliz',
+    title: t('¡Hola! Soy tu compañero de estudio'),
+    text: t('Pregúntame cualquier tema en el chat o pídeme una guía. También puedes adjuntar apuntes o imágenes y armo guías con visuales interactivos.'),
+  },
+  {
+    mood: 'mirando',
+    title: t('El iceberg de conceptos'),
+    text: t('Cada guía mapea lo que da por sabido, nivel por nivel. Elige cuántos niveles escribir al inicio y usa «Bajar un nivel más» cuando necesites ir más hondo.'),
+  },
+  {
+    mood: 'estudiando',
+    title: t('Un mapa que se conecta solo'),
+    text: t('Todas tus guías y conceptos aparecen conectados en el panel Mapa. Si dos temas comparten una base, se reutiliza la misma nota automáticamente.'),
+  },
+  {
+    mood: 'concentrado',
+    title: t('Practica y explícalo con tus palabras'),
+    text: t('En Practicar tienes preguntas de razonamiento y el método Feynman. En un roadmap, aprobar un tema desbloquea el siguiente.'),
+  },
+  {
+    mood: 'celebrando',
+    title: t('Racha, XP y congeladores'),
+    text: t('Cada guía, lectura, concepto y práctica suma XP hacia tu meta diaria. Cada 7 días seguidos ganas un congelador por si algún día faltas.'),
+  },
+  {
+    mood: 'normal',
+    title: t('Ordena los paneles a tu gusto'),
+    text: t('Los paneles están fijos para que nada se mueva por accidente. Cuando quieras dividir la pantalla o mover pestañas, abre el menú de paneles y pulsa «Editar diseño».'),
+  },
+];
+
+let tutIndex = 0;
+function drawTutorialStep() {
+  const steps = TUTORIAL_STEPS();
+  tutIndex = Math.max(0, Math.min(steps.length - 1, tutIndex));
+  const st = steps[tutIndex];
+  $('#tut-step-label').textContent = t('Paso {n} de {total}', { n: tutIndex + 1, total: steps.length });
+  $('#tut-art').replaceChildren(window.Narval ? Narval.svg(st.mood) : '');
+  $('#tut-title').textContent = st.title;
+  $('#tut-text').textContent = st.text;
+  $('#tut-dots').replaceChildren(...steps.map((_, i) => h('i', { class: i === tutIndex ? 'on' : null })));
+  $('#tut-prev').hidden = tutIndex === 0;
+  $('#tut-next').textContent = tutIndex === steps.length - 1 ? t('Empezar') : t('Siguiente');
+}
+function closeTutorial() {
+  const dlg = $('#tutorial-dialog');
+  if (dlg && dlg.open) dlg.close();
+  if (S.stats) S.stats.tutorialSeen = true;
+  api('/api/tutorial/seen', { method: 'POST', body: {} }).catch(() => {});
+}
+function openTutorial(force = false) {
+  const dlg = $('#tutorial-dialog');
+  if (!dlg) return;
+  if (!force && S.stats && S.stats.tutorialSeen) return;
+  tutIndex = 0;
+  drawTutorialStep();
+  if (!dlg.open) dlg.showModal();
+}
+$('#tut-prev').addEventListener('click', () => { tutIndex--; drawTutorialStep(); });
+$('#tut-next').addEventListener('click', () => {
+  if (tutIndex >= TUTORIAL_STEPS().length - 1) closeTutorial();
+  else { tutIndex++; drawTutorialStep(); }
+});
+$('#tut-skip').addEventListener('click', closeTutorial);
+$('#tutorial-dialog').addEventListener('cancel', (e) => { e.preventDefault(); closeTutorial(); });
+
 function emptyState() {
+  const sayEl = h('p', { class: 'welcome-say', hidden: true });
+  const pet = () => {
+    const reactions = ['feliz', 'celebrando', 'mirando'];
+    flashNarval(reactions[Math.floor(Math.random() * reactions.length)], 3200);
+    sayEl.textContent = Phrases.pick('pet');
+    sayEl.hidden = false;
+  };
+  const narvalBtn = h('button', {
+    class: 'welcome-narval', type: 'button', id: 'welcome-narval',
+    'aria-label': t('Saludar al narval'), title: t('Saludar al narval'), onclick: pet,
+  }, window.Narval ? Narval.svg(pickNarvalMood()) : null);
   return h('div', { class: 'chat-empty' },
+    narvalBtn,
+    sayEl,
     h('p', { class: 'eyebrow' }, 'StudyHomie'),
     h('h1', {}, Phrases.welcome()),
     h('p', { class: 'lead' }, t('Pregunta lo que sea o pide una guía: te explico el tema y lo que da por sabido, hasta lo básico.')),
@@ -2056,6 +3327,8 @@ function addMsg(cls, content) {
 
 let workingTimer;
 function setWorking(on, text) {
+  S.working = !!on;
+  if (!on) NARVAL.phase = '';
   $('#working').hidden = !on;
   if (text) $('#working-text').textContent = text;
   // a long wait reads better when the phrase changes now and then
@@ -2065,6 +3338,7 @@ function setWorking(on, text) {
   }
   $('#btn-cancel').hidden = !on;
   $('#session-dot').hidden = !on;
+  renderNarval();
 }
 
 // Questions with a closed set of answers are asked with buttons instead of a text box.
@@ -2248,7 +3522,7 @@ $('#material-input').addEventListener('change', async (e) => {
   } catch (err) { toast(err.message); setWorking(false); } finally { e.target.value = ''; }
 });
 
-// "write now": 0 (the guide alone) to 4 (down to the basics); the rest is mapped either way
+// "write now": 0 (the guide alone) to 4 levels of concept notes; the iceberg maps that far, and digging goes further
 function renderDepth() {
   $('#depth-stations').replaceChildren(...DEPTH.map((label, d) => h('button', {
     type: 'button', role: 'radio', 'aria-checked': String(d === S.depth), class: d <= S.depth ? 'on' : null,
@@ -2263,7 +3537,9 @@ function scoreTone(score) { return score >= 70 ? 'good' : score >= 40 ? 'mid' : 
 
 function renderCard(c, run) {
   switch (c.kind) {
-    case 'phase': break;
+    case 'phase':
+      if (!run.replay) { NARVAL.phase = c.phase || ''; renderNarval(); }
+      break;
     case 'status': if (!run.replay && !run.done) setWorking(true, c.detail); break;
     case 'plan': T.plan = planCard(c.plan, run); addMsg('card', T.plan.el); break;
     case 'progress': progressCard(c.items); break;
@@ -2275,7 +3551,16 @@ function renderCard(c, run) {
         h('div', { class: 'actions' },
           h('button', { class: 'btn small primary', type: 'button', onclick: () => openNote(c.slug) }, icon('book-open'), t('Leer la guía')),
           h('button', { class: 'btn small', type: 'button', onclick: async () => { await openNote(c.slug, { quiet: true }); show('concepts'); } }, icon('mountain-snow'), t('Ver el iceberg')))));
-      if (!run.replay) loadGraph().catch(() => {}).then(() => openNote(c.slug));
+      if (!run.replay) {
+        flashNarval('celebrando', 7000);
+        narvalSay('celebrando', Phrases.pick('guideReady'));
+        loadGraph().catch(() => {}).then(async () => {
+          await openNote(c.slug);
+          if (S.note && S.note.slug === c.slug && !(S.note.activities && S.note.activities.length)) {
+            generateActivitiesFor(c.slug, { silent: true });
+          }
+        });
+      }
       break;
     case 'roadmap': {
       const rm = { slug: c.slug, title: c.topic, pass: c.score, steps: c.steps || [] };
@@ -2304,7 +3589,12 @@ function renderCard(c, run) {
       addMsg('card', h('div', { class: `rich rich-score tone-${tone}` },
         h('div', { class: 'score-ring', style: `--p:${Math.max(0, Math.min(100, c.score))}`, role: 'img', 'aria-label': t('{score} de 100', { score: c.score }) }, h('span', {}, c.score)),
         h('div', {}, h('strong', {}, `${c.label}: ${verdict}`), c.detail && h('div', { class: 'hint' }, c.detail))));
-      if (!run.replay) loadGraph().catch(() => {}).then(() => reloadGuide()); // the score may unlock the next topic
+      if (!run.replay) {
+        const m = tone === 'good' ? 'celebrando' : tone === 'mid' ? 'feliz' : 'desanimado';
+        flashNarval(m, 7000);
+        narvalSay(m, Phrases.pick(tone === 'low' ? 'lowScore' : 'goodScore'));
+        loadGraph().catch(() => {}).then(() => reloadGuide()); // the score may unlock the next topic
+      }
       break;
     }
     case 'resources':
@@ -2424,20 +3714,26 @@ function progressCard(items) {
 }
 
 function questionCard(c, run) {
-  const card = h('div', { class: 'rich rich-question' },
-    h('div', { class: 'rich-eyebrow' }, c.total ? `Pregunta ${c.n} de ${c.total}` : t('Pregunta')),
-    h('p', { class: 'q-text' }, c.question));
+  const qEl = mdBlock(c.question || '', { breaks: true });
+  qEl.classList.add('q-text');
+  const card = h('div', { class: `rich rich-question${c.label ? ' is-exercise' : ''}` },
+    h('div', { class: 'rich-eyebrow' },
+      c.total ? `Pregunta ${c.n} de ${c.total}` : t('Pregunta'),
+      c.label ? h('span', { class: 'q-tag' }, c.label) : null),
+    qEl);
   if (!c.choices || !c.choices.length) return card;
   const state = { answered: false, buttons: [] };
   const list = h('div', { class: 'choices', role: 'group', 'aria-label': t('Opciones') });
   for (const choice of c.choices) {
+    const chEl = mdBlock(choice, { breaks: false });
+    chEl.classList.add('choice-md');
     const b = h('button', { type: 'button', class: 'choice', disabled: run.replay || null, onclick: () => {
       if (state.answered || S.run !== run || run.done) return;
       state.answered = true;
       b.classList.add('picked');
       state.buttons.forEach((x) => { x.disabled = true; });
       sendReply(choice);
-    } }, choice);
+    } }, chEl);
     state.buttons.push(b);
     list.append(b);
   }
@@ -2478,7 +3774,11 @@ function handleEvent(run, e) {
       const known = (T.echo && T.echo.reply === e.text && T.echo) || ((run.lastAsk && quickOptions(run.lastAsk)) || []).find((o) => o.reply === e.text);
       T.echo = null;
       const shown = known ? known.label : /^\{.*"go":true/.test(e.text) ? t('Escribir con estos cambios') : e.text;
-      addMsg('user', mdBlock(shown, { breaks: true }));
+      const msg = addMsg('user', mdBlock(shown, { breaks: true }));
+      if (e.params && e.params.length) {
+        msg.append(h('div', { class: 'msg-params' }, e.params.map((p) => h('span', { class: 'msg-param' },
+          p.icon ? icon(p.icon) : null, h('span', {}, p.text)))));
+      }
       if (!run.replay) setWorking(true, Phrases.pick('thinking'));
       break;
     }
@@ -2514,7 +3814,13 @@ function finishRun(run, e) {
   closeBubble();
   closeChoices();
   setWorking(false);
-  if (e.error) addMsg('bot error', t(e.error));
+  if (e.error) {
+    addMsg('bot error', t(e.error));
+    if (!run.replay) {
+      flashNarval('sorprendido', 7000);
+      narvalSay('sorprendido', Phrases.pick('error'));
+    }
+  }
   if (!$('#transcript').children.length) $('#transcript').append(emptyState());
   setComposer('chat'); // writing again continues this chat
   if (!run.replay) { loadChats(); refresh(); }
@@ -2579,6 +3885,7 @@ async function refresh() {
   await loadGraph().catch((err) => toast(err.message));
   if (S.guide) await reloadGuide(); else { renderReader(null); renderConcepts(); renderPractice(); }
   renderChats();
+  await loadStats();
 }
 
 // The first time, the app speaks the browser's language (one of those it knows) and remembers it.
@@ -2606,6 +3913,7 @@ async function boot() {
     checkUpdate();
     setInterval(checkUpdate, 60 * 60 * 1000);
     await refresh();
+    if (S.stats && !S.stats.tutorialSeen && !/^#open\//.test(location.hash)) openTutorial(false);
     await loadChats();
     if (S.info.activeRun) {
       const me = S.chats.find((r) => r.id === S.info.activeRun);

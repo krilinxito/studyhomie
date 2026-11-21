@@ -4,7 +4,7 @@
  * The model writes a JSON spec; the Go side (internal/viz) has already checked it.
  * plot and transform2d draw with JSXGraph, loaded the first time a note needs it.
  * steps, sample and predict are plain DOM/SVG. */
-const Viz = (() => {
+const Viz = (window.Viz = (() => {
   // the page's t() (i18n.js), under a name the token and time variables below do not hide
   const tr = (msg, vars) => window.t(msg, vars);
   /* ---------- expressions (same language as internal/viz/expr.go) ---------- */
@@ -463,24 +463,130 @@ const Viz = (() => {
   }
 
   /* ---------- html: a page built on demand ---------- */
+  function currentTheme(ctx) {
+    if (ctx && typeof ctx.theme === 'function') return ctx.theme();
+    return document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  }
+  function frameURL(src, theme, bust) {
+    const clean = String(src || '').replace(/^\/+/, '');
+    const q = new URLSearchParams();
+    if (theme === 'dark' || theme === 'light') q.set('theme', theme);
+    if (bust) q.set('v', String(bust));
+    const qs = q.toString();
+    return `/${clean}${qs ? '?' + qs : ''}`;
+  }
+
   function html(spec, ctx) {
     const { fig, body, controls } = frame(spec, 'html');
-    const show = (src) => {
-      body.replaceChildren(h('iframe', { class: 'viz-frame', src: `/${src}`, sandbox: 'allow-scripts', title: spec.title || tr('Visual interactivo'), referrerpolicy: 'no-referrer', loading: 'lazy' }));
+    const head = fig.querySelector('.viz-head');
+    const actions = h('div', { class: 'viz-actions' });
+    head.append(actions);
+    const statusBar = h('div', { class: 'viz-status', hidden: true });
+
+    let currentSrc = spec.src || '';
+    let iframe = null;
+    let autoRetried = false;
+    let busy = false;
+    let onMsg = null;
+
+    function detachMsg() {
+      if (onMsg) { window.removeEventListener('message', onMsg); onMsg = null; }
+    }
+    function setStatus(text, { err = false, retry = null } = {}) {
+      if (!text) { statusBar.hidden = true; statusBar.replaceChildren(); return; }
+      statusBar.className = `viz-status${err ? ' err' : ''}`;
+      statusBar.replaceChildren(
+        h('span', {}, text),
+        retry ? h('button', { class: 'btn small', type: 'button', onclick: retry }, tr('Reintentar')) : null,
+      );
+      statusBar.hidden = false;
+    }
+
+    async function rebuild({ force = false, fixError = '' } = {}) {
+      if (busy || !ctx) return;
+      const fn = fixError ? (ctx.fix || ctx.regenerate) : (force ? ctx.regenerate : ctx.generate);
+      if (!fn) return;
+      busy = true;
+      setStatus(fixError
+        ? tr('Detecté un error en el visual; intentando corregirlo…')
+        : tr('Construyendo el visual, puede tardar un par de minutos…'));
+      try {
+        const nextSrc = await fn(spec, fixError);
+        spec.src = nextSrc;
+        show(nextSrc, Date.now());
+      } catch (err) {
+        setStatus(err.message || tr('No pude corregir el visual.'), { err: true, retry: () => rebuild({ force: true }) });
+      } finally {
+        busy = false;
+      }
+    }
+
+    function show(src, bust) {
+      detachMsg();
+      currentSrc = src;
+      setStatus('');
+      iframe = h('iframe', {
+        class: 'viz-frame',
+        src: frameURL(src, currentTheme(ctx), bust),
+        sandbox: 'allow-scripts',
+        title: spec.title || tr('Visual interactivo'),
+        referrerpolicy: 'no-referrer',
+        loading: 'lazy',
+      });
+      body.replaceChildren(iframe, statusBar);
       controls.replaceChildren();
-    };
+
+      actions.replaceChildren(
+        ctx && ctx.expand ? h('button', {
+          class: 'icon-btn', type: 'button', title: tr('Abrir en grande'), 'aria-label': tr('Abrir en grande'),
+          onclick: () => ctx.expand(currentSrc, spec.title || tr('Visual interactivo')),
+        }, icon('maximize-2')) : null,
+        ctx && ctx.regenerate ? h('button', {
+          class: 'icon-btn', type: 'button', title: tr('Regenerar visual'), 'aria-label': tr('Regenerar visual'),
+          onclick: () => { autoRetried = false; rebuild({ force: true }); },
+        }, icon('refresh-cw')) : null,
+      );
+
+      onMsg = (e) => {
+        if (!iframe || !iframe.isConnected) { detachMsg(); return; }
+        if (e.source !== iframe.contentWindow || !e.data || typeof e.data !== 'object') return;
+        if (e.data.type === 'sh-viz-height' && Number.isFinite(e.data.height)) {
+          const px = Math.max(260, Math.min(760, Math.ceil(e.data.height) + 8));
+          iframe.style.height = `${px}px`;
+        } else if (e.data.type === 'sh-viz-error' && e.data.message) {
+          if (!autoRetried && ctx && ctx.fix) {
+            autoRetried = true;
+            rebuild({ fixError: String(e.data.message) });
+          } else {
+            setStatus(tr('El visual tuvo un error al ejecutarse.'), { err: true, retry: () => rebuild({ fixError: String(e.data.message) }) });
+          }
+        }
+      };
+      window.addEventListener('message', onMsg);
+    }
+
     if (spec.src) { show(spec.src); return fig; }
-    body.append(h('p', {}, inline(spec.brief)));
+    body.append(h('p', {}, inline(spec.brief)), statusBar);
     if (ctx && ctx.generate) {
       const btn = h('button', { class: 'btn small green', type: 'button', onclick: async () => {
         btn.disabled = true;
         const wait = h('span', { class: 'hint' }, tr('Construyendo el visual, puede tardar un par de minutos…'));
         controls.append(wait);
-        try { show(await ctx.generate(spec)); } catch (err) { wait.remove(); btn.disabled = false; toast(err.message); }
+        try {
+          const src = await ctx.generate(spec);
+          spec.src = src;
+          show(src);
+        } catch (err) { wait.remove(); btn.disabled = false; toast(err.message); }
       } }, tr('Construir este visual'));
       controls.append(btn);
     }
     return fig;
+  }
+
+  function syncTheme(theme) {
+    for (const f of document.querySelectorAll('iframe.viz-frame, #sim-frame')) {
+      try { if (f.contentWindow) f.contentWindow.postMessage({ type: 'sh-theme', theme }, '*'); } catch { /* ignore */ }
+    }
   }
 
   const BUILD = { plot, transform2d, steps, sample, predict, html };
@@ -509,5 +615,5 @@ const Viz = (() => {
     }
   }
 
-  return { enhance, compile };
-})();
+  return { enhance, compile, syncTheme };
+})());

@@ -32,5 +32,16 @@ jobs:
     uses: ./.github/workflows/release.yml
     with:
       tag: ${{ needs.release-please.outputs.tag }}
+    secrets: inherit # NPM_TOKEN, TAP_GITHUB_TOKEN, CHOCOLATEY_API_KEY
     permissions:
       contents: write
+      id-token: write
+
+  # the website shows the latest version, so it is rebuilt once the release is out
+  site:
+    needs: build
+    uses: ./.github/workflows/site.yml
+    permissions:
+      contents: read
+      pages: write
+      id-token: write

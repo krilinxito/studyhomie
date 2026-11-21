@@ -5,24 +5,46 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <title>StudyHomie</title>
-  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg?v=3">
+  <link rel="icon" type="image/png" sizes="64x64" href="favicon.png?v=3">
+  <link rel="apple-touch-icon" href="favicon.png?v=3">
   <link rel="stylesheet" href="vendor/katex/katex.min.css">
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="narval.css">
 </head>
 <body>
   <header class="top">
-    <a class="brand" href="#" id="brand" aria-label="StudyHomie, nueva conversación" data-i18n-aria-label="StudyHomie, nueva conversación">
+    <div class="top-left">
+      <button class="icon-btn" id="btn-sidebar" type="button" aria-pressed="true" title="Ocultar conversaciones" data-i18n-title="Ocultar conversaciones" aria-label="Conversaciones" data-i18n-aria-label="Conversaciones"><svg class="ic"><use href="icons.svg#i-panel-left"/></svg></button>
+      <a class="brand" href="#" id="brand" aria-label="StudyHomie, nueva conversación" data-i18n-aria-label="StudyHomie, nueva conversación">
       <svg class="logo" viewBox="0 0 64 64" aria-hidden="true">
-        <path class="logo-tip" d="M17 27 L25 15 L30 19 L37 7 L47 27 Z"/>
-        <path class="logo-facet" d="M37 7 L47 27 H39.5 Z"/>
-        <path class="logo-wave" d="M6 33 q4.5 -4 9 0 t9 0 t9 0 t9 0 t9 0 t7 0"/>
-        <path class="logo-deep" d="M13 38 H51 L58 47 L45 58 L22 60 L7 48 Z"/>
+        <polygon class="logo-peak2" points="6,41 19,17 31,41"/>
+        <polygon class="logo-peak" points="16,41 30,6 54,41"/>
+        <path class="logo-gap" stroke-width="4.5" d="M16,42 C18,24 31,19 42,23 C49,26 52,34 51,42"/>
+        <g class="logo-nv">
+          <path class="logo-body" d="M16,43 C18,25 31,20 42,24 C49,27 51,35 50,43 Z"/>
+          <path class="logo-belly" d="M31,43 C34,34 45,32 50,38 L50,43 Z"/>
+          <path class="logo-horn" d="M38,26 L53,12 C54,11 55,12 54,13.5 L44,30 C41.5,31.5 37,29 38,26 Z"/>
+          <ellipse class="logo-ink" cx="34.5" cy="33" rx="2.1" ry="1.8"/>
+          <ellipse class="logo-ink" cx="45.5" cy="31.8" rx="2.1" ry="1.8"/>
+          <path class="logo-smile" d="M38.5,34.5 Q40.5,37 42.5,34.2"/>
+        </g>
+        <path class="logo-gap" stroke-width="4.5" stroke-linecap="round" d="M3,44 Q15,37 28,43 T61,44"/>
+        <path class="logo-wave-fill" d="M3,44 Q15,38 28,43.5 T61,44 C53,45 49,51 44,57 L20,57 C15,51 11,45 3,44 Z"/>
+        <path class="logo-deep" d="M37,45 L49,44 C46,49 44,53 41,57 L28,57 Z"/>
       </svg>
       <span>StudyHomie</span>
     </a>
+    </div>
     <div class="top-meta">
       <span class="dot" id="session-dot" hidden title="Hay algo en curso" data-i18n-title="Hay algo en curso"></span>
       <span class="badge" id="provider-badge" title="Proveedor de IA" data-i18n-title="Proveedor de IA"></span>
+      <button class="streak-pill" id="btn-progress" type="button" title="Progreso, racha y XP" data-i18n-title="Progreso, racha y XP">
+        <span class="hdr-narval" id="hdr-narval" aria-hidden="true"></span>
+        <svg class="ic"><use href="icons.svg#i-flame"/></svg>
+        <span id="streak-count">0</span>
+        <span class="streak-mini" aria-hidden="true"><i id="streak-bar"></i></span>
+      </button>
       <button class="icon-btn" id="btn-panel" type="button" aria-pressed="false" title="Abrir el panel de estudio (guía, conceptos, mapa, apuntes)" data-i18n-title="Abrir el panel de estudio (guía, conceptos, mapa, apuntes)"><svg class="ic"><use href="icons.svg#i-panel-right-open"/></svg></button>
       <div class="menu">
         <button class="icon-btn" id="btn-layout" type="button" aria-haspopup="true" aria-expanded="false" title="Paneles y layout" data-i18n-title="Paneles y layout"><svg class="ic"><use href="icons.svg#i-layout-dashboard"/></svg></button>
@@ -68,7 +90,7 @@
         <button class="btn small red" id="btn-cancel" type="button" hidden data-i18n="Detener">Detener</button>
       </div>
       <div id="transcript" class="transcript" aria-live="polite"></div>
-      <div class="working" id="working" hidden><span class="pulse"></span><span id="working-text" data-i18n="Pensando…">Pensando…</span></div>
+      <div class="working" id="working" hidden><span class="working-narval" id="working-narval" aria-hidden="true"></span><span id="working-text" data-i18n="Pensando…">Pensando…</span></div>
       <form class="composer" id="composer">
         <div class="composer-label" id="composer-label" hidden></div>
         <div class="quick" id="quick" hidden></div>
@@ -109,11 +131,17 @@
           <button type="button" data-scope="chat" data-i18n="Esta conversación">Esta conversación</button>
           <button type="button" data-scope="all" data-i18n="Todas">Todas</button>
         </div>
+        <div class="map-hide" id="map-hide" role="group" aria-label="Ocultar en el mapa" data-i18n-aria-label="Ocultar en el mapa">
+          <button type="button" data-hide="pending" aria-pressed="false" data-i18n="Ocultar por explicar">Ocultar por explicar</button>
+          <button type="button" data-hide="foreign" aria-pressed="false" data-i18n="Ocultar de otras conversaciones">Ocultar de otras conversaciones</button>
+        </div>
         <div class="line-chips" id="filter-rm" role="group" aria-label="Filtrar por guía" data-i18n-aria-label="Filtrar por guía"></div>
       </div>
       <div class="map-wrap">
         <div id="cy" role="img" aria-label="Mapa: cada guía con los conceptos en que se apoya" data-i18n-aria-label="Mapa: cada guía con los conceptos en que se apoya"></div>
+        <div class="map-node-bar" id="map-node-bar" hidden></div>
         <div class="empty" id="map-empty" hidden>
+          <div class="empty-narval" id="map-empty-narval" aria-hidden="true"></div>
           <h3 id="map-empty-title" data-i18n="Tu mapa está vacío">Tu mapa está vacío</h3>
           <p id="map-empty-text" data-i18n="Pide una guía en el chat. Cada guía y sus conceptos aparecerán aquí, conectados.">Pide una guía en el chat. Cada guía y sus conceptos aparecerán aquí, conectados.</p>
           <button class="btn small" type="button" id="map-see-all" hidden data-i18n="Ver el mapa de todas tus conversaciones">Ver el mapa de todas tus conversaciones</button>
@@ -126,10 +154,12 @@
         <li><i class="st st-explained"></i><span data-i18n="Explicado">Explicado</span></li>
         <li><i class="st st-concept"></i><span data-i18n="Concepto">Concepto</span></li>
         <li><i class="st st-pending"></i><span data-i18n="Por explicar">Por explicar</span></li>
+        <li><i class="st st-shared"></i><span data-i18n="En varias guías">En varias guías</span></li>
       </ul>
     </section>
     <section class="pane" data-pane="practice" id="p-practice" aria-label="Practicar" data-i18n-aria-label="Practicar"></section>
     <section class="pane" data-pane="notes" id="p-notes" aria-label="Apuntes" data-i18n-aria-label="Apuntes"></section>
+    <section class="pane" data-pane="progress" id="p-progress" aria-label="Progreso" data-i18n-aria-label="Progreso"></section>
     <section class="pane" data-pane="vault" id="p-vault" aria-label="Vault" data-i18n-aria-label="Vault"></section>
     <section class="pane" data-pane="settings" id="p-settings" aria-label="Ajustes" data-i18n-aria-label="Ajustes"></section>
   </div>
@@ -147,6 +177,35 @@
     <div class="update-foot" id="update-foot"></div>
   </dialog>
 
+  <dialog id="confirm-dialog" aria-labelledby="confirm-title">
+    <div class="dlg-head"><strong id="confirm-title"></strong><button class="icon-btn" type="button" id="confirm-close" aria-label="Cerrar" data-i18n-aria-label="Cerrar"><svg class="ic"><use href="icons.svg#i-x"/></svg></button></div>
+    <p class="confirm-body" id="confirm-body"></p>
+    <div class="confirm-foot">
+      <button class="btn small ghost" type="button" id="confirm-cancel" data-i18n="Cancelar">Cancelar</button>
+      <button class="btn small danger" type="button" id="confirm-ok" data-i18n="Borrar">Borrar</button>
+    </div>
+  </dialog>
+
+  <dialog id="tutorial-dialog" aria-labelledby="tut-title">
+    <div class="tut-head">
+      <span class="tut-step-label" id="tut-step-label"></span>
+      <button class="btn small ghost" type="button" id="tut-skip" data-i18n="Saltar">Saltar</button>
+    </div>
+    <div class="tut-body">
+      <div class="tut-art" id="tut-art" aria-hidden="true"></div>
+      <h2 id="tut-title"></h2>
+      <p id="tut-text"></p>
+    </div>
+    <div class="tut-foot">
+      <div class="tut-dots" id="tut-dots" aria-hidden="true"></div>
+      <div class="tut-nav">
+        <button class="btn small" type="button" id="tut-prev" data-i18n="Anterior">Anterior</button>
+        <button class="btn small primary" type="button" id="tut-next" data-i18n="Siguiente">Siguiente</button>
+      </div>
+    </div>
+  </dialog>
+
+  <div id="narval-pop" class="narval-pop" role="status" aria-live="polite" hidden></div>
   <div id="toast" role="status" aria-live="assertive" hidden></div>
 
   <script src="i18n.js"></script>
@@ -159,6 +218,7 @@
   <script type="module" src="motion.mjs"></script>
   <script src="viz.js"></script>
   <script src="phrases.js"></script>
+  <script src="narval.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

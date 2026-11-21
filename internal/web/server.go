@@ -134,11 +134,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/update/restart", s.restartNow)
 	mux.HandleFunc("GET /api/graph", s.graph)
 	mux.HandleFunc("GET /api/notes/{slug}", s.note)
+	mux.HandleFunc("DELETE /api/notes/{slug}", s.deleteNote)
 	mux.HandleFunc("POST /api/notes/{slug}/extend", s.extend)
 	mux.HandleFunc("POST /api/notes/{slug}/doubt", s.doubt)
 	mux.HandleFunc("POST /api/notes/{slug}/concept", s.concept)
 	mux.HandleFunc("POST /api/notes/{slug}/viz", s.vizPage)
 	mux.HandleFunc("POST /api/notes/{slug}/explain", s.explain)
+	mux.HandleFunc("POST /api/notes/{slug}/dig", s.dig)
+	mux.HandleFunc("POST /api/notes/{slug}/activities", s.generateActivities)
+	mux.HandleFunc("POST /api/notes/{slug}/activities/{index}", s.updateActivity)
 	mux.HandleFunc("GET /api/vaults", s.vaults)
 	mux.HandleFunc("POST /api/vaults", s.addVault)
 	mux.HandleFunc("POST /api/vaults/use", s.useVault)
@@ -146,15 +150,24 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/vaults/pick", s.pickFolder)
 	mux.HandleFunc("POST /api/vault/open", s.openOutside)
 	mux.HandleFunc("GET /api/vault/files", s.vaultFiles)
+	mux.HandleFunc("GET /api/vault/materials", s.vaultMaterials)
 	mux.HandleFunc("GET /api/vault/search", s.vaultSearch)
 	mux.HandleFunc("GET /api/vault/raw/{dir}/{slug}", s.readRaw)
 	mux.HandleFunc("PUT /api/vault/raw/{dir}/{slug}", s.writeRaw)
+	mux.HandleFunc("GET /api/material/{topic}/{file}", s.materialFile)
 	mux.HandleFunc("GET /api/apuntes/{slug}", s.getApunte)
 	mux.HandleFunc("PUT /api/apuntes/{slug}", s.saveApunte)
 	mux.HandleFunc("POST /api/adjuntos", s.attach)
 	mux.HandleFunc("GET /api/adjuntos/{name}", s.attachment)
+	mux.HandleFunc("GET /api/cards", s.listCards)
+	mux.HandleFunc("POST /api/cards/generate", s.generateCards)
+	mux.HandleFunc("POST /api/cards/review", s.reviewCard)
+	mux.HandleFunc("POST /api/cards/import", s.importCards)
+	mux.HandleFunc("GET /api/cards/export", s.exportCards)
 	mux.HandleFunc("GET /api/roadmaps", s.roadmaps)
 	mux.HandleFunc("GET /api/daily", s.daily)
+	mux.HandleFunc("GET /api/stats", s.stats)
+	mux.HandleFunc("POST /api/tutorial/seen", s.tutorialSeen)
 	mux.HandleFunc("GET /api/sessions", s.sessions)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.deleteSession)
 	mux.HandleFunc("POST /api/upload", s.upload)
@@ -606,7 +619,7 @@ func (s *Server) input(w http.ResponseWriter, r *http.Request) {
 			fail(w, http.StatusBadRequest, "escribe un mensaje")
 			return
 		}
-		if err := run.sendChat(m, body.shown()); err != nil {
+		if err := run.sendChat(m, body.shown(), s.chatParams(body.chatBody)); err != nil {
 			fail(w, http.StatusConflict, err.Error())
 			return
 		}
@@ -629,28 +642,6 @@ func (s *Server) cancel(w http.ResponseWriter, r *http.Request) {
 	run.cancel()
 	run.in.Close()
 	writeJSON(w, 200, map[string]bool{"ok": true})
-}
-
-// interactive serves a generated simulation locked down: it runs in an opaque
-// origin, can use inline script and style, and cannot reach the network or the app.
-func (s *Server) interactive(w http.ResponseWriter, r *http.Request) {
-	file := r.PathValue("file")
-	slug := strings.TrimSuffix(file, ".html")
-	if !strings.HasSuffix(file, ".html") || vault.Slugify(slug) != slug || slug == "" {
-		http.NotFound(w, r)
-		return
-	}
-	html, err := s.vault().LoadInteractive(slug)
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	h := w.Header()
-	h.Set("Content-Type", "text/html; charset=utf-8")
-	h.Set("Content-Security-Policy", "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'")
-	h.Set("X-Content-Type-Options", "nosniff")
-	h.Set("Referrer-Policy", "no-referrer")
-	io.WriteString(w, html)
 }
 
 // Listen starts the server on the loopback interface.

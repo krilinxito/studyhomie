@@ -131,3 +131,40 @@ func TestStudyContinuesWhenSimulationFails(t *testing.T) {
 		t.Errorf("output: %s", out.String())
 	}
 }
+
+func TestGuideDetectsAreaFromPlanAndGuideJSON(t *testing.T) {
+	// Case 1: Area comes from the guide JSON when no plan runs (Depth=0, Iceberg=false).
+	guideWithArea := "Guía de circuitos.\n\n```json\n" + `{"area":"Electrónica","resources":[],"handoff":"ley de ohm"}` + "\n```"
+	f := &fake{replies: []provider.Response{reply(guideWithArea, 10)}}
+	s, _ := newSession(t, f, "")
+	slug, err := s.Prepare(context.Background(), "Circuitos en serie", "adhoc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := s.V.Load(slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.Meta.Area != "electronica" {
+		t.Errorf("area from guide JSON = %q, want electronica", n.Meta.Area)
+	}
+
+	// Case 2: Area comes from the planner and is forwarded to writeGuide as AREA:.
+	planWithArea := "```json\n" + `{"title":"Escalas menores","area":"music","requires":["semitono"],"concepts":[{"id":"semitono","title":"Semitono","summary":"menor distancia","category":"musica","requires":[]}]}` + "\n```"
+	guideNoArea := "Guía de escalas.\n\n```json\n" + `{"resources":[],"handoff":"T S T T S T T"}` + "\n```"
+	conceptReply := "## En una frase\nDistancia mínima.\n\n```json\n{}\n```"
+	f2 := &fake{replies: []provider.Response{reply(planWithArea, 10), reply(guideNoArea, 10), reply(conceptReply, 10)}}
+	s2, _ := newSession(t, f2, "s\n")
+	s2.Cfg.Parallel = 1
+	slug2, err := s2.Guide(context.Background(), GuideReq{Topic: "Escalas menores", Depth: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	n2, _ := s2.V.Load(slug2)
+	if n2.Meta.Area != "musica" {
+		t.Errorf("area from plan = %q, want musica", n2.Meta.Area)
+	}
+	if !strings.Contains(f2.reqs[1].Prompt, "AREA: musica") {
+		t.Errorf("writeGuide prompt missing AREA: musica:\n%s", f2.reqs[1].Prompt)
+	}
+}
