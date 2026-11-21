@@ -2500,6 +2500,31 @@ async function loadFlashcards(host, note) {
   }
 }
 
+/* ---------- 3D Trading-Card Cromo tilt & foil sheen ---------- */
+const RARITY_MARK = { common: '◆', rare: '◆◆', epic: '◆◆◆', legendary: '❖' };
+function bindCromoTilt(el, maxDeg = 9) {
+  if (reducedMotion()) return el;
+  el.addEventListener('pointermove', (e) => {
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    const px = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+    const py = Math.max(0, Math.min(1, (e.clientY - r.top) / r.height));
+    el.style.setProperty('--mx', `${(px * 100).toFixed(1)}%`);
+    el.style.setProperty('--my', `${(py * 100).toFixed(1)}%`);
+    el.style.setProperty('--rx', `${((0.5 - py) * maxDeg * 2).toFixed(2)}deg`);
+    el.style.setProperty('--ry', `${((px - 0.5) * maxDeg * 2).toFixed(2)}deg`);
+    el.classList.add('tilting');
+  });
+  el.addEventListener('pointerleave', () => {
+    el.classList.remove('tilting');
+    el.style.setProperty('--rx', '0deg');
+    el.style.setProperty('--ry', '0deg');
+    el.style.setProperty('--mx', '50%');
+    el.style.setProperty('--my', '50%');
+  });
+  return el;
+}
+
 function drawFlashcards(host, note) {
   const data = CARDS.data;
   if (!data || !host) return;
@@ -2525,23 +2550,28 @@ function drawFlashcards(host, note) {
     } catch (err) { toast(err.message); }
   });
 
-  const genBtn = note ? h('button', {
-    class: 'btn small primary', type: 'button', disabled: CARDS.busy,
-    onclick: async () => {
-      CARDS.busy = true;
+  const generateMore = async () => {
+    if (!note || CARDS.busy) return;
+    CARDS.busy = true;
+    drawFlashcards(host, note);
+    try {
+      const r = await api('/api/cards/generate', { method: 'POST', body: { slug: note.slug } });
+      const nAdded = r.added ?? r.count ?? 0;
+      toast(nAdded > 0
+        ? tn(nAdded, 'Se añadió {n} carta nueva al mazo.', 'Se añadieron {n} cartas nuevas al mazo.')
+        : t('No aparecieron cartas nuevas esta vez; prueba de nuevo.'));
+      CARDS.scope = 'guide';
+      await loadFlashcards(host, note);
+      loadStats();
+    } catch (err) { toast(err.message); } finally {
+      CARDS.busy = false;
       drawFlashcards(host, note);
-      try {
-        const r = await api('/api/cards/generate', { method: 'POST', body: { slug: note.slug } });
-        toast(tn(r.count, 'Se generó {n} tarjeta coleccionable.', 'Se generaron {n} tarjetas coleccionables.'));
-        CARDS.scope = 'guide';
-        await loadFlashcards(host, note);
-        loadStats();
-      } catch (err) { toast(err.message); } finally {
-        CARDS.busy = false;
-        drawFlashcards(host, note);
-      }
-    },
-  }, icon('sparkles'), CARDS.busy ? t('Generando tarjetas…') : activeDeck ? t('Regenerar tarjetas') : t('Generar tarjetas')) : null;
+    }
+  };
+
+  const genBtn = note ? h('button', {
+    class: 'btn small primary', type: 'button', disabled: CARDS.busy, onclick: generateMore,
+  }, icon('sparkles'), CARDS.busy ? t('Generando tarjetas…') : activeDeck ? t('Generar más tarjetas') : t('Generar tarjetas')) : null;
 
   const exportHref = activeDeck && CARDS.scope === 'guide'
     ? `/api/cards/export?deck=${encodeURIComponent(activeDeck.slug)}`
@@ -2551,12 +2581,14 @@ function drawFlashcards(host, note) {
     h('button', { type: 'button', 'aria-pressed': String(CARDS.scope === 'guide'), onclick: () => { CARDS.scope = 'guide'; loadFlashcards(host, note); } }, t('Esta guía')),
     h('button', { type: 'button', 'aria-pressed': String(CARDS.scope === 'all'), onclick: () => { CARDS.scope = 'all'; loadFlashcards(host, note); } }, t('Todos los mazos'))) : null;
 
-  // Review stage (FSRS queue)
+  // Review stage: physical 3D trading card (cromo) with pointer tilt, holographic foil, and smooth 180deg flip!
   let stage;
   if (queue.length > 0) {
     const c = queue[0];
     const rar = c.rarity || 'common';
     const ivls = c.intervals || {};
+    const idxInAll = Math.max(0, cards.findIndex((x) => x.deck === c.deck && x.id === c.id));
+    const serial = `#${String(idxInAll + 1).padStart(2, '0')} / ${String(Math.max(cards.length, 1)).padStart(2, '0')}`;
     const rate = async (rating) => {
       try {
         const res = await api('/api/cards/review', { method: 'POST', body: { deck: c.deck, cardId: c.id, rating } });
@@ -2570,53 +2602,114 @@ function drawFlashcards(host, note) {
         loadStats();
       } catch (err) { toast(err.message); }
     };
-    stage = h('div', { class: `flash fc-card rar-${rar}` },
-      h('div', { class: 'fc-top' },
-        h('span', { class: `rar-badge rar-${rar}` }, RARITY_LABEL[rar] || rar, ` · +${RARITY_XP[rar] || 5} XP`),
-        h('span', { class: 'fc-meta' }, `${c.deckTitle} · ${tn(queue.length, '{n} para hoy', '{n} para hoy')}`)),
-      h('div', { class: 'fc-front' }, mdBlock(c.front)),
-      CARDS.revealed
-        ? h('div', { class: 'fc-back' },
-          h('hr'),
-          mdBlock(c.back),
-          h('div', { class: 'fc-ratings' },
-            h('button', { class: 'btn small fc-r1', type: 'button', onclick: () => rate(1) }, h('strong', {}, t('Otra vez')), h('small', {}, fmtInterval(ivls[1]))),
-            h('button', { class: 'btn small fc-r2', type: 'button', onclick: () => rate(2) }, h('strong', {}, t('Difícil')), h('small', {}, fmtInterval(ivls[2]))),
-            h('button', { class: 'btn small fc-r3', type: 'button', onclick: () => rate(3) }, h('strong', {}, t('Bien')), h('small', {}, fmtInterval(ivls[3]))),
-            h('button', { class: 'btn small fc-r4', type: 'button', onclick: () => rate(4) }, h('strong', {}, t('Fácil')), h('small', {}, fmtInterval(ivls[4])))))
-        : h('div', { class: 'actions' },
-          h('button', { class: 'btn small primary', type: 'button', onclick: () => { CARDS.revealed = true; drawFlashcards(host, note); } }, t('Dar la vuelta'))));
+
+    const ratingsBar = h('div', { class: `fc-ratings${CARDS.revealed ? ' open' : ''}`, hidden: !CARDS.revealed },
+      h('button', { class: 'btn small fc-r1', type: 'button', onclick: () => rate(1) }, h('strong', {}, t('Otra vez')), h('small', {}, fmtInterval(ivls[1]))),
+      h('button', { class: 'btn small fc-r2', type: 'button', onclick: () => rate(2) }, h('strong', {}, t('Difícil')), h('small', {}, fmtInterval(ivls[2]))),
+      h('button', { class: 'btn small fc-r3', type: 'button', onclick: () => rate(3) }, h('strong', {}, t('Bien')), h('small', {}, fmtInterval(ivls[3]))),
+      h('button', { class: 'btn small fc-r4', type: 'button', onclick: () => rate(4) }, h('strong', {}, t('Fácil')), h('small', {}, fmtInterval(ivls[4]))));
+
+    const flipper = h('div', { class: `cromo-flipper${CARDS.revealed ? ' flipped' : ''}` },
+      // Front face (Question)
+      h('div', { class: 'cromo-face cromo-front' },
+        h('div', { class: 'cromo-foil', 'aria-hidden': 'true' }),
+        h('div', { class: 'cromo-frame' },
+          h('div', { class: 'cromo-top' },
+            h('span', { class: `cromo-rar rar-${rar}` }, h('i', { class: 'cromo-mark' }, RARITY_MARK[rar] || '◆'), RARITY_LABEL[rar] || rar),
+            h('span', { class: 'cromo-xp' }, `+${RARITY_XP[rar] || 5} XP`)),
+          h('div', { class: 'cromo-body fc-front' }, mdBlock(c.front)),
+          h('div', { class: 'cromo-foot' },
+            h('span', { class: 'cromo-deck' }, `${c.deckTitle} · ${serial}`),
+            h('span', { class: 'cromo-cue' }, t('Pulsa para girar ↻'))))),
+      // Back face (Answer)
+      h('div', { class: 'cromo-face cromo-back' },
+        h('div', { class: 'cromo-foil', 'aria-hidden': 'true' }),
+        h('div', { class: 'cromo-frame' },
+          h('div', { class: 'cromo-top' },
+            h('span', { class: `cromo-rar rar-${rar}` }, h('i', { class: 'cromo-mark' }, RARITY_MARK[rar] || '◆'), t('Respuesta')),
+            h('span', { class: 'cromo-cue' }, t('Girar ↺'))),
+          h('div', { class: 'cromo-body fc-back' }, mdBlock(c.back)),
+          h('div', { class: 'cromo-foot' },
+            h('span', { class: 'cromo-deck' }, (c.tags || []).length ? c.tags.map((tg) => `#${tg}`).join(' ') : c.deckTitle),
+            h('span', { class: 'cromo-serial' }, serial)))));
+
+    const toggleFlip = () => {
+      CARDS.revealed = !CARDS.revealed;
+      flipper.classList.toggle('flipped', CARDS.revealed);
+      ratingsBar.hidden = !CARDS.revealed;
+      ratingsBar.classList.toggle('open', CARDS.revealed);
+    };
+    const cromoTilt = bindCromoTilt(h('div', {
+      class: `cromo-tilt rar-${rar}`, role: 'button', tabindex: 0,
+      'aria-label': t('Dar la vuelta'),
+      onclick: toggleFlip,
+      onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleFlip(); } },
+    }, flipper), 8);
+
+    stage = h('div', { class: 'cromo-stage' },
+      h('div', { class: 'cromo-queue-bar' },
+        h('span', { class: 'fc-meta' }, tn(queue.length, '{n} para hoy', '{n} para hoy')),
+        h('button', { class: 'btn small ghost', type: 'button', onclick: toggleFlip }, icon('rotate-ccw'), t('Dar la vuelta'))),
+      cromoTilt,
+      ratingsBar);
   } else if (cards.length > 0) {
     stage = h('div', { class: 'fc-done-row' },
       window.Narval ? h('span', { class: 'fc-done-art', 'aria-hidden': 'true' }, Narval.svg('feliz')) : null,
-      h('p', { class: 'hint fc-done' }, t('¡Al día! No tienes tarjetas pendientes por ahora. Vuelve cuando toque el próximo repaso.')));
+      h('div', { class: 'fc-done-copy' },
+        h('p', { class: 'hint fc-done' }, t('¡Al día! No tienes tarjetas pendientes por ahora. Vuelve cuando toque el próximo repaso.')),
+        note ? h('button', { class: 'btn small', type: 'button', disabled: CARDS.busy, onclick: generateMore }, icon('sparkles'), t('Generar más tarjetas')) : null));
   } else {
     stage = h('p', { class: 'hint' }, t('Genera tarjetas coleccionables desde la guía o importa un mazo de Anki (.txt) para empezar a repasar con FSRS.'));
   }
 
-  // Collectible Album grid for current scope
+  // Collectible Binder Album: mini 3D flip-and-tilt cromos!
   const albumSec = cards.length === 0 ? null : h('div', { class: 'fc-album' },
     h('div', { class: 'fc-album-head' },
       h('strong', {}, t('Colección')),
       h('span', { class: 'hint' }, t('{got} de {total} coleccionadas', { got: collected, total: cards.length }))),
-    h('div', { class: 'fc-grid' }, cards.map((c) => {
+    h('div', { class: 'fc-grid' }, cards.map((c, idx) => {
       const rar = c.rarity || 'common';
-      const open = CARDS.expanded === `${c.deck}:${c.id}`;
-      return h('button', {
+      const serial = `#${String(idx + 1).padStart(2, '0')}`;
+      if (!c.collected) {
+        return h('div', { class: `cromo-mini locked rar-${rar}`, 'aria-label': t('Por coleccionar') },
+          h('div', { class: 'cromo-mini-frame' },
+            h('div', { class: 'cromo-mini-top' },
+              h('span', { class: `cromo-rar rar-${rar}` }, RARITY_MARK[rar] || '◆'),
+              h('span', { class: 'cromo-serial' }, serial)),
+            h('div', { class: 'fc-tile-locked' },
+              h('span', {}, RARITY_MARK[rar] || '?'),
+              h('small', {}, RARITY_LABEL[rar] || rar),
+              h('small', {}, t('Por coleccionar')))));
+      }
+      const key = `${c.deck}:${c.id}`;
+      const isFlipped = CARDS.expanded === key;
+      const miniFlip = h('div', { class: `cromo-flipper${isFlipped ? ' flipped' : ''}` },
+        h('div', { class: 'cromo-face cromo-front cromo-mini-face' },
+          h('div', { class: 'cromo-foil', 'aria-hidden': 'true' }),
+          h('div', { class: 'cromo-mini-frame' },
+            h('div', { class: 'cromo-mini-top' },
+              h('span', { class: `cromo-rar rar-${rar}` }, RARITY_MARK[rar] || '◆', ' ', RARITY_LABEL[rar] || rar),
+              h('span', { class: 'cromo-serial' }, serial)),
+            h('strong', { class: 'cromo-mini-q' }, c.front),
+            h('span', { class: 'cromo-mini-cue' }, '↻'))),
+        h('div', { class: 'cromo-face cromo-back cromo-mini-face' },
+          h('div', { class: 'cromo-foil', 'aria-hidden': 'true' }),
+          h('div', { class: 'cromo-mini-frame' },
+            h('div', { class: 'cromo-mini-top' },
+              h('span', { class: `cromo-rar rar-${rar}` }, t('Respuesta')),
+              h('span', { class: 'cromo-serial' }, serial)),
+            h('p', { class: 'cromo-mini-a' }, c.back),
+            h('span', { class: 'cromo-mini-cue' }, '↺'))));
+      const tile = bindCromoTilt(h('button', {
         type: 'button',
-        class: `fc-tile rar-${rar}${c.collected ? ' unlocked' : ' locked'}${open ? ' open' : ''}`,
+        class: `cromo-mini unlocked rar-${rar}`,
         onclick: () => {
-          if (!c.collected) return;
-          CARDS.expanded = open ? null : `${c.deck}:${c.id}`;
-          drawFlashcards(host, note);
+          const nowFlipped = !miniFlip.classList.contains('flipped');
+          miniFlip.classList.toggle('flipped', nowFlipped);
+          CARDS.expanded = nowFlipped ? key : null;
         },
-      },
-      h('span', { class: `rar-badge rar-${rar}` }, RARITY_LABEL[rar] || rar),
-      c.collected
-        ? h('div', { class: 'fc-tile-body' },
-          h('strong', {}, c.front),
-          open ? h('p', { class: 'fc-tile-ans' }, c.back) : null)
-        : h('div', { class: 'fc-tile-locked' }, h('span', {}, '?'), h('small', {}, t('Por coleccionar'))));
+      }, miniFlip), 10);
+      return tile;
     })));
 
   // Imported / unguided decks -> one-click "Crear guía" (with concepts left in pending iceberg!)

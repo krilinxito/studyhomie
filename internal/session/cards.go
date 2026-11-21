@@ -11,12 +11,22 @@ import (
 )
 
 // GenerateCards creates 6-10 rarity-tiered flashcards from a study guide and its concept notes,
-// saving them to vault/flashcards/<slug>.md in Obsidian Spaced Repetition format.
+// saving them to vault/flashcards/<slug>.md in Obsidian Spaced Repetition format. If a deck
+// already exists for this guide, new non-duplicate cards are appended so the learner can keep
+// expanding their collectible set without losing existing cards or review history.
 func (s *Session) GenerateCards(ctx context.Context, slug string) (cards.Deck, error) {
+	deck, _, err := s.GenerateMoreCards(ctx, slug)
+	return deck, err
+}
+
+// GenerateMoreCards behaves like GenerateCards and also returns how many brand-new cards were added.
+func (s *Session) GenerateMoreCards(ctx context.Context, slug string) (cards.Deck, int, error) {
 	note, title, err := s.loadGuided(slug)
 	if err != nil {
-		return cards.Deck{}, err
+		return cards.Deck{}, 0, err
 	}
+	existing, hasExisting := cards.LoadDeck(s.V.Root, slug)
+
 	var b strings.Builder
 	fmt.Fprintf(&b, "TOPIC: %s\n", title)
 	if area := noteArea(note); area != "" {
@@ -35,10 +45,17 @@ func (s *Session) GenerateCards(ctx context.Context, slug string) (cards.Deck, e
 			}
 		}
 	}
+	if hasExisting == nil && len(existing.Cards) > 0 {
+		b.WriteString("\nEXISTING CARDS (do NOT repeat these; invent fresh questions covering different angles, applications, edge cases, or deeper nuances):\n")
+		limit := min(len(existing.Cards), 40)
+		for _, ec := range existing.Cards[:limit] {
+			fmt.Fprintf(&b, "- %s\n", ec.Front)
+		}
+	}
 
 	resp, err := s.quickConvo(prompts.Get("flashcards", s.aiLang())).Say(ctx, b.String(), nil)
 	if err != nil {
-		return cards.Deck{}, err
+		return cards.Deck{}, 0, err
 	}
 	var out struct {
 		Cards []struct {
@@ -49,10 +66,10 @@ func (s *Session) GenerateCards(ctx context.Context, slug string) (cards.Deck, e
 		} `json:"cards"`
 	}
 	if err := decodeJSON(resp.Text, &out); err != nil {
-		return cards.Deck{}, failf("no pude leer las tarjetas generadas: %w", err)
+		return cards.Deck{}, 0, failf("no pude leer las tarjetas generadas: %w", err)
 	}
 	if len(out.Cards) == 0 {
-		return cards.Deck{}, failf("no se generó ninguna tarjeta")
+		return cards.Deck{}, 0, failf("no se generó ninguna tarjeta")
 	}
 
 	deck := cards.Deck{
@@ -64,28 +81,49 @@ func (s *Session) GenerateCards(ctx context.Context, slug string) (cards.Deck, e
 			Source: "guide",
 		},
 	}
+	seen := map[string]bool{}
+	if hasExisting == nil {
+		deck = existing
+		if deck.Meta.Topic == "" {
+			deck.Meta.Topic = slug
+		}
+		if deck.Meta.Area == "" {
+			deck.Meta.Area = noteArea(note)
+		}
+		for _, ec := range deck.Cards {
+			seen[ec.ID] = true
+		}
+	}
+	added := 0
 	for _, c := range out.Cards {
 		front := strings.TrimSpace(c.Front)
 		back := strings.TrimSpace(c.Back)
 		if front == "" || back == "" {
 			continue
 		}
+		id := cards.CardID(front)
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
 		deck.Cards = append(deck.Cards, cards.Card{
-			ID:     cards.CardID(front),
+			ID:     id,
 			Deck:   slug,
 			Front:  front,
 			Back:   back,
 			Rarity: cards.NormalizeRarity(c.Rarity),
 			Tags:   c.Tags,
 		})
+		added++
 	}
 	if len(deck.Cards) == 0 {
-		return cards.Deck{}, failf("no se generó ninguna tarjeta válida")
+		return cards.Deck{}, 0, failf("no se generó ninguna tarjeta válida")
 	}
 	if err := cards.SaveDeck(s.V.Root, deck); err != nil {
-		return cards.Deck{}, err
+		return cards.Deck{}, 0, err
 	}
-	return cards.LoadDeck(s.V.Root, slug)
+	loaded, err := cards.LoadDeck(s.V.Root, slug)
+	return loaded, added, err
 }
 
 // GuideFromDeck generates a study guide grounded in an imported flashcard deck, mapping its

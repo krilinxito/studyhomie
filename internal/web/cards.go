@@ -39,12 +39,12 @@ func (s *Server) generateCards(w http.ResponseWriter, r *http.Request) {
 	drain(r)
 	ctx, cancel := context.WithTimeout(r.Context(), answerTimeout)
 	defer cancel()
-	deck, err := s.shortSession().GenerateCards(ctx, slug)
+	deck, added, err := s.shortSession().GenerateMoreCards(ctx, slug)
 	if err != nil {
 		fail(w, shortStatus(err), s.errText(err))
 		return
 	}
-	writeJSON(w, 200, map[string]any{"deck": deck.Slug, "count": len(deck.Cards)})
+	writeJSON(w, 200, map[string]any{"deck": deck.Slug, "added": added, "count": len(deck.Cards)})
 }
 
 // reviewCard records one FSRS review, unlocks the card in the collection on Good/Easy,

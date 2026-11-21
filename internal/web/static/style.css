@@ -975,37 +975,162 @@ html.fs .dock { padding: 0; }
 .rar-pill .rar-name { font: 700 10.5px var(--mono); text-transform: uppercase; letter-spacing: .06em; color: var(--rc); }
 .rar-pill strong { font: 700 15px var(--mono); color: var(--ink); }
 
-.fc-studio { display: flex; flex-direction: column; gap: 14px; align-items: stretch; width: 100%; }
+.fc-studio { display: flex; flex-direction: column; gap: 16px; align-items: stretch; width: 100%; }
 .fc-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .fc-head h3 { margin: 0; }
 .fc-tools { margin: 0; }
-.fc-card { padding: 18px 20px; border-radius: var(--r); background: var(--surface); border: 1.5px solid color-mix(in srgb, var(--rc) 45%, var(--line)); display: flex; flex-direction: column; gap: 12px; }
-.fc-card > .btn { align-self: flex-start; }
-.fc-card.rar-epic { box-shadow: 0 0 0 1px color-mix(in srgb, var(--rc) 22%, transparent), 0 8px 24px -14px var(--rc); }
-.fc-card.rar-legendary { box-shadow: 0 0 0 1px color-mix(in srgb, var(--rc) 35%, transparent), 0 10px 28px -12px var(--rc); background: linear-gradient(155deg, color-mix(in srgb, var(--rc) 7%, var(--surface)), var(--surface)); }
-.fc-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.fc-done-copy { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+
+/* Physical 3D Trading Cards (Cromos): true perspective flip + pointer tilt + holographic foil */
+.cromo-stage { display: flex; flex-direction: column; gap: 12px; align-items: stretch; perspective: 1400px; }
+.cromo-queue-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .fc-meta { font-size: 12px; color: var(--muted); }
-.fc-front { font-size: 16px; font-weight: 600; line-height: 1.5; }
-.fc-front p, .fc-back p { margin: 0; }
-.fc-back hr { border: 0; border-top: 1px solid var(--line); margin: 2px 0 10px; }
-.fc-ratings { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
-.fc-ratings button { flex-direction: column; gap: 2px; padding: 8px 6px; height: auto; }
+
+.cromo-tilt {
+  --rx: 0deg; --ry: 0deg; --mx: 50%; --my: 50%;
+  position: relative; width: 100%; cursor: pointer; outline: none;
+  transform-style: preserve-3d;
+  transform: rotateX(var(--rx)) rotateY(var(--ry));
+  transition: transform .42s cubic-bezier(.22, 1, .36, 1);
+  will-change: transform;
+}
+.cromo-tilt.tilting { transition: transform .07s linear; }
+.cromo-tilt:focus-visible .cromo-face { box-shadow: 0 0 0 2px var(--accent); }
+
+.cromo-flipper {
+  position: relative; width: 100%; display: grid;
+  transform-style: preserve-3d;
+  transition: transform .68s cubic-bezier(.22, 1, .36, 1);
+}
+.cromo-flipper.flipped { transform: rotateY(180deg); }
+
+.cromo-face {
+  grid-area: 1 / 1; position: relative; overflow: hidden;
+  border-radius: 14px; padding: 8px; min-height: 230px;
+  backface-visibility: hidden; -webkit-backface-visibility: hidden;
+  display: flex; flex-direction: column;
+  background: var(--card-bg, var(--surface));
+  border: 1px solid var(--card-edge, var(--line));
+  box-shadow: var(--card-shadow, 0 12px 30px -14px rgba(18, 12, 34, .28));
+}
+.cromo-back { transform: rotateY(180deg); }
+
+/* Embossed inner frame of the physical trading card */
+.cromo-frame {
+  position: relative; z-index: 2; flex: 1; display: flex; flex-direction: column; justify-content: space-between; gap: 14px;
+  padding: 14px 18px; border-radius: 9px;
+  border: 1px solid color-mix(in srgb, var(--rc) 32%, transparent);
+  background: var(--card-inner, color-mix(in srgb, var(--surface) 88%, transparent));
+}
+.cromo-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.cromo-rar { display: inline-flex; align-items: center; gap: 6px; font: 700 10.5px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--rc); }
+.cromo-mark { font-style: normal; letter-spacing: -.04em; }
+.cromo-xp { font: 700 11px var(--mono); color: var(--rc); padding: 2px 8px; border-radius: 4px; background: color-mix(in srgb, var(--rc) 13%, transparent); }
+.cromo-body { font-size: 16px; line-height: 1.55; padding: 6px 0; }
+.cromo-body.fc-front { font-weight: 620; color: var(--ink); }
+.cromo-body.fc-back { font-size: 15px; color: var(--ink); }
+.cromo-body p { margin: 0; }
+.cromo-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 10px; border-top: 1px solid color-mix(in srgb, var(--rc) 18%, var(--line)); font-size: 11.5px; color: var(--muted); }
+.cromo-cue { font: 600 11px var(--mono); color: var(--rc); opacity: .82; }
+.cromo-serial { font: 600 11px var(--mono); opacity: .7; }
+
+/* Holographic specular foil sheen following cursor (--mx, --my) */
+.cromo-foil {
+  position: absolute; inset: 0; z-index: 3; pointer-events: none; border-radius: inherit;
+  opacity: 0; transition: opacity .32s ease;
+  background: radial-gradient(circle at var(--mx) var(--my), rgba(255, 255, 255, .32), transparent 58%);
+  mix-blend-mode: overlay;
+}
+.cromo-tilt:hover .cromo-foil, .cromo-mini.unlocked:hover .cromo-foil { opacity: 1; }
+
+/* Distinct physical card stocks & metallic/prismatic finishes per rarity */
+.rar-common {
+  --card-bg: linear-gradient(145deg, color-mix(in srgb, var(--surface) 96%, #e7e2d8), var(--surface-2));
+  --card-edge: color-mix(in srgb, var(--line) 95%, #9e9689);
+  --card-shadow: 0 10px 26px -16px rgba(24, 18, 36, .32);
+}
+.rar-rare {
+  --card-bg: linear-gradient(140deg, color-mix(in srgb, #38bdf8 16%, var(--surface)), var(--surface-2) 55%, color-mix(in srgb, #0284c7 14%, var(--surface)));
+  --card-edge: color-mix(in srgb, var(--rc) 55%, var(--line));
+  --card-shadow: 0 14px 32px -16px color-mix(in srgb, var(--rc) 48%, transparent);
+}
+.rar-rare .cromo-foil {
+  background:
+    radial-gradient(circle at var(--mx) var(--my), rgba(186, 230, 253, .45), transparent 52%),
+    linear-gradient(115deg, transparent 22%, rgba(56, 189, 248, .26) 46%, rgba(255, 255, 255, .36) 50%, rgba(56, 189, 248, .2) 54%, transparent 78%);
+}
+.rar-epic {
+  --card-bg: linear-gradient(140deg, color-mix(in srgb, #8b5cf6 22%, var(--surface)), color-mix(in srgb, #312e81 12%, var(--surface-2)) 52%, color-mix(in srgb, #ec4899 16%, var(--surface)));
+  --card-edge: color-mix(in srgb, var(--rc) 65%, var(--line));
+  --card-shadow: 0 16px 36px -14px color-mix(in srgb, var(--rc) 58%, transparent);
+}
+.rar-epic .cromo-foil {
+  background:
+    radial-gradient(circle at var(--mx) var(--my), rgba(233, 213, 255, .52), transparent 50%),
+    linear-gradient(125deg, transparent 15%, rgba(168, 85, 247, .34) 38%, rgba(56, 189, 248, .32) 50%, rgba(244, 114, 182, .32) 62%, transparent 84%);
+}
+.rar-legendary {
+  --card-bg: linear-gradient(135deg, color-mix(in srgb, #fbbf24 28%, var(--surface)), color-mix(in srgb, #f59e0b 12%, var(--surface-2)) 48%, color-mix(in srgb, #eab308 24%, var(--surface)));
+  --card-edge: color-mix(in srgb, var(--rc) 80%, #fef08a);
+  --card-shadow: 0 18px 40px -14px color-mix(in srgb, var(--rc) 65%, transparent), 0 0 0 1px color-mix(in srgb, var(--rc) 32%, transparent);
+}
+.rar-legendary .cromo-foil {
+  opacity: .35;
+  background:
+    radial-gradient(circle at var(--mx) var(--my), rgba(254, 249, 195, .68), transparent 48%),
+    conic-gradient(from 120deg at var(--mx) var(--my), rgba(251, 191, 36, .35), rgba(52, 211, 153, .28), rgba(96, 165, 250, .3), rgba(192, 132, 252, .34), rgba(244, 114, 182, .3), rgba(251, 191, 36, .35));
+}
+.rar-legendary .cromo-frame { border-color: color-mix(in srgb, var(--rc) 58%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, #fef08a 26%, transparent); }
+
+.fc-ratings { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.fc-ratings[hidden] { display: none; }
+.fc-ratings.open { animation: rise .24s var(--ease); }
+.fc-ratings button { flex-direction: column; gap: 2px; padding: 9px 6px; height: auto; }
 .fc-ratings small { font: 500 11px var(--mono); color: var(--muted); }
 .fc-r1 { border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); }
 .fc-r3 { border-color: color-mix(in srgb, var(--ok) 45%, var(--line)); }
 .fc-r4 { border-color: color-mix(in srgb, var(--accent) 50%, var(--line)); }
 
-.fc-album { display: flex; flex-direction: column; gap: 8px; padding-top: 6px; border-top: 1px solid var(--line); }
+/* Collector's Binder Album: vertical 3D flip-and-tilt mini cromos */
+.fc-album { display: flex; flex-direction: column; gap: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
 .fc-album-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 13.5px; }
-.fc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)); gap: 8px; }
-.fc-tile { text-align: left; padding: 10px 12px; border-radius: var(--r-sm); background: var(--surface-2); border: 1.5px solid color-mix(in srgb, var(--rc) 40%, var(--line)); color: var(--ink); font: inherit; cursor: pointer; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; transition: transform .15s var(--ease), border-color .15s; }
-.fc-tile.unlocked:hover { transform: translateY(-2px); border-color: var(--rc); }
-.fc-tile.locked { opacity: .6; border-style: dashed; cursor: default; }
-.fc-tile-body strong { font-size: 13px; line-height: 1.4; display: block; }
-.fc-tile-ans { margin: 6px 0 0; padding-top: 6px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--muted); line-height: 1.45; }
-.fc-tile-locked { width: 100%; padding: 10px 0; text-align: center; color: var(--muted); display: flex; flex-direction: column; align-items: center; gap: 2px; }
-.fc-tile-locked span { font: 700 20px var(--mono); opacity: .55; }
-.fc-tile-locked small { font-size: 11.5px; }
+.fc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(154px, 1fr)); gap: 12px; perspective: 1100px; }
+
+.cromo-mini {
+  --rx: 0deg; --ry: 0deg; --mx: 50%; --my: 50%;
+  position: relative; padding: 0; border: 0; background: none; color: var(--ink); font: inherit; text-align: left;
+  min-height: 192px; border-radius: 12px;
+  transform-style: preserve-3d;
+  transform: rotateX(var(--rx)) rotateY(var(--ry));
+  transition: transform .38s cubic-bezier(.22, 1, .36, 1);
+}
+.cromo-mini.unlocked { cursor: pointer; }
+.cromo-mini.tilting { transition: transform .07s linear; }
+.cromo-mini .cromo-flipper { min-height: 192px; }
+.cromo-mini-face { padding: 6px; border-radius: 12px; min-height: 192px; }
+.cromo-mini-frame {
+  position: relative; z-index: 2; flex: 1; display: flex; flex-direction: column; justify-content: space-between; gap: 8px;
+  padding: 10px 11px; border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--rc) 32%, transparent);
+  background: var(--card-inner, color-mix(in srgb, var(--surface) 88%, transparent));
+}
+.cromo-mini-top { display: flex; align-items: center; justify-content: space-between; gap: 4px; }
+.cromo-mini-top .cromo-rar { font-size: 9.5px; letter-spacing: .07em; }
+.cromo-mini-q { font-size: 12.5px; font-weight: 600; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; }
+.cromo-mini-a { margin: 0; font-size: 12px; line-height: 1.42; color: var(--muted); overflow-y: auto; max-height: 122px; }
+.cromo-mini-cue { align-self: flex-end; font: 600 12px/1 var(--mono); color: var(--rc); opacity: .7; }
+
+/* Locked face-down binder sleeve */
+.cromo-mini.locked {
+  display: flex; padding: 6px; cursor: default;
+  background: repeating-linear-gradient(135deg, var(--surface-2) 0 6px, color-mix(in srgb, var(--line) 42%, var(--surface-2)) 6px 12px);
+  border: 1px dashed color-mix(in srgb, var(--rc) 42%, var(--line));
+  opacity: .72;
+}
+.cromo-mini.locked .cromo-mini-frame { background: color-mix(in srgb, var(--surface) 74%, transparent); border-style: dashed; }
+.fc-tile-locked { width: 100%; flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; text-align: center; color: var(--muted); }
+.fc-tile-locked span { font: 700 22px/1 var(--mono); color: var(--rc); opacity: .55; }
+.fc-tile-locked small { font-size: 11px; }
 
 .fc-anki-decks { display: flex; flex-direction: column; gap: 6px; padding-top: 10px; border-top: 1px solid var(--line); }
 .fc-deck-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }

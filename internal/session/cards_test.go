@@ -52,6 +52,20 @@ func TestGenerateCardsAndGuideFromAnkiDeckLeavesPendingConcepts(t *testing.T) {
 		t.Fatalf("generated deck = %+v", deck)
 	}
 
+	// Generating more cards appends non-duplicate cards while preserving existing ones.
+	moreReply := "```json\n" + `{"cards":[
+		{"front":"¿Qué hace la transformada de Fourier?","back":"Duplicada.","rarity":"common","tags":["fourier"]},
+		{"front":"¿Qué representa la fase en Fourier?","back":"El desplazamiento temporal de cada onda sinusoidal.","rarity":"epic","tags":["fase"]}
+	]}` + "\n```"
+	f.replies = []provider.Response{reply(moreReply, 10)}
+	deck2, added, err := s.GenerateMoreCards(context.Background(), slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if added != 1 || len(deck2.Cards) != 3 {
+		t.Fatalf("GenerateMoreCards: added=%d total=%d, want 1/3", added, len(deck2.Cards))
+	}
+
 	// 2. GuideFromDeck: imports an Anki deck, generates a guide grounded in it, and leaves
 	// prerequisite concepts in pending (under water in the iceberg).
 	ankiDeck := cards.Deck{
