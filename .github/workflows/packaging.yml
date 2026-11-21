@@ -82,7 +82,8 @@ jobs:
         run: |
           iex "& {$(irm get.scoop.sh)} -RunAsAdmin"
           $env:Path = "$env:USERPROFILE\scoop\shims;$env:Path"
-          scoop install out/scoop/studyhomie.json
+          # an absolute path: a relative one like out/scoop/x.json is read as <bucket>/<app>
+          scoop install (Resolve-Path out/scoop/studyhomie.json).Path
           studyhomie version
 
   homebrew:
