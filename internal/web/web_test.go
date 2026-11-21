@@ -27,6 +27,7 @@ import (
 type scripted struct {
 	mu      sync.Mutex
 	replies []string
+	reqs    []provider.Request
 	hold    chan struct{}
 }
 
@@ -41,6 +42,7 @@ func (f *scripted) Complete(ctx context.Context, req provider.Request, _ func(st
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.reqs = append(f.reqs, req)
 	r := f.replies[0]
 	f.replies = f.replies[1:]
 	return provider.Response{Text: r, SessionID: "s"}, nil

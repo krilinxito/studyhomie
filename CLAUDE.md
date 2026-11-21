@@ -27,14 +27,14 @@ Para probarla a mano: `studyhomie init --provider claude-cli` en una carpeta tem
 | `internal/prompts` | Prompts embebidos (`*.md`). `Get(name, lang)` reemplaza `{{language}}` y, en los prompts que lee el estudiante, agrega `style.md`. |
 | `internal/provider/*`, `internal/providers` | Backends de IA intercambiables (Claude CLI, Codex, APIs, modelos locales) y su catálogo. |
 | `internal/web` | Servidor HTTP + SSE (`run.go`: un flujo a la vez, eventos `out`/`ask`/`card`/`done`), API JSON (`server.go`, `settings.go`, `updates.go`…) y frontend en `static/`. |
-| `internal/viz` | Valida y limpia los widgets ` ```viz ` de las guías. |
+| `internal/viz` | Valida y limpia los widgets ` ```viz ` de las guías, el registro de librerías (`three`, `tone`, `jsxgraph`, `katex`, `leaflet`, `matter`, `p5`) y la validación HTML de los widgets interactivos. |
 | `internal/update` | Autoactualización desde GitHub Releases. |
 | `internal/config` | `studyhomie.toml` (`Default()` tiene los valores por defecto). |
 | `internal/i18n` | Idiomas: catálogos, `T`/`Sprintf`, encabezados de sección en cada idioma. |
 
 ## Modelo de datos (vault)
 
-- `guias/<slug>.md`: una guía o un tema de roadmap. Los campos de `vault.Meta` son `status` (`new` → `prepared` → `tested` → `explained`), `mastery` (0–100), `roadmap`, `order`, `block`, `concepts`, `pending` (el iceberg que todavía no tiene nota)…
+- `guias/<slug>.md`: una guía o un tema de roadmap. Los campos de `vault.Meta` son `status` (`new` → `prepared` → `tested` → `explained`), `mastery` (0–100), `area` (área canónica para widgets y stats), `roadmap`, `order`, `block`, `concepts`, `pending` (el iceberg que todavía no tiene nota)…
 - `conceptos/<id>.md`: notas de concepto (`vault.Concept`).
 - `roadmaps/<slug>.md`: la nota de la ruta, con `reach` (cuánto abarca) y `guide_depth`.
 - `apuntes/`, `daily/`, `interactive/`; y `.studyhomie/` (oculto para Obsidian): handoff de cada guía, material fuente, sesiones del chat.

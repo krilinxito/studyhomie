@@ -27,6 +27,7 @@ type Meta struct {
 	Mastery   int        `yaml:"mastery,omitempty" json:"mastery,omitempty"`
 	Summary   string     `yaml:"summary,omitempty" json:"summary,omitempty"`   // what the learner should understand (roadmap)
 	Field     string     `yaml:"field,omitempty" json:"field,omitempty"`       // knowledge field (daily)
+	Area      string     `yaml:"area,omitempty" json:"area,omitempty"`         // canonical area (matematicas, fisica, musica…)
 	Roadmap   string     `yaml:"roadmap,omitempty" json:"roadmap,omitempty"`   // slug of the roadmap this topic belongs to
 	Order     int        `yaml:"order,omitempty" json:"order,omitempty"`       // position within the roadmap
 	Block     string     `yaml:"block,omitempty" json:"block,omitempty"`       // field of the roadmap it belongs to ("Linux", "Redes"…)

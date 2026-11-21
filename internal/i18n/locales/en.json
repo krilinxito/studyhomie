@@ -644,5 +644,13 @@
   "¿de qué tema hago la guía?": "what topic should the guide be about?",
   "¿qué concepto explico?": "which concept should I explain?",
   "¿qué materia quieres planear?": "which subject do you want to plan?",
+  "Abrir en grande": "Open full size",
+  "Detecté un error en el visual; intentando corregirlo…": "Detected an error in the visual; trying to fix it…",
+  "El visual tuvo un error al ejecutarse.": "The visual hit a runtime error.",
+  "Este visual necesita conexión a internet": "This visual needs an internet connection",
+  "No pude corregir el visual.": "Could not fix the visual.",
+  "No se pudo cargar la librería externa ({lib}). Cuando tengas conexión, recarga el visual.": "Could not load the external library ({lib}). Reload the visual when you are back online.",
+  "Regenerar visual": "Regenerate visual",
+  "Reintentar": "Retry",
   "Última búsqueda: {when}.": "Last check: {when}."
 }

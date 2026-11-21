@@ -632,28 +632,6 @@ func (s *Server) cancel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 
-// interactive serves a generated simulation locked down: it runs in an opaque
-// origin, can use inline script and style, and cannot reach the network or the app.
-func (s *Server) interactive(w http.ResponseWriter, r *http.Request) {
-	file := r.PathValue("file")
-	slug := strings.TrimSuffix(file, ".html")
-	if !strings.HasSuffix(file, ".html") || vault.Slugify(slug) != slug || slug == "" {
-		http.NotFound(w, r)
-		return
-	}
-	html, err := s.vault().LoadInteractive(slug)
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	h := w.Header()
-	h.Set("Content-Type", "text/html; charset=utf-8")
-	h.Set("Content-Security-Policy", "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'")
-	h.Set("X-Content-Type-Options", "nosniff")
-	h.Set("Referrer-Policy", "no-referrer")
-	io.WriteString(w, html)
-}
-
 // Listen starts the server on the loopback interface.
 func (s *Server) Listen(port int) (net.Listener, error) {
 	return net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))

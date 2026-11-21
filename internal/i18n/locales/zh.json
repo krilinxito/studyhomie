@@ -644,5 +644,13 @@
   "¿de qué tema hago la guía?": "要做哪个主题的指南？",
   "¿qué concepto explico?": "要讲解哪个概念？",
   "¿qué materia quieres planear?": "你想规划哪门学科？",
+  "Abrir en grande": "放大打开",
+  "Detecté un error en el visual; intentando corregirlo…": "检测到交互组件出错，正在尝试修复…",
+  "El visual tuvo un error al ejecutarse.": "交互组件运行时出错。",
+  "Este visual necesita conexión a internet": "此交互组件需要网络连接",
+  "No pude corregir el visual.": "无法修复该交互组件。",
+  "No se pudo cargar la librería externa ({lib}). Cuando tengas conexión, recarga el visual.": "无法加载外部库（{lib}）。联网后请重新加载此交互组件。",
+  "Regenerar visual": "重新生成组件",
+  "Reintentar": "重试",
   "Última búsqueda: {when}.": "上次检查：{when}。"
 }

@@ -320,12 +320,14 @@ const S = {
 /* ---------- theme ---------- */
 const effectiveTheme = () => document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 function applyTheme() {
-  $('#btn-theme use').setAttribute('href', `icons.svg#i-${effectiveTheme() === 'dark' ? 'sun' : 'moon'}`);
+  const th = effectiveTheme();
+  $('#btn-theme use').setAttribute('href', `icons.svg#i-${th === 'dark' ? 'sun' : 'moon'}`);
   if (S.cy) S.cy.style(cyStyle());
-  // widgets read their colours when drawn: draw what is open again
+  // widgets read their colours when drawn: draw what is open again and sync live iframes
   if (S.note) renderReader(S.note);
   renderConcepts();
   renderPractice();
+  if (window.Viz && Viz.syncTheme) Viz.syncTheme(th);
 }
 $('#btn-theme').addEventListener('click', () => {
   const next = effectiveTheme() === 'dark' ? 'light' : 'dark';
@@ -1052,9 +1054,12 @@ async function explainConcept(ref, { guide = S.guide, title = ref, el } = {}) {
   }
 }
 
-function openSim(slug, title) {
+function openSim(slugOrSrc, title) {
   $('#sim-title').textContent = title || t('Simulación');
-  $('#sim-frame').src = `/interactive/${encodeURIComponent(slug)}.html`;
+  const raw = String(slugOrSrc || '');
+  const path = raw.startsWith('/interactive/') ? raw : raw.startsWith('interactive/') ? `/${raw}` : `/interactive/${encodeURIComponent(raw)}.html`;
+  const sep = path.includes('?') ? '&' : '?';
+  $('#sim-frame').src = `${path}${sep}theme=${encodeURIComponent(effectiveTheme())}`;
   $('#sim-dialog').showModal();
 }
 $('#sim-close').addEventListener('click', () => $('#sim-dialog').close());
@@ -1063,10 +1068,17 @@ $('#sim-dialog').addEventListener('close', () => { $('#sim-frame').src = 'about:
 /* ---------- Guía: the guide as an article ---------- */
 const statusChip = (status) => h('span', { class: 'chip status', style: `--c: var(--s-${status})` }, STATUS[status] || status);
 
-// widgets in a note can build their own page on demand
-const vizCtx = (slug) => ({
-  generate: async (spec) => (await api(`/api/notes/${encodeURIComponent(slug)}/viz`, { method: 'POST', body: { brief: spec.brief } })).src,
-});
+// widgets in a note can build, regenerate, repair and expand their own page on demand
+const vizCtx = (slug) => {
+  const url = `/api/notes/${encodeURIComponent(slug)}/viz`;
+  return {
+    theme: effectiveTheme,
+    generate: async (spec) => (await api(url, { method: 'POST', body: { brief: spec.brief } })).src,
+    regenerate: async (spec) => (await api(url, { method: 'POST', body: { brief: spec.brief, force: true } })).src,
+    fix: async (spec, fixError) => (await api(url, { method: 'POST', body: { brief: spec.brief, fixError } })).src,
+    expand: (src, title) => openSim(src, title),
+  };
+};
 
 /* ---------- Roadmaps: a numbered path, each topic unlocked by passing the one before ---------- */
 const roadmapOf = (slug) => S.roadmaps.find((r) => r.slug === slug);

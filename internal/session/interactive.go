@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"regexp"
 	"strings"
 
@@ -13,29 +12,14 @@ import (
 	"github.com/krilinxito/studyhomie/internal/viz"
 )
 
-const maxInteractiveBytes = 120 << 10
+const maxInteractiveBytes = viz.MaxHTMLBytes
 
-var (
-	htmlFenceRe = regexp.MustCompile("(?s)```html\\s*\n(.*?)```")
-	// anything that would reach outside the page. The sandbox blocks these too;
-	// rejecting them here lets the model fix its output instead of shipping a broken page.
-	externalRe = regexp.MustCompile(`(?i)(\b(src|href|action|data)\s*=\s*["']?\s*(https?:|//)|@import|url\(\s*["']?(https?:|//)|\bfetch\s*\(|XMLHttpRequest|WebSocket|importScripts|window\.open|localStorage|sessionStorage|document\.cookie)`)
-)
+var htmlFenceRe = regexp.MustCompile("(?s)```html\\s*\n(.*?)```")
 
-// validateInteractive checks a generated page is self-contained and not absurdly large.
+// validateInteractive checks a generated page is self-contained, within size limits,
+// and only uses allowed libraries and sandbox-safe APIs.
 func validateInteractive(html string) error {
-	switch {
-	case len(html) > maxInteractiveBytes:
-		return fmt.Errorf("the page is too large (%d KB, limit %d KB)", len(html)>>10, maxInteractiveBytes>>10)
-	case !strings.Contains(strings.ToLower(html), "<script"):
-		return fmt.Errorf("the page has no JavaScript, so nothing is interactive")
-	case !strings.Contains(strings.ToLower(html), "</html>"):
-		return fmt.Errorf("the HTML document is incomplete")
-	}
-	if m := externalRe.FindString(html); m != "" {
-		return fmt.Errorf("the page uses something that is not allowed in the sandbox: %q", m)
-	}
-	return nil
+	return viz.ValidateHTML(html)
 }
 
 func extractHTML(s string) string {
@@ -56,6 +40,17 @@ func pendingInteractive(n vault.Note) (why string, ok bool) {
 	return "", false
 }
 
+// noteArea returns the canonical area of a guide note, falling back to its daily field if set.
+func noteArea(n vault.Note) string {
+	if n.Meta.Area != "" {
+		return n.Meta.Area
+	}
+	if n.Meta.Field != "" {
+		return vault.NormalizeArea(n.Meta.Field)
+	}
+	return ""
+}
+
 // Interactive generates a self-contained simulation for the topic and links it from the note.
 // brief says what the learner should be able to manipulate; empty lets the model decide.
 func (s *Session) Interactive(ctx context.Context, slug, brief string) error {
@@ -63,7 +58,11 @@ func (s *Session) Interactive(ctx context.Context, slug, brief string) error {
 	if err != nil {
 		return failf("no hay nota para «%s»: %w", slug, err)
 	}
-	prompt := "Topic: " + note.Meta.Title + "\nWhat the learner studied: " + s.V.LoadHandoff(slug)
+	prompt := "Topic: " + note.Meta.Title
+	if area := noteArea(note); area != "" {
+		prompt += "\nAREA: " + area
+	}
+	prompt += "\nWhat the learner studied: " + s.V.LoadHandoff(slug)
 	if brief != "" {
 		prompt += "\nBuild this: " + brief
 	}
@@ -121,42 +120,89 @@ func (s *Session) buildHTML(ctx context.Context, prompt string) (string, error) 
 	}
 }
 
+// VizPageOpts controls regeneration and runtime error recovery for an html widget.
+type VizPageOpts struct {
+	Force    bool   // rebuild from scratch even if a page was already saved
+	FixError string // runtime error reported by the iframe; asks the model to repair the saved page
+}
+
 // VizPage builds the page an html widget of a guide or concept describes, saves it and records
 // it in the widget, so it is built once. It returns the page's vault-relative path.
 func (s *Session) VizPage(ctx context.Context, slug, brief string) (string, error) {
+	return s.VizPageWithOpts(ctx, slug, brief, VizPageOpts{})
+}
+
+// VizPageWithOpts builds, regenerates, or repairs the page for an html widget.
+func (s *Session) VizPageWithOpts(ctx context.Context, slug, brief string, opts VizPageOpts) (string, error) {
 	brief = strings.TrimSpace(brief)
 	if brief == "" {
 		return "", inputErrorf("falta la descripción del visual")
 	}
-	var title, body, context string
+	var title, body, noteCtx, area string
 	isGuide := s.V.Exists(slug)
 	if isGuide {
 		n, err := s.V.Load(slug)
 		if err != nil {
 			return "", err
 		}
-		title, body, context = n.Meta.Title, n.Body, s.noteContext(slug, n)
+		title, body, noteCtx, area = n.Meta.Title, n.Body, s.noteContext(slug, n), noteArea(n)
 	} else {
 		c, err := s.V.LoadConcept(slug)
 		if err != nil {
 			return "", inputErrorf("no existe la nota «%s»", slug)
 		}
-		title, body, context = c.Meta.Title, c.Body, head(c.Body, 3000)
+		title, body, noteCtx = c.Meta.Title, c.Body, head(c.Body, 3000)
+		if len(c.Meta.Guides) > 0 {
+			if g, err := s.V.Load(c.Meta.Guides[0]); err == nil {
+				area = noteArea(g)
+			}
+		}
+		if area == "" && c.Meta.Category != "" {
+			area = vault.NormalizeArea(c.Meta.Category)
+		}
 	}
 	if _, found := viz.SetSrc(body, brief, ""); !found {
 		return "", inputErrorf("la nota no tiene ese visual")
 	}
-	prompt := "Topic: " + title + "\nWhat the learner studied: " + context + "\nBuild this: " + brief
-	html, err := s.buildHTML(ctx, prompt)
+
+	sum := sha256.Sum256([]byte(brief))
+	name := slug + "-" + hex.EncodeToString(sum[:4])
+	src := "interactive/" + name + ".html"
+
+	// Return the existing page when not forcing a rebuild or repairing an error.
+	if !opts.Force && strings.TrimSpace(opts.FixError) == "" {
+		if _, err := s.V.LoadInteractive(name); err == nil {
+			return src, nil
+		}
+	}
+
+	var prompt strings.Builder
+	prompt.WriteString("Topic: " + title)
+	if area != "" {
+		prompt.WriteString("\nAREA: " + area)
+	}
+	prompt.WriteString("\nWhat the learner studied: " + noteCtx)
+	prompt.WriteString("\nBuild this: " + brief)
+
+	if fixErr := strings.TrimSpace(opts.FixError); fixErr != "" {
+		if prev, err := s.V.LoadInteractive(name); err == nil && prev != "" {
+			prompt.WriteString("\n\nThe previous version threw this runtime error in the browser:\n")
+			prompt.WriteString(head(fixErr, 600))
+			prompt.WriteString("\n\nFix the error while keeping the visual design and interactivity intact. Previous HTML:\n```html\n")
+			prompt.WriteString(prev)
+			prompt.WriteString("\n```")
+		} else {
+			prompt.WriteString("\n\nAvoid this runtime error that occurred previously: " + head(fixErr, 600))
+		}
+	}
+
+	html, err := s.buildHTML(ctx, prompt.String())
 	if err != nil {
 		return "", err
 	}
-	sum := sha256.Sum256([]byte(brief))
-	name := slug + "-" + hex.EncodeToString(sum[:4])
 	if err := s.V.SaveInteractive(name, html); err != nil {
 		return "", err
 	}
-	src := "interactive/" + name + ".html"
 	set := func(b string) string { out, _ := viz.SetSrc(b, brief, src); return out }
 	if isGuide {
 		err = s.V.Update(slug, func(n *vault.Note) error { n.Body = set(n.Body); return nil })

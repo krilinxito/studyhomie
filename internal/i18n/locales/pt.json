@@ -644,5 +644,13 @@
   "¿de qué tema hago la guía?": "de que tema faço o guia?",
   "¿qué concepto explico?": "que conceito explico?",
   "¿qué materia quieres planear?": "que matéria você quer planejar?",
+  "Abrir en grande": "Abrir em tela grande",
+  "Detecté un error en el visual; intentando corregirlo…": "Detectei um erro no visual; tentando corrigir…",
+  "El visual tuvo un error al ejecutarse.": "O visual teve um erro ao executar.",
+  "Este visual necesita conexión a internet": "Este visual precisa de conexão com a internet",
+  "No pude corregir el visual.": "Não consegui corrigir o visual.",
+  "No se pudo cargar la librería externa ({lib}). Cuando tengas conexión, recarga el visual.": "Não foi possível carregar a biblioteca externa ({lib}). Recarregue o visual quando estiver conectado.",
+  "Regenerar visual": "Regenerar visual",
+  "Reintentar": "Tentar novamente",
   "Última búsqueda: {when}.": "Última verificação: {when}."
 }

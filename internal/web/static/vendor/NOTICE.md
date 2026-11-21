@@ -10,6 +10,8 @@ These files are bundled unmodified so the app works offline. Each keeps its own 
 | `katex/` (js, css, fonts) | [KaTeX](https://github.com/KaTeX/KaTeX) | 0.16.11 | MIT |
 | `mermaid.min.js` | [Mermaid](https://github.com/mermaid-js/mermaid) | 11.4.1 | MIT |
 | `jsxgraph/` (js, css) | [JSXGraph](https://github.com/jsxgraph/jsxgraph) | 1.14.3 | MIT or LGPL-3.0 |
+| `three/` (`three.min.js`, `OrbitControls.js`) | [Three.js](https://github.com/mrdoob/three.js) | 0.147.0 | MIT |
+| `tone/` (`Tone.js`) | [Tone.js](https://github.com/Tonejs/Tone.js) | 14.7.77 | MIT |
 | `dockview/` | [Dockview](https://github.com/mathuo/dockview) (dockview-core) | 8.8.3 | MIT |
 | `auto-animate/` | [AutoAnimate](https://github.com/formkit/auto-animate) | 0.8.2 | MIT |
 | `inter/` | [Inter](https://github.com/rsms/inter) (Fontsource, variable) | 5.2.5 | OFL-1.1 |

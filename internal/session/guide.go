@@ -44,6 +44,7 @@ type PlannedConcept struct {
 // those the vault already has) and the pending ones below, mapped but left to explain on demand.
 type ConceptPlan struct {
 	Topic    string           `json:"topic"`
+	Area     string           `json:"area,omitempty"`
 	Depth    int              `json:"depth"`
 	Base     []string         `json:"base"` // ids the topic needs directly
 	Concepts []PlannedConcept `json:"concepts"`
@@ -87,6 +88,7 @@ func splitPlan(p ConceptPlan) ConceptPlan {
 // rawPlan is what the planner model returns.
 type rawPlan struct {
 	Title    string   `json:"title"`
+	Area     string   `json:"area"`
 	Requires []string `json:"requires"`
 	Concepts []struct {
 		ID       string   `json:"id"`
@@ -187,7 +189,7 @@ func normalizePlan(raw rawPlan, topic string, depth, mapped int, find lookup) Co
 		all[id] = c
 	}
 	plan := levels(all, order, base, mapped)
-	plan.Topic, plan.Depth = topic, depth
+	plan.Topic, plan.Area, plan.Depth = topic, vault.NormalizeArea(raw.Area), depth
 	return splitPlan(plan)
 }
 
@@ -310,7 +312,7 @@ func applyEdit(p ConceptPlan, e planEdit, find lookup) ConceptPlan {
 		promoted = append(promoted, id) // asked for by name: written even with depth 0
 	}
 	out := levels(all, order, base, mapped)
-	out.Topic, out.Depth, out.Promoted = p.Topic, p.Depth, promoted
+	out.Topic, out.Area, out.Depth, out.Promoted = p.Topic, p.Area, p.Depth, promoted
 	return splitPlan(out)
 }
 
@@ -625,7 +627,17 @@ func stateOf(err error) string {
 
 // writeGuide writes the guide itself, verifies its links and widgets, and saves the note.
 func (s *Session) writeGuide(ctx context.Context, note *vault.Note, req GuideReq, plan ConceptPlan) error {
+	area := plan.Area
+	if area == "" {
+		area = note.Meta.Area
+	}
+	if area == "" && note.Meta.Field != "" {
+		area = vault.NormalizeArea(note.Meta.Field)
+	}
 	prompt := "Topic: " + req.Topic
+	if area != "" {
+		prompt += "\nAREA: " + area
+	}
 	if req.Focus != "" {
 		prompt += "\nFOCUS: " + req.Focus
 	}
@@ -660,6 +672,7 @@ func (s *Session) writeGuide(ctx context.Context, note *vault.Note, req GuideReq
 	}
 
 	var out struct {
+		Area      string           `json:"area"`
 		Resources []vault.Resource `json:"resources"`
 		Handoff   string           `json:"handoff"`
 	}
@@ -691,6 +704,13 @@ func (s *Session) writeGuide(ctx context.Context, note *vault.Note, req GuideReq
 	}
 	note.Meta.Resources = resources
 	note.Meta.Depth, note.Meta.Focus = req.Depth, req.Focus
+	if plan.Area != "" {
+		note.Meta.Area = plan.Area
+	} else if a := vault.NormalizeArea(out.Area); a != "" {
+		note.Meta.Area = a
+	} else if note.Meta.Area == "" && area != "" {
+		note.Meta.Area = area
+	}
 	if len(plan.Concepts) > 0 || len(plan.Pending) > 0 || req.Depth > 0 {
 		note.Meta.Concepts, note.Meta.Base, note.Meta.Pending = nil, plan.Base, nil
 		for _, c := range plan.Concepts {

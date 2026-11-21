@@ -20,6 +20,7 @@ Rules:
 Reply with a single fenced ```json block and nothing else:
 {
   "title": "the topic's title as the learner should see it",
+  "area": "one of: matematicas | fisica | electronica | quimica | biologia | medicina | informatica | musica | historia | ciencias-sociales | economia | lenguas | arte | filosofia | general",
   "requires": ["ids the topic directly needs (level 1)"],
   "concepts": [
     {"id": "...", "title": "...", "summary": "one sentence: what the learner must understand about it to follow the topic", "category": "...", "requires": ["ids this concept directly needs"]}

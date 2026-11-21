@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/krilinxito/studyhomie/internal/session"
 	"github.com/krilinxito/studyhomie/internal/vault"
 )
 
@@ -372,14 +373,16 @@ func (s *Server) dig(w http.ResponseWriter, r *http.Request) {
 // vizTimeout bounds building a page for an html widget: a whole document, so longer than a short answer.
 const vizTimeout = 6 * time.Minute
 
-// vizPage builds the page an html widget describes and answers with its path.
+// vizPage builds, regenerates, or repairs the page an html widget describes and answers with its path.
 func (s *Server) vizPage(w http.ResponseWriter, r *http.Request) {
 	slug, ok := noteSlug(w, r)
 	if !ok {
 		return
 	}
 	var body struct {
-		Brief string `json:"brief"`
+		Brief    string `json:"brief"`
+		Force    bool   `json:"force"`
+		FixError string `json:"fixError"`
 	}
 	if !readJSON(w, r, &body) {
 		return
@@ -387,7 +390,10 @@ func (s *Server) vizPage(w http.ResponseWriter, r *http.Request) {
 	drain(r)
 	ctx, cancel := context.WithTimeout(r.Context(), vizTimeout)
 	defer cancel()
-	src, err := s.shortSession().VizPage(ctx, slug, body.Brief)
+	src, err := s.shortSession().VizPageWithOpts(ctx, slug, body.Brief, session.VizPageOpts{
+		Force:    body.Force,
+		FixError: body.FixError,
+	})
 	if err != nil {
 		fail(w, shortStatus(err), s.errText(err))
 		return
