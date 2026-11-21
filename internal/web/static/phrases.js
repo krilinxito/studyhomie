@@ -37,6 +37,51 @@
       t('Subiendo…'),
       t('Guardando tu material…'),
     ],
+    // Narval companion quips (concise, warm, never spammy)
+    pet: [
+      t('Si algo suena difícil, lo bajamos un nivel en el iceberg.'),
+      t('Un paso pequeño hoy también protege tu racha.'),
+      t('Explicarlo con tus palabras vale más que releer tres veces.'),
+      t('¿Probamos un visual interactivo o unas tarjetas?'),
+      t('Aquí estoy por si te atascas con algún concepto.'),
+    ],
+    goalMet: [
+      t('¡Meta diaria cumplida! Tu racha está a salvo hoy.'),
+      t('¡Objetivo de hoy listo! Buen ritmo.'),
+    ],
+    guideReady: [
+      t('¡Guía lista! Si algo da por sabido demasiado, mira el iceberg.'),
+      t('Ya la tienes armada. Prueba un visual o las actividades al final.'),
+    ],
+    cardCollected: [
+      t('¡Qué joya para tu colección!'),
+      t('¡Esa no era fácil! Directa al álbum.'),
+    ],
+    activitiesDone: [
+      t('¡Te pasaste todas las actividades de esta guía!'),
+      t('De la teoría a la práctica: impecable.'),
+    ],
+    goodScore: [
+      t('¡Lo tienes clarísimo! Se nota que lo entendiste de verdad.'),
+      t('Gran resultado. Así se afianza un tema.'),
+    ],
+    lowScore: [
+      t('Buen primer intento: ahí es justo donde más se aprende.'),
+      t('Tranquilo, ahora sabes exactamente qué pieza reforzar.'),
+    ],
+    atRisk: [
+      t('Tu racha espera un pequeño repaso antes de que acabe el día.'),
+      t('Un par de tarjetas o una lectura rápida y salvas la racha.'),
+    ],
+    lostStreak: [
+      t('Hoy empezamos una racha nueva. Sin presión.'),
+    ],
+    wakeUp: [
+      t('¡Volviste! ¿Retomamos donde lo dejamos?'),
+    ],
+    error: [
+      t('¡Uy! Algo tropezó con la IA. Probamos de nuevo cuando quieras.'),
+    ],
   };
 
   const last = {};

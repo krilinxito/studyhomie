@@ -86,7 +86,7 @@
         <button class="btn small red" id="btn-cancel" type="button" hidden data-i18n="Detener">Detener</button>
       </div>
       <div id="transcript" class="transcript" aria-live="polite"></div>
-      <div class="working" id="working" hidden><span class="pulse"></span><span id="working-text" data-i18n="Pensando…">Pensando…</span></div>
+      <div class="working" id="working" hidden><span class="working-narval" id="working-narval" aria-hidden="true"></span><span id="working-text" data-i18n="Pensando…">Pensando…</span></div>
       <form class="composer" id="composer">
         <div class="composer-label" id="composer-label" hidden></div>
         <div class="quick" id="quick" hidden></div>
@@ -137,6 +137,7 @@
         <div id="cy" role="img" aria-label="Mapa: cada guía con los conceptos en que se apoya" data-i18n-aria-label="Mapa: cada guía con los conceptos en que se apoya"></div>
         <div class="map-node-bar" id="map-node-bar" hidden></div>
         <div class="empty" id="map-empty" hidden>
+          <div class="empty-narval" id="map-empty-narval" aria-hidden="true"></div>
           <h3 id="map-empty-title" data-i18n="Tu mapa está vacío">Tu mapa está vacío</h3>
           <p id="map-empty-text" data-i18n="Pide una guía en el chat. Cada guía y sus conceptos aparecerán aquí, conectados.">Pide una guía en el chat. Cada guía y sus conceptos aparecerán aquí, conectados.</p>
           <button class="btn small" type="button" id="map-see-all" hidden data-i18n="Ver el mapa de todas tus conversaciones">Ver el mapa de todas tus conversaciones</button>
@@ -200,6 +201,7 @@
     </div>
   </dialog>
 
+  <div id="narval-pop" class="narval-pop" role="status" aria-live="polite" hidden></div>
   <div id="toast" role="status" aria-live="assertive" hidden></div>
 
   <script src="i18n.js"></script>

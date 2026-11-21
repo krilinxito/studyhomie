@@ -2086,8 +2086,16 @@ async function loadStats() {
     const hadStats = !!S.stats;
     S.stats = await api('/api/stats');
     drawStreakPill();
-    if (hadStats && !prevMet && S.stats.goalMet) flashNarval('celebrando', 8000);
-    else renderNarval();
+    if (hadStats && !prevMet && S.stats.goalMet) {
+      flashNarval('celebrando', 8000);
+      narvalSay('celebrando', Phrases.pick('goalMet'), { force: true });
+    } else {
+      renderNarval();
+      if (!NARVAL.warnedRisk && S.stats.atRisk) {
+        NARVAL.warnedRisk = true;
+        narvalSay('preocupado', Phrases.pick('atRisk'));
+      }
+    }
     if (S.dock && S.dock.getPanel('progress')) drawProgress();
   } catch { /* non-fatal */ }
 }
@@ -2227,10 +2235,28 @@ function drawProgress() {
       h('span', { class: 'rar-name' }, RARITY_LABEL[r]),
       h('strong', {}, `${(cs.byRarity && cs.byRarity[r]) || 0} / ${(cs.totals && cs.totals[r]) || 0}`)))));
 
+  const nvMood = st.goalMet ? 'celebrando' : st.atRisk ? 'preocupado' : st.lostStreak ? 'triste' : st.todayXP > 0 ? 'feliz' : 'mirando';
+  const nvLine = st.goalMet ? Phrases.pick('goalMet')
+    : st.atRisk ? Phrases.pick('atRisk')
+      : st.lostStreak ? Phrases.pick('lostStreak')
+        : Phrases.pick('pet');
+  const nvArt = h('span', { class: 'prog-narval-art', 'aria-hidden': 'true' }, window.Narval ? Narval.svg(nvMood) : null);
+  const nvText = h('strong', {}, nvLine);
+  const nvBanner = window.Narval ? h('button', {
+    class: 'prog-narval', type: 'button',
+    onclick: () => {
+      const m = ['feliz', 'celebrando', 'mirando'][Math.floor(Math.random() * 3)];
+      nvArt.replaceChildren(Narval.svg(m));
+      nvText.textContent = Phrases.pick('pet');
+      flashNarval(m, 3500);
+    },
+  }, nvArt, h('div', { class: 'prog-narval-copy' }, nvText, h('small', {}, t('Pulsa para saludar')))) : null;
+
   root.replaceChildren(h('div', { class: 'prog' },
     h('div', { class: 'prog-head' },
       h('h2', {}, t('Progreso')),
       h('button', { class: 'btn small ghost', type: 'button', onclick: () => show('settings') }, icon('settings'), t('Meta diaria de XP'))),
+    nvBanner,
     kpis,
     cardsSec,
     calendarSec,
@@ -2315,6 +2341,7 @@ function activitiesSection(n, { inPractice = false } = {}) {
           ? t('¡Todas las actividades completadas! +{xp} XP', { xp: r.xpGained })
           : t('¡Actividad completada! +{xp} XP', { xp: r.xpGained }));
         flashNarval(allDone ? 'celebrando' : 'feliz', 5000);
+        if (allDone) narvalSay('celebrando', Phrases.pick('activitiesDone'), { force: true });
       } else if (payload.wantFeedback) {
         toast(t('Feedback guardado.'));
       } else if (payload.submission) {
@@ -2535,7 +2562,9 @@ function drawFlashcards(host, note) {
         const res = await api('/api/cards/review', { method: 'POST', body: { deck: c.deck, cardId: c.id, rating } });
         if (res.newlyCollected) {
           toast(t('¡Tarjeta {rarity} coleccionada! +{xp} XP', { rarity: RARITY_LABEL[rar] || rar, xp: res.xpGained }));
-          flashNarval(rar === 'legendary' || rar === 'epic' ? 'celebrando' : 'feliz', 5000);
+          const big = rar === 'legendary' || rar === 'epic';
+          flashNarval(big ? 'celebrando' : 'feliz', 5000);
+          if (big) narvalSay('celebrando', Phrases.pick('cardCollected'));
         }
         await loadFlashcards(host, note);
         loadStats();
@@ -2558,7 +2587,9 @@ function drawFlashcards(host, note) {
         : h('div', { class: 'actions' },
           h('button', { class: 'btn small primary', type: 'button', onclick: () => { CARDS.revealed = true; drawFlashcards(host, note); } }, t('Dar la vuelta'))));
   } else if (cards.length > 0) {
-    stage = h('p', { class: 'hint fc-done' }, t('¡Al día! No tienes tarjetas pendientes por ahora. Vuelve cuando toque el próximo repaso.'));
+    stage = h('div', { class: 'fc-done-row' },
+      window.Narval ? h('span', { class: 'fc-done-art', 'aria-hidden': 'true' }, Narval.svg('feliz')) : null,
+      h('p', { class: 'hint fc-done' }, t('¡Al día! No tienes tarjetas pendientes por ahora. Vuelve cuando toque el próximo repaso.')));
   } else {
     stage = h('p', { class: 'hint' }, t('Genera tarjetas coleccionables desde la guía o importa un mazo de Anki (.txt) para empezar a repasar con FSRS.'));
   }
@@ -2905,8 +2936,9 @@ function resetTranscript() {
 }
 
 /* ---------- Narval mascot state & onboarding tutorial ---------- */
-const NARVAL = { mood: 'normal', flash: '', flashTimer: 0, sleeping: false, idleTimer: 0, phase: '' };
+const NARVAL = { mood: 'normal', flash: '', flashTimer: 0, sleeping: false, idleTimer: 0, phase: '', popTimer: 0, lastPop: 0, warnedRisk: false };
 const IDLE_SLEEP_MS = 4 * 60 * 1000;
+const NARVAL_POP_COOLDOWN_MS = 12 * 1000;
 
 function pickNarvalMood() {
   if (NARVAL.flash) return NARVAL.flash;
@@ -2929,6 +2961,25 @@ function renderNarval() {
   if (hdr) hdr.replaceChildren(Narval.svg(mood));
   const wel = $('#welcome-narval');
   if (wel) wel.replaceChildren(Narval.svg(mood));
+  const wk = $('#working-narval');
+  if (wk) wk.replaceChildren(Narval.svg((NARVAL.phase === 'quiz' || NARVAL.phase === 'feynman') ? 'concentrado' : 'estudiando'));
+  const mapEmpty = $('#map-empty-narval');
+  if (mapEmpty && !mapEmpty.firstChild) mapEmpty.replaceChildren(Narval.svg('mirando'));
+}
+
+function narvalSay(mood, text, { ms = 5500, force = false } = {}) {
+  const pop = $('#narval-pop');
+  if (!pop || !window.Narval || !text) return;
+  const now = Date.now();
+  if (!force && now - NARVAL.lastPop < NARVAL_POP_COOLDOWN_MS) return;
+  NARVAL.lastPop = now;
+  clearTimeout(NARVAL.popTimer);
+  pop.replaceChildren(
+    h('span', { class: 'narval-pop-art', 'aria-hidden': 'true' }, Narval.svg(mood || 'feliz')),
+    h('span', { class: 'narval-pop-text' }, text));
+  pop.hidden = false;
+  pop.onclick = () => { clearTimeout(NARVAL.popTimer); pop.hidden = true; };
+  NARVAL.popTimer = setTimeout(() => { pop.hidden = true; }, ms);
 }
 
 function flashNarval(mood, ms = 7000) {
@@ -2940,7 +2991,11 @@ function flashNarval(mood, ms = 7000) {
 
 function resetNarvalIdle() {
   clearTimeout(NARVAL.idleTimer);
-  if (NARVAL.sleeping) { NARVAL.sleeping = false; renderNarval(); }
+  if (NARVAL.sleeping) {
+    NARVAL.sleeping = false;
+    renderNarval();
+    narvalSay('mirando', Phrases.pick('wakeUp'));
+  }
   NARVAL.idleTimer = setTimeout(() => {
     if (!S.working) { NARVAL.sleeping = true; renderNarval(); }
   }, IDLE_SLEEP_MS);
@@ -3017,9 +3072,12 @@ $('#tut-skip').addEventListener('click', closeTutorial);
 $('#tutorial-dialog').addEventListener('cancel', (e) => { e.preventDefault(); closeTutorial(); });
 
 function emptyState() {
+  const sayEl = h('p', { class: 'welcome-say', hidden: true });
   const pet = () => {
     const reactions = ['feliz', 'celebrando', 'mirando'];
     flashNarval(reactions[Math.floor(Math.random() * reactions.length)], 3200);
+    sayEl.textContent = Phrases.pick('pet');
+    sayEl.hidden = false;
   };
   const narvalBtn = h('button', {
     class: 'welcome-narval', type: 'button', id: 'welcome-narval',
@@ -3027,6 +3085,7 @@ function emptyState() {
   }, window.Narval ? Narval.svg(pickNarvalMood()) : null);
   return h('div', { class: 'chat-empty' },
     narvalBtn,
+    sayEl,
     h('p', { class: 'eyebrow' }, 'StudyHomie'),
     h('h1', {}, Phrases.welcome()),
     h('p', { class: 'lead' }, t('Pregunta lo que sea o pide una guía: te explico el tema y lo que da por sabido, hasta lo básico.')),
@@ -3324,6 +3383,7 @@ function renderCard(c, run) {
           h('button', { class: 'btn small', type: 'button', onclick: async () => { await openNote(c.slug, { quiet: true }); show('concepts'); } }, icon('mountain-snow'), t('Ver el iceberg')))));
       if (!run.replay) {
         flashNarval('celebrando', 7000);
+        narvalSay('celebrando', Phrases.pick('guideReady'));
         loadGraph().catch(() => {}).then(async () => {
           await openNote(c.slug);
           if (S.note && S.note.slug === c.slug && !(S.note.activities && S.note.activities.length)) {
@@ -3360,7 +3420,9 @@ function renderCard(c, run) {
         h('div', { class: 'score-ring', style: `--p:${Math.max(0, Math.min(100, c.score))}`, role: 'img', 'aria-label': t('{score} de 100', { score: c.score }) }, h('span', {}, c.score)),
         h('div', {}, h('strong', {}, `${c.label}: ${verdict}`), c.detail && h('div', { class: 'hint' }, c.detail))));
       if (!run.replay) {
-        flashNarval(tone === 'good' ? 'celebrando' : tone === 'mid' ? 'feliz' : 'desanimado', 7000);
+        const m = tone === 'good' ? 'celebrando' : tone === 'mid' ? 'feliz' : 'desanimado';
+        flashNarval(m, 7000);
+        narvalSay(m, Phrases.pick(tone === 'low' ? 'lowScore' : 'goodScore'));
         loadGraph().catch(() => {}).then(() => reloadGuide()); // the score may unlock the next topic
       }
       break;
@@ -3584,7 +3646,10 @@ function finishRun(run, e) {
   setWorking(false);
   if (e.error) {
     addMsg('bot error', t(e.error));
-    if (!run.replay) flashNarval('sorprendido', 7000);
+    if (!run.replay) {
+      flashNarval('sorprendido', 7000);
+      narvalSay('sorprendido', Phrases.pick('error'));
+    }
   }
   if (!$('#transcript').children.length) $('#transcript').append(emptyState());
   setComposer('chat'); // writing again continues this chat
