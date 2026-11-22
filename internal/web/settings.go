@@ -44,8 +44,37 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 		"providers":  providers.Statuses(r.Context(), cfg),
 		"warning":    warning,
 		"configPath": s.ConfigPath,
-		"study":      studySettings{PassScore: &cfg.PassScore, Timeout: &cfg.Timeout, DailyGoal: intPtr(stats.NormalizeGoal(cfg.DailyGoal))},
+		"study":      studySettings{PassScore: &cfg.PassScore, Timeout: &cfg.Timeout, DailyGoal: intPtr(stats.NormalizeGoal(cfg.DailyGoal)), MaxParallel: intPtr(maxParallel(cfg))},
+		"sources":    sourceSettings{YouTubeKey: cfg.YouTubeKey, BraveKey: cfg.BraveKey},
 	})
+}
+
+// sourceSettings holds the optional API keys for searching YouTube and Brave Search.
+type sourceSettings struct {
+	YouTubeKey string `json:"youtubeKey"`
+	BraveKey   string `json:"braveKey"`
+}
+
+// saveSourceSettings writes the optional source API keys to studyhomie.toml.
+func (s *Server) saveSourceSettings(w http.ResponseWriter, r *http.Request) {
+	var body sourceSettings
+	if !readJSON(w, r, &body) {
+		return
+	}
+	s.pmu.Lock()
+	cfg := s.Cfg
+	cfg.YouTubeKey = strings.TrimSpace(body.YouTubeKey)
+	cfg.BraveKey = strings.TrimSpace(body.BraveKey)
+	if s.ConfigPath != "" {
+		if err := config.Write(s.ConfigPath, cfg); err != nil {
+			s.pmu.Unlock()
+			fail(w, 500, "no pude guardar "+s.ConfigPath+": "+err.Error())
+			return
+		}
+	}
+	s.Cfg = cfg
+	s.pmu.Unlock()
+	writeJSON(w, 200, sourceSettings{YouTubeKey: cfg.YouTubeKey, BraveKey: cfg.BraveKey})
 }
 
 func intPtr(v int) *int { return &v }
@@ -56,6 +85,18 @@ type studySettings struct {
 	PassScore *int `json:"passScore,omitempty"`
 	Timeout   *int `json:"timeout,omitempty"`
 	DailyGoal *int `json:"dailyGoal,omitempty"`
+	// MaxParallel is how many flows (chat, practices) may call the AI at the same time.
+	MaxParallel *int `json:"maxParallel,omitempty"`
+}
+
+// maxParallelCap bounds max_parallel: each flow may be a Claude CLI process of its own.
+const maxParallelCap = 6
+
+func maxParallel(cfg config.Config) int {
+	if cfg.MaxParallel <= 0 {
+		return 2
+	}
+	return min(cfg.MaxParallel, maxParallelCap)
 }
 
 // maxTimeout bounds the time limit of an AI call that can be set, in minutes.
@@ -67,7 +108,11 @@ func (s *Server) saveStudySettings(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &body) {
 		return
 	}
-	if (body.PassScore == nil && body.Timeout == nil && body.DailyGoal == nil) || (body.PassScore != nil && (*body.PassScore < 0 || *body.PassScore > 100)) {
+	if body.MaxParallel != nil && (*body.MaxParallel < 1 || *body.MaxParallel > maxParallelCap) {
+		fail(w, 400, "las llamadas a la vez van de 1 a 6")
+		return
+	}
+	if (body.PassScore == nil && body.Timeout == nil && body.DailyGoal == nil && body.MaxParallel == nil) || (body.PassScore != nil && (*body.PassScore < 0 || *body.PassScore > 100)) {
 		fail(w, 400, "la nota para avanzar va de 0 a 100")
 		return
 	}
@@ -90,6 +135,9 @@ func (s *Server) saveStudySettings(w http.ResponseWriter, r *http.Request) {
 	if body.DailyGoal != nil {
 		cfg.DailyGoal = *body.DailyGoal
 	}
+	if body.MaxParallel != nil {
+		cfg.MaxParallel = *body.MaxParallel
+	}
 	if s.ConfigPath != "" {
 		if err := config.Write(s.ConfigPath, cfg); err != nil {
 			s.pmu.Unlock()
@@ -99,7 +147,7 @@ func (s *Server) saveStudySettings(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Cfg = cfg
 	s.pmu.Unlock()
-	writeJSON(w, 200, studySettings{PassScore: &cfg.PassScore, Timeout: &cfg.Timeout, DailyGoal: intPtr(stats.NormalizeGoal(cfg.DailyGoal))})
+	writeJSON(w, 200, studySettings{PassScore: &cfg.PassScore, Timeout: &cfg.Timeout, DailyGoal: intPtr(stats.NormalizeGoal(cfg.DailyGoal)), MaxParallel: intPtr(maxParallel(cfg))})
 }
 
 // saveSettings switches the AI backend, and writes the choice to studyhomie.toml.

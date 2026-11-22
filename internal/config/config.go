@@ -30,7 +30,10 @@ type Config struct {
 	Updates       string   `toml:"updates"`        // new versions: "ask" (default), "auto" or "never"
 	PassScore     int      `toml:"pass_score"`     // mastery (0-100) a roadmap topic needs to unlock the next one
 	DailyGoal     int      `toml:"daily_goal"`     // daily XP goal for the streak (default 50)
+	MaxParallel   int      `toml:"max_parallel"`   // AI calls running at once across chat and practices (default 2)
 	Timeout       int      `toml:"timeout"`        // minutes one AI call may take before it is cut (three times that when it searches the web); 0 = no limit
+	YouTubeKey    string   `toml:"youtube_key"`    // optional: search videos via YouTube Data API
+	BraveKey      string   `toml:"brave_key"`      // optional: search the web via Brave Search API
 }
 
 // DefaultInterests are the fields the Daily draws from when none are configured.
@@ -56,6 +59,7 @@ func Default() Config {
 		PassScore:     70,
 		DailyGoal:     50,
 		Timeout:       5,
+		MaxParallel:   2,
 		Interests:     DefaultInterests(),
 	}
 }

@@ -106,7 +106,7 @@ func TestUpdateFlow(t *testing.T) {
 
 	// while a flow runs, installing needs confirmation
 	s.mu.Lock()
-	s.active = &Run{}
+	s.runs[999] = &Run{ID: 999} // working: not done, not waiting
 	s.mu.Unlock()
 	res, body := do(t, ts, "POST", "/api/update", map[string]any{}, nil)
 	if res.StatusCode != http.StatusConflict || !strings.Contains(string(body), `"busy":true`) {

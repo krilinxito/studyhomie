@@ -86,12 +86,16 @@ async function api(path, opts = {}) {
 }
 
 let toastTimer;
-function toast(msg) {
+// toast shows a short message; action ({ label, onClick }) adds a button to it, such as «Deshacer».
+function toast(msg, action) {
   const box = $('#toast');
-  box.textContent = msg;
+  box.replaceChildren(msg);
+  if (action) {
+    box.append(h('button', { type: 'button', class: 'toast-act', onclick: () => { box.hidden = true; action.onClick(); } }, action.label));
+  }
   box.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { box.hidden = true; }, 6000);
+  toastTimer = setTimeout(() => { box.hidden = true; }, action ? 9000 : 6000);
 }
 
 // Same rules as vault.Slugify in Go, so links resolve to the same note.
@@ -349,7 +353,11 @@ function createDock() {
   const DV = window['dockview-core'];
   const dock = DV.createDockview($('#dock'), {
     theme: DV.themeLightSpaced,
-    createComponent: ({ name }) => ({ element: PANE_EL[name], init() {} }),
+    createComponent: ({ id, name }) => ({
+      element: name === 'practiceRun' ? practiceView(id).root : name === 'review' ? reviewPane() : PANE_EL[name],
+      init() {},
+    }),
+    createTabComponent: ({ id, name }) => (name === 'practiceTab' ? practiceTab(id) : undefined),
     createRightHeaderActionComponent: (group) => groupActions(group),
   });
   S.dock = dock;
@@ -364,6 +372,8 @@ function createDock() {
     try { dock.fromJSON(saved); restored = !!dock.getPanel('chat'); } catch { restored = false; }
   }
   if (!restored) defaultLayout();
+  // practices come back from the server (GET /api/practice), not from the saved layout
+  for (const p of [...dock.panels]) if (/^practice-|^review$/.test(p.id)) p.api.close();
   // a saved layout carries the titles it was saved with: names come from the code, so a rename shows up
   for (const p of dock.panels) if (PANES[p.id] && p.title !== PANES[p.id]) p.api.setTitle(PANES[p.id]);
   // the study panel starts closed: it slides in when the app has something to show
@@ -375,7 +385,7 @@ function createDock() {
     drawGroupActions();
   });
   dock.onDidMaximizedGroupChange?.(() => drawGroupActions());
-  dock.onDidRemovePanel?.(() => { syncPanelButton(); syncSidebarButton(); });
+  dock.onDidRemovePanel?.((p) => { if (p && /^practice-/.test(p.id)) forgetPracticeView(p.id); syncPanelButton(); syncSidebarButton(); });
   dock.onDidAddPanel?.(() => { syncPanelButton(); syncSidebarButton(); });
   dock.onDidActivePanelChange((p) => { if (p) onShown(p.id); syncSidebarButton(); });
   syncSidebarButton();
@@ -758,7 +768,9 @@ function drawSettings() {
       row('', h('div', { class: 'set-actions' }, save, test), result)),
     languageSection(row),
     studySection(row),
+    sourcesSection(row),
     updateSection(row),
+    ...dataSections(),
     h('p', { class: 'set-foot' }, t('Se guarda en {file}. Lo que esté en curso termina con la IA anterior.', { file: SET.data.configPath || 'studyhomie.toml' }))));
 }
 
@@ -804,6 +816,15 @@ function studySection(row) {
       say('ok', t('Guardado.'));
     } catch (err) { say('bad', err.message); }
   });
+  const par = h('input', { type: 'number', min: 1, max: 6, step: 1, value: study.maxParallel ?? 2, class: 'set-num', 'aria-label': t('Llamadas a la IA a la vez') });
+  par.addEventListener('change', async () => {
+    const v = Math.round(Number(par.value));
+    if (!Number.isFinite(v) || v < 1 || v > 6) { say('bad', t('Pon un número de 1 a 6.')); return; }
+    try {
+      SET.data.study = await api('/api/settings/study', { method: 'POST', body: { maxParallel: v } });
+      say('ok', t('Guardado.'));
+    } catch (err) { say('bad', err.message); }
+  });
   const goalIn = h('input', { type: 'number', min: 10, max: 500, step: 10, value: study.dailyGoal ?? 50, class: 'set-num', 'aria-label': t('Meta diaria de XP') });
   const presets = [30, 50, 100];
   let presetBtns = [];
@@ -829,9 +850,33 @@ function studySection(row) {
       h('p', { class: 'set-facts' }, t('En un roadmap, el tema siguiente se desbloquea (y se escribe su guía) cuando sacas esta nota o más en la prueba o explicándolo.'))),
     row(t('Límite por respuesta'), h('div', { class: 'set-inline' }, limit, h('span', {}, t('minutos'))),
       h('p', { class: 'set-facts' }, t('Si la IA tarda más que esto en una respuesta, la corto y te aviso, en vez de esperar para siempre. Las guías que buscan en la web tienen el triple. 0 es sin límite.'))),
+    row(t('A la vez'), h('div', { class: 'set-inline' }, par, h('span', {}, t('llamadas a la IA'))),
+      h('p', { class: 'set-facts' }, t('Cuántas cosas pueden estar pidiéndole algo a la IA al mismo tiempo (el chat y cada práctica). Lo que pase de ahí espera su turno.'))),
     row(t('Tutorial'), h('button', { type: 'button', class: 'btn small', onclick: () => openTutorial(true) }, t('Ver tutorial')),
       h('p', { class: 'set-facts' }, t('Repasa en 6 pasos cómo funcionan las guías, el iceberg, el mapa, la práctica y tu racha.'))),
     row('', result));
+}
+
+// the "Fuentes externas" block of the settings page: optional API keys for YouTube Data API and Brave Search
+function sourcesSection(row) {
+  const src = SET.data.sources || {};
+  const result = h('p', { class: 'set-result', role: 'status' });
+  const say = (cls, text) => { result.className = `set-result ${cls}`; result.textContent = text; };
+  const yt = h('input', { type: 'password', value: src.youtubeKey || '', placeholder: 'AIza…', autocomplete: 'off', spellcheck: 'false', 'aria-label': t('Clave de YouTube Data API') });
+  const brave = h('input', { type: 'password', value: src.braveKey || '', placeholder: 'BSA…', autocomplete: 'off', spellcheck: 'false', 'aria-label': t('Clave de Brave Search') });
+  const save = h('button', { type: 'button', class: 'btn small', onclick: async () => {
+    save.disabled = true;
+    try {
+      SET.data.sources = await api('/api/settings/sources', { method: 'POST', body: { youtubeKey: yt.value.trim(), braveKey: brave.value.trim() } });
+      say('ok', t('Guardado.'));
+    } catch (err) { say('bad', err.message); }
+    save.disabled = false;
+  } }, t('Guardar'));
+  return h('section', { class: 'set-section' }, h('h3', {}, t('Fuentes externas')),
+    row('', h('p', { class: 'set-facts' }, t('Wikipedia, OpenAlex, Crossref, Open Library y la verificación de YouTube funcionan sin clave. Estas claves opcionales añaden búsqueda de videos y de la web.'))),
+    row('YouTube Data API', yt, h('p', { class: 'set-facts' }, t('Opcional: busca videos en YouTube con duración al pedir más material.'))),
+    row('Brave Search', brave, h('p', { class: 'set-facts' }, t('Opcional: añade resultados web al buscar más material.'))),
+    row('', h('div', { class: 'set-actions' }, save), result));
 }
 
 /* ---------- Actualizaciones ---------- */
@@ -978,6 +1023,244 @@ $('#update-go').addEventListener('click', () => installUpdate());
 $('#update-later').addEventListener('click', () => { setLater(UPD.st.latest); drawUpdateBar(); });
 $('#update-close').addEventListener('click', () => $('#update-dialog').close());
 
+// Ajustes → «Datos y almacenamiento» and «Papelera»: what the vault holds by category, deleting
+// into a trash that can be undone, and cleaning up what deleted notes left behind.
+const DATA_CATS = {
+  guias: { label: t('Guías'), group: 'vault' },
+  conceptos: { label: t('Conceptos'), group: 'vault' },
+  roadmaps: { label: t('Roadmaps'), group: 'vault' },
+  fuentes: { label: t('Fuentes'), group: 'vault' },
+  apuntes: { label: t('Apuntes'), group: 'vault' },
+  adjuntos: { label: t('Adjuntos de apuntes'), group: 'vault' },
+  flashcards: { label: t('Mazos de tarjetas'), group: 'vault' },
+  material: { label: t('Material subido'), group: 'vault' },
+  interactive: { label: t('Simulaciones'), group: 'vault' },
+  daily: { label: t('Retos diarios'), group: 'vault' },
+  sessions: { label: t('Conversaciones'), group: 'app' },
+  practice: { label: t('Prácticas guardadas'), group: 'app' },
+  uploads: { label: t('Archivos enviados al chat'), group: 'app' },
+  handoffs: { label: t('Resúmenes internos de guías'), group: 'app' },
+  sources: { label: t('Texto extraído del material'), group: 'app' },
+  state: { label: t('Estadísticas y progreso'), group: 'app' },
+};
+const STATE_ITEMS = { stats: t('Estadísticas, XP y racha'), cards: t('Progreso de repaso de tarjetas') };
+const TRASH_KINDS = { ...Object.fromEntries(Object.entries(DATA_CATS).map(([k, v]) => [k, v.label])), orphans: t('Archivos huérfanos') };
+const DATA = { overview: null, trash: null, orphans: null, open: '', items: {}, sel: new Set(), q: '', withDeck: false, withSessions: false, showOrphans: false, error: '' };
+
+function dataSections() {
+  const data = h('section', { class: 'set-section data-sec', id: 'data-sec' }, h('h3', {}, t('Datos y almacenamiento')), h('p', { class: 'set-facts data-loading' }, t('Cargando…')));
+  const trash = h('section', { class: 'set-section data-sec', id: 'trash-sec' }, h('h3', {}, t('Papelera')));
+  loadData();
+  return [data, trash];
+}
+
+async function loadData() {
+  try {
+    const [overview, trash] = await Promise.all([api('/api/data'), api('/api/trash')]);
+    DATA.overview = overview; DATA.trash = trash; DATA.error = '';
+    if (DATA.showOrphans) DATA.orphans = (await api('/api/orphans')).orphans;
+    if (DATA.open) DATA.items[DATA.open] = (await api(`/api/data/${DATA.open}`)).items;
+  } catch (err) { DATA.error = err.message; }
+  drawData();
+}
+
+// after deleting or restoring something, the rest of the app may be showing it
+async function dataChanged() {
+  await loadData();
+  try { await loadGraph(); } catch { /* the map reloads on its own next time */ }
+  if (S.guide && !nodeOf(S.guide)) { S.note = null; S.guide = ''; store.set('guide', ''); renderReader(null); }
+  if (typeof loadChats === 'function') loadChats();
+  loadStats();
+}
+
+function drawData() {
+  const sec = $('#data-sec'), tsec = $('#trash-sec');
+  if (!sec || !tsec) return;
+  const head = h('h3', {}, t('Datos y almacenamiento'));
+  if (DATA.error) { sec.replaceChildren(head, h('p', { class: 'set-result bad' }, DATA.error)); return; }
+  const ov = DATA.overview;
+  if (!ov) return;
+  const keep = (DATA.trash && DATA.trash.keepDays) || 30;
+  const cats = ov.categories.filter((c) => DATA_CATS[c.id]);
+  const max = Math.max(1, ...cats.map((c) => c.bytes));
+  const total = cats.reduce((a, c) => a + c.bytes, 0);
+  const group = (g, title) => {
+    const list = cats.filter((c) => DATA_CATS[c.id].group === g);
+    return h('div', { class: 'data-group' },
+      h('p', { class: 'data-group-title' }, title),
+      h('ul', { class: 'data-cats' }, list.map((c) => dataCatRow(c, max))));
+  };
+  const orph = ov.orphans || { count: 0, bytes: 0 };
+  sec.replaceChildren(head,
+    h('p', { class: 'set-facts' }, t('Todo vive en tu vault. Lo que borras va a la papelera y puedes restaurarlo durante {n} días.', { n: keep }), ' ',
+      h('strong', {}, t('Total: {size}', { size: fmtBytes(total) }))),
+    group('vault', t('En tu vault (también lo ves en Obsidian)')),
+    group('app', t('Datos internos de la app (carpeta .studyhomie)')),
+    h('div', { class: 'data-orphans' },
+      h('div', { class: 'data-orphans-head' },
+        h('span', {}, !orph.count ? t('No hay archivos huérfanos.')
+          : orph.count === 1 ? t('1 archivo huérfano ({size}): quedó de una nota que ya no existe.', { size: fmtBytes(orph.bytes) })
+            : t('{n} archivos huérfanos ({size}): quedaron de notas que ya no existen.', { n: orph.count, size: fmtBytes(orph.bytes) })),
+        orph.count ? h('button', { type: 'button', class: 'btn small ghost', onclick: async () => {
+          DATA.showOrphans = !DATA.showOrphans;
+          if (DATA.showOrphans) { try { DATA.orphans = (await api('/api/orphans')).orphans; } catch (err) { toast(err.message); } }
+          drawData();
+        } }, DATA.showOrphans ? t('Ocultar') : t('Ver')) : null,
+        orph.count ? h('button', { type: 'button', class: 'btn small', onclick: async () => {
+          try {
+            const r = await api('/api/orphans/clean', { method: 'POST', body: {} });
+            undoToast(tn(r.removed, 'Limpié {n} archivo huérfano.', 'Limpié {n} archivos huérfanos.'), r.trash && r.trash.id);
+            DATA.showOrphans = false;
+            await loadData();
+          } catch (err) { toast(err.message); }
+        } }, t('Limpiar')) : null),
+      DATA.showOrphans && DATA.orphans ? h('ul', { class: 'data-orphan-list' }, DATA.orphans.map((o) => h('li', {},
+        h('span', { class: 'data-kind' }, o.cat === 'cardstate' ? t('Progreso de tarjetas') : (DATA_CATS[o.cat] || {}).label || o.cat),
+        h('span', { class: 'data-title' }, o.cat === 'cardstate' ? t('{n} tarjetas que ya no existen', { n: o.title }) : o.title),
+        o.bytes ? h('span', { class: 'data-size' }, fmtBytes(o.bytes)) : null))) : null));
+  drawTrash(tsec);
+}
+
+function dataCatRow(c, max) {
+  const open = DATA.open === c.id;
+  const row = h('li', { class: `data-cat${open ? ' open' : ''}` },
+    h('button', { type: 'button', class: 'data-cat-head', 'aria-expanded': String(open), disabled: !c.count || null, onclick: async () => {
+      DATA.open = open ? '' : c.id;
+      DATA.sel = new Set(); DATA.q = '';
+      if (DATA.open && !DATA.items[c.id]) { try { DATA.items[c.id] = (await api(`/api/data/${c.id}`)).items; } catch (err) { toast(err.message); } }
+      drawData();
+    } },
+      h('span', { class: 'data-cat-name' }, DATA_CATS[c.id].label),
+      h('span', { class: 'data-cat-count' }, String(c.count)),
+      h('span', { class: 'data-bar', 'aria-hidden': 'true' }, h('span', { style: `width:${Math.max(c.bytes ? 2 : 0, Math.round(c.bytes / max * 100))}%` })),
+      h('span', { class: 'data-size' }, fmtBytes(c.bytes))));
+  if (open) row.append(dataItemsBox(c));
+  return row;
+}
+
+function dataItemsBox(c) {
+  const all = DATA.items[c.id] || [];
+  const q = slugify(DATA.q);
+  const list = all.filter((it) => !q || slugify(it.title || it.id).includes(q));
+  const isState = c.id === 'state';
+  const name = (it) => isState ? (STATE_ITEMS[it.id] || it.id) : (it.title || it.id);
+  const withQuery = () => {
+    if (c.id !== 'guias') return '';
+    const w = [DATA.withDeck && 'deck', DATA.withSessions && 'sessions'].filter(Boolean).join(',');
+    return w ? `?with=${w}` : '';
+  };
+  const remove = async (ids) => {
+    const one = ids.length === 1 ? list.find((it) => it.id === ids[0]) || all.find((it) => it.id === ids[0]) : null;
+    const ok = await askConfirm(
+      isState ? t('¿Reiniciar «{title}»?', { title: name(one || { id: ids[0] }) })
+        : one ? t('¿Mover «{title}» a la papelera?', { title: name(one) }) : t('¿Mover {n} elementos a la papelera?', { n: ids.length }),
+      isState ? t('Empieza de cero. Puedes recuperar lo de antes desde la papelera.') : t('Podrás restaurarlo desde la papelera.'),
+      isState ? t('Reiniciar') : t('Mover a la papelera'));
+    if (!ok) return;
+    let last = '', fails = 0;
+    for (const id of ids) {
+      try { const r = await api(`/api/data/${c.id}/${encodeURIComponent(id)}${withQuery()}`, { method: 'DELETE' }); last = r.trash && r.trash.id; }
+      catch (err) { fails++; toast(err.message); }
+    }
+    DATA.sel = new Set();
+    delete DATA.items[c.id];
+    if (!fails) undoToast(ids.length === 1 ? t('Movido a la papelera.') : t('{n} elementos movidos a la papelera.', { n: ids.length }), ids.length === 1 ? last : '');
+    await dataChanged();
+  };
+  const empty = async () => {
+    const ok = await askConfirm(t('¿Vaciar «{title}»?', { title: DATA_CATS[c.id].label }),
+      t('Se mueven a la papelera sus {n} elementos. Podrás restaurarlos uno por uno.', { n: all.length }), t('Vaciar'));
+    if (!ok) return;
+    try {
+      const r = await api(`/api/data/${c.id}/empty${withQuery()}`, { method: 'POST', body: {} });
+      toast(tn(r.removed, '{n} elemento movido a la papelera.', '{n} elementos movidos a la papelera.'));
+      DATA.sel = new Set();
+      delete DATA.items[c.id];
+      await dataChanged();
+    } catch (err) { toast(err.message); }
+  };
+  const selAll = h('input', { type: 'checkbox', 'aria-label': t('Seleccionar todo'), checked: list.length > 0 && list.every((it) => DATA.sel.has(it.id)) || null, onchange: (e) => {
+    for (const it of list) e.target.checked ? DATA.sel.add(it.id) : DATA.sel.delete(it.id);
+    drawData();
+  } });
+  const search = h('input', { type: 'search', class: 'data-search', placeholder: t('Buscar…'), value: DATA.q, 'aria-label': t('Buscar'), oninput: (e) => {
+    DATA.q = e.target.value;
+    const pos = e.target.selectionStart;
+    drawData();
+    const s = $('.data-search');
+    if (s) { s.focus(); s.setSelectionRange(pos, pos); }
+  } });
+  const opts = c.id === 'guias' ? h('div', { class: 'data-opts' },
+    h('label', {}, h('input', { type: 'checkbox', checked: DATA.withDeck || null, onchange: (e) => { DATA.withDeck = e.target.checked; } }), t('Llevarse también su mazo de tarjetas')),
+    h('label', {}, h('input', { type: 'checkbox', checked: DATA.withSessions || null, onchange: (e) => { DATA.withSessions = e.target.checked; } }), t('y sus conversaciones'))) : null;
+  return h('div', { class: 'data-items' },
+    isState ? null : h('div', { class: 'data-tools' }, selAll, search),
+    opts,
+    h('ul', { class: 'data-list' }, list.length ? list.map((it) => h('li', {},
+      isState ? null : h('input', { type: 'checkbox', 'aria-label': name(it), checked: DATA.sel.has(it.id) || null, onchange: (e) => { e.target.checked ? DATA.sel.add(it.id) : DATA.sel.delete(it.id); drawData(); } }),
+      h('span', { class: 'data-title', title: it.rel }, name(it)),
+      h('span', { class: 'data-date' }, when(it.modified)),
+      h('span', { class: 'data-size' }, fmtBytes(it.bytes)),
+      h('button', { type: 'button', class: 'icon-btn', title: isState ? t('Reiniciar') : t('Mover a la papelera'), 'aria-label': isState ? t('Reiniciar') : t('Mover a la papelera'), onclick: () => remove([it.id]) },
+        icon(isState ? 'rotate-ccw' : 'trash-2')))) : h('li', { class: 'hint' }, t('Nada coincide.'))),
+    isState ? null : h('div', { class: 'data-foot' },
+      h('button', { type: 'button', class: 'btn small danger', disabled: !DATA.sel.size || null, onclick: () => remove([...DATA.sel]) },
+        DATA.sel.size ? t('Mover {n} a la papelera', { n: DATA.sel.size }) : t('Mover a la papelera')),
+      h('button', { type: 'button', class: 'btn small ghost ghost-danger', onclick: empty }, t('Vaciar «{title}»', { title: DATA_CATS[c.id].label }))));
+}
+
+function drawTrash(sec) {
+  const tr = DATA.trash || { items: [], keepDays: 30 };
+  const items = tr.items || [];
+  const size = items.reduce((a, it) => a + (it.bytes || 0), 0);
+  const left = (it) => Math.max(0, tr.keepDays - Math.floor((Date.now() - new Date(it.deleted)) / 86400000));
+  const restore = async (it) => {
+    try {
+      await api(`/api/trash/${encodeURIComponent(it.id)}/restore`, { method: 'POST', body: {} });
+      toast(t('Restaurado: {title}', { title: trashTitle(it) }));
+      await dataChanged();
+    } catch (err) { toast(err.message); }
+  };
+  const purge = async (it) => {
+    if (!await askConfirm(t('¿Borrar «{title}» para siempre?', { title: trashTitle(it) }), t('Esto no se puede deshacer.'))) return;
+    try { await api(`/api/trash/${encodeURIComponent(it.id)}`, { method: 'DELETE' }); await loadData(); } catch (err) { toast(err.message); }
+  };
+  sec.replaceChildren(h('h3', {}, t('Papelera')),
+    h('div', { class: 'data-orphans-head' },
+      h('span', { class: 'set-facts' }, !items.length ? t('La papelera está vacía.')
+        : items.length === 1 ? t('1 elemento · {size}. Se borra solo a los {days} días.', { size: fmtBytes(size), days: tr.keepDays })
+          : t('{n} elementos · {size}. Se borran solos a los {days} días.', { n: items.length, size: fmtBytes(size), days: tr.keepDays })),
+      items.length ? h('button', { type: 'button', class: 'btn small ghost ghost-danger', onclick: async () => {
+        if (!await askConfirm(t('¿Vaciar la papelera?'), t('Se borra para siempre todo lo que hay en ella. Esto no se puede deshacer.'), t('Vaciar'))) return;
+        try { await api('/api/trash/empty', { method: 'POST', body: {} }); await loadData(); } catch (err) { toast(err.message); }
+      } }, t('Vaciar papelera')) : null),
+    items.length ? h('ul', { class: 'data-list trash-list' }, items.map((it) => h('li', {},
+      h('span', { class: 'data-kind' }, TRASH_KINDS[it.kind] || it.kind),
+      h('span', { class: 'data-title', title: (it.files || []).join('\n') }, trashTitle(it)),
+      h('span', { class: 'data-date' }, `${when(it.deleted)} · ${tn(left(it), 'queda {n} día', 'quedan {n} días')}`),
+      h('span', { class: 'data-size' }, fmtBytes(it.bytes || 0)),
+      h('button', { type: 'button', class: 'btn small', onclick: () => restore(it) }, t('Restaurar')),
+      h('button', { type: 'button', class: 'icon-btn', title: t('Borrar para siempre'), 'aria-label': t('Borrar para siempre'), onclick: () => purge(it) }, icon('x'))))) : null);
+}
+
+function trashTitle(it) {
+  if (it.kind === 'orphans') return t('Archivos huérfanos');
+  if (it.kind === 'state') return STATE_ITEMS[it.slug] || it.title;
+  return it.title || it.slug;
+}
+
+// a toast with «Deshacer», which takes the item back out of the trash
+function undoToast(msg, trashID) {
+  if (!trashID) { toast(msg); return; }
+  toast(msg, { label: t('Deshacer'), onClick: async () => {
+    try {
+      await api(`/api/trash/${encodeURIComponent(trashID)}/restore`, { method: 'POST', body: {} });
+      toast(t('Restaurado.'));
+      await dataChanged();
+    } catch (err) { toast(err.message); }
+  } });
+}
+
 // the "Actualizaciones" block of the settings page
 function updateSection(row) {
   const st = UPD.st;
@@ -1122,12 +1405,13 @@ async function deleteNote(slug, title, kind = 'guide') {
   const ok = await askConfirm(
     isConcept ? t('¿Borrar el concepto «{title}»?', { title }) : t('¿Borrar la guía «{title}»?', { title }),
     isConcept
-      ? t('Se eliminará esta nota de concepto del vault.')
-      : t('Se eliminará la guía del vault. Sus conceptos compartidos se conservan.'),
+      ? t('La nota de concepto va a la papelera; puedes restaurarla desde Ajustes.')
+      : t('La guía va a la papelera con sus archivos; sus conceptos compartidos se conservan. Puedes restaurarla desde Ajustes.'),
+    t('Mover a la papelera'),
   );
   if (!ok) return;
   try {
-    await api(`/api/notes/${encodeURIComponent(slug)}`, { method: 'DELETE' });
+    const r = await api(`/api/notes/${encodeURIComponent(slug)}`, { method: 'DELETE' });
     hideMapNodeBar();
     if (S.concept && S.concept.slug === slug) S.concept = null;
     if (S.guide === slug) {
@@ -1142,7 +1426,7 @@ async function deleteNote(slug, title, kind = 'guide') {
       renderPractice();
     }
     loadStats();
-    toast(isConcept ? t('Concepto borrado.') : t('Guía borrada.'));
+    undoToast(isConcept ? t('Concepto movido a la papelera.') : t('Guía movida a la papelera.'), r.trash);
   } catch (err) {
     toast(err.message);
   }
@@ -1298,13 +1582,26 @@ function guideList() {
     h('p', { class: 'rm-hint' }, roadmapHint(roadmapOf(k))),
     roadmapPath(roadmapOf(k))) : h('section', { class: 'dg' },
     h('h3', {}, k ? groupTitle(k) : t('Tus guías')),
-    h('ul', {}, groups.get(k).sort((a, b) => (a.order || 0) - (b.order || 0) || a.label.localeCompare(b.label)).map((n) => h('li', { class: 'dg-row' },
-      h('button', { class: 'dn', type: 'button', style: `--lc: ${lineColor(n.group)}`, onclick: () => openNote(n.id) },
-        h('i', { class: `st st-${n.status}`, title: STATUS[n.status] || n.status }), n.label),
-      h('button', {
-        class: 'icon-btn del-btn', type: 'button', title: t('Borrar {title}', { title: n.label }), 'aria-label': t('Borrar {title}', { title: n.label }),
-        onclick: (e) => { e.stopPropagation(); deleteNote(n.id, n.label, 'guide'); },
-      }, icon('trash-2'))))))));
+    h('ul', {}, groups.get(k).sort((a, b) => (a.order || 0) - (b.order || 0) || a.label.localeCompare(b.label)).map((n) => {
+      const rp = n.readProgress || 0;
+      const actT = n.activitiesTotal || 0;
+      const actD = n.activitiesDone || 0;
+      const pills = [];
+      if (rp > 0) pills.push(h('span', { class: `dg-pill${rp >= 100 ? ' done' : ''}`, title: t('Lectura: {pct}%', { pct: rp }) }, rp >= 100 ? '✓ 100%' : `${rp}%`));
+      if (actT > 0) {
+        const ap = Math.round((actD / actT) * 100);
+        pills.push(h('span', { class: `dg-pill${ap >= 100 ? ' done' : ''}`, title: t('Actividades: {done}/{total} ({pct}%)', { done: actD, total: actT, pct: ap }) }, `${actD}/${actT}`));
+      }
+      return h('li', { class: 'dg-row' },
+        h('button', { class: 'dn', type: 'button', style: `--lc: ${lineColor(n.group)}`, onclick: () => openNote(n.id) },
+          h('i', { class: `st st-${n.status}`, title: STATUS[n.status] || n.status }),
+          h('span', { class: 'dn-label' }, n.label),
+          pills.length ? h('span', { class: 'dg-pills' }, ...pills) : null),
+        h('button', {
+          class: 'icon-btn del-btn', type: 'button', title: t('Borrar {title}', { title: n.label }), 'aria-label': t('Borrar {title}', { title: n.label }),
+          onclick: (e) => { e.stopPropagation(); deleteNote(n.id, n.label, 'guide'); },
+        }, icon('trash-2')));
+    })))));
 }
 
 // the end of a roadmap guide: what unlocks the next topic, or the way to it
@@ -1327,8 +1624,68 @@ function pathSection(rm, st, title) {
       h('button', { class: 'btn small', type: 'button', onclick: () => show('practice') }, icon('target'), t('Practicar'))) : null);
 }
 
+// Tracks scroll reading progress (0-100%) on a scrollable pane (#p-guide or #p-concepts),
+// updates the sticky bar + header in real time, and persists the max reached to the vault.
+function bindReadProgress(paneEl, note, kind, barFill, barPct, headFill, headPct) {
+  if (!paneEl) return;
+  if (paneEl._rpClean) { paneEl._rpClean(); paneEl._rpClean = null; }
+  let best = note.meta.readProgress || 0;
+  let saved = best;
+  let timer = null;
+
+  const paint = (cur) => {
+    const shown = Math.max(best, cur);
+    if (barFill) barFill.style.width = `${cur}%`;
+    if (barPct) {
+      barPct.textContent = shown >= 100 ? '✓ 100%' : `${cur}%`;
+      barPct.classList.toggle('done', shown >= 100);
+    }
+    if (headFill) headFill.style.width = `${best}%`;
+    if (headPct) headPct.textContent = best >= 100 ? '✓ 100%' : `${best}%`;
+  };
+
+  const persist = (val) => {
+    if (val <= saved) return;
+    saved = val;
+    note.meta.readProgress = val;
+    const nd = nodeOf(note.slug);
+    if (nd) nd.readProgress = val;
+    api(`/api/notes/${encodeURIComponent(note.slug)}/progress`, { method: 'POST', body: { progress: val, kind } }).catch(() => {});
+  };
+
+  const measure = () => {
+    const maxScroll = paneEl.scrollHeight - paneEl.clientHeight;
+    let cur = 0;
+    if (maxScroll <= 8) cur = 100;
+    else if (maxScroll - paneEl.scrollTop <= 24) cur = 100;
+    else cur = Math.min(100, Math.max(0, Math.round((paneEl.scrollTop / maxScroll) * 100)));
+    if (cur > best) {
+      best = cur;
+      note.meta.readProgress = best;
+      const nd = nodeOf(note.slug);
+      if (nd) nd.readProgress = best;
+      if (best >= 100 || best - saved >= 5) {
+        clearTimeout(timer);
+        timer = setTimeout(() => persist(best), best >= 100 ? 150 : 600);
+      }
+    }
+    paint(cur);
+  };
+
+  paneEl.addEventListener('scroll', measure, { passive: true });
+  const raf = requestAnimationFrame(measure);
+  paneEl._rpClean = () => {
+    cancelAnimationFrame(raf);
+    clearTimeout(timer);
+    paneEl.removeEventListener('scroll', measure);
+    if (best > saved) persist(best);
+  };
+}
+
 function renderReader(n) {
   const root = $('#reader');
+  const pane = PANE_EL.guide;
+  if (pane && pane._rpClean) { pane._rpClean(); pane._rpClean = null; }
   root.replaceChildren();
   if (!n) {
     root.append(h('div', { class: 'panel-empty' },
@@ -1345,6 +1702,29 @@ function renderReader(n) {
   const under = (m.pending || []).length;
   const rm = m.roadmap ? roadmapOf(m.roadmap) : null;
   const rmStep = rm ? (rm.steps || []).find((s) => s.slug === n.slug) : null;
+  const acts = n.activities || [];
+  const actDone = acts.filter((a) => a.done).length;
+  const actPct = acts.length ? Math.round((actDone / acts.length) * 100) : 0;
+  const readPct = m.readProgress || 0;
+
+  const barFill = h('i', { style: `width:${readPct}%` });
+  const barPct = h('span', { class: `read-bar-pct${readPct >= 100 ? ' done' : ''}` }, readPct >= 100 ? '✓ 100%' : `${readPct}%`);
+  const readBar = h('div', { class: 'read-bar', role: 'progressbar', 'aria-label': t('Progreso de lectura'), 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(readPct) },
+    h('div', { class: 'read-bar-track' }, barFill), barPct);
+
+  const headReadFill = h('i', { style: `width:${readPct}%; background: var(--line-c)` });
+  const headReadPct = h('span', {}, readPct >= 100 ? '✓ 100%' : `${readPct}%`);
+  const progRow = h('div', { class: 'r-progress' },
+    status !== 'new' ? h('div', { class: 'mastery' },
+      h('div', { class: 'row' }, h('span', {}, t('Lectura')), headReadPct),
+      h('div', { class: 'bar' }, headReadFill)) : null,
+    acts.length ? h('div', { class: 'mastery' },
+      h('div', { class: 'row' }, h('span', {}, t('Actividades')), h('span', {}, `${actDone}/${acts.length} · ${actPct}%`)),
+      h('div', { class: 'bar' }, h('i', { style: `width:${actPct}%; background: var(--ok, #16a34a)` }))) : null,
+    m.mastery ? h('div', { class: 'mastery' },
+      h('div', { class: 'row' }, h('span', {}, t('Lo que llevas')), h('span', {}, `${m.mastery}/100`)),
+      h('div', { class: 'bar' }, h('i', { style: `width:${m.mastery}%; background: var(--line-c)` }))) : null);
+
   const wrap = h('div', { class: 'reader-wrap', style: `--line-c: ${lineColor(node ? node.group : '')}` });
   wrap.append(h('header', { class: 'r-head' },
     h('button', { class: 'crumb', type: 'button', onclick: closeGuide }, icon('arrow-left'), t('Todas las guías')),
@@ -1354,9 +1734,7 @@ function renderReader(n) {
       rmStep ? h('span', { class: 'chip' }, t('Tema {n} de {total}', { n: rmStep.n, total: rm.steps.length })) : null,
       m.focus ? h('span', { class: 'chip' }, `Foco: ${m.focus}`) : null,
       m.field ? h('span', { class: 'chip' }, m.field) : null),
-    m.mastery ? h('div', { class: 'mastery' },
-      h('div', { class: 'row' }, h('span', {}, t('Lo que llevas')), h('span', {}, `${m.mastery}/100`)),
-      h('div', { class: 'bar' }, h('i', { style: `width:${m.mastery}%; background: var(--line-c)` }))) : null,
+    progRow.childNodes.length ? progRow : null,
     h('div', { class: 'actions' },
       concepts.length || under ? h('button', { class: 'btn small yellow', type: 'button', onclick: () => show('concepts') },
         icon('mountain-snow'), tn(concepts.length, '{n} concepto', '{n} conceptos') + (under ? ' · ' + t('{n} bajo el agua', { n: under }) : '')) : null,
@@ -1390,10 +1768,9 @@ function renderReader(n) {
         }, icon('file'), h('span', {}, name)));
       }))));
   }
-  const res = m.resources || [];
-  if (res.length) {
-    article.append(h('section', { class: 'r-resources' }, h('h2', {}, t('Para seguir explorando')),
-      h('ul', { class: 'res-list' }, res.map((r) => resourceCard(r, { slug: n.slug, title })))));
+  const res = n.resources || m.resources || [];
+  if (status !== 'new' || res.length) {
+    article.append(resourcesSection(n, 'guide', title));
   }
   const back = (n.backlinks || []).filter((b) => !concepts.some((c) => c.slug === b.slug));
   const before = n.requires || [];
@@ -1404,7 +1781,9 @@ function renderReader(n) {
   }
   if (rmStep) article.append(pathSection(rm, rmStep, title));
   wrap.append(article);
+  if (status !== 'new') root.append(readBar);
   root.append(wrap);
+  if (status !== 'new' && pane) bindReadProgress(pane, n, 'guide', barFill, barPct, headReadFill, headReadPct);
 }
 
 const YOUTUBE = /^https?:\/\/(?:www\.|m\.)?(?:youtube\.com\/watch\?(?:[^#]*&)?v=|youtu\.be\/)([\w-]{11})(?![\w-])/i;
@@ -1425,12 +1804,51 @@ function videoPlayer(r, id) {
   return frame;
 }
 
+const LEVEL_LABEL = { introductorio: t('Introductorio'), intermedio: t('Intermedio'), avanzado: t('Avanzado') };
+const REL_LABEL = { alta: t('Fiable'), media: t('Media'), baja: t('Revisar') };
+
+function sourceBadges(r) {
+  const list = [];
+  if (r.type) list.push(h('span', { class: 'res-badge' }, TYPE[r.type] || r.type));
+  if (r.level && LEVEL_LABEL[r.level]) list.push(h('span', { class: `res-badge level-${r.level}` }, LEVEL_LABEL[r.level]));
+  if (r.reliability && REL_LABEL[r.reliability]) list.push(h('span', { class: `res-badge rel-${r.reliability}` }, REL_LABEL[r.reliability]));
+  if (r.duration) list.push(h('span', { class: 'res-badge' }, r.duration));
+  if (r.lang) list.push(h('span', { class: 'res-badge' }, String(r.lang).toUpperCase()));
+  if (r.citations > 0) list.push(h('span', { class: 'res-badge' }, tn(r.citations, '{n} cita', '{n} citas')));
+  return list.length ? h('div', { class: 'res-badges' }, ...list) : null;
+}
+
+function seenToggle(id, seen, onChange) {
+  let cur = !!seen;
+  const btn = h('button', {
+    class: `btn small ghost res-seen${cur ? ' is-seen' : ''}`, type: 'button', 'aria-pressed': String(cur),
+    onclick: async () => {
+      btn.disabled = true;
+      try {
+        await api(`/api/sources/${encodeURIComponent(id)}`, { method: 'POST', body: { seen: !cur } });
+        cur = !cur;
+        btn.setAttribute('aria-pressed', String(cur));
+        btn.classList.toggle('is-seen', cur);
+        btn.replaceChildren(icon('check'), cur ? t('Visto') : t('Marcar visto'));
+        if (onChange) onChange(cur);
+      } catch (err) { toast(err.message); }
+      btn.disabled = false;
+    },
+  }, icon('check'), cur ? t('Visto') : t('Marcar visto'));
+  return btn;
+}
+
 // One recommended resource. ctx.slug/title identify the note it belongs to (for simulations).
 function resourceCard(r, ctx = {}) {
   const external = r.url && /^https?:\/\//i.test(r.url);
   const host = external ? hostOf(r.url) : '';
+  const metaText = external
+    ? [r.author, r.year ? String(r.year) : '', host].filter(Boolean).join(' · ')
+    : [TYPE[r.type] || r.type, host].filter(Boolean).join(' · ');
+  const seenBtn = r.id ? seenToggle(r.id, r.seen, (v) => { r.seen = v; }) : null;
   const head = (titleEl) => h('div', { class: 'res-head' },
-    h('div', { class: 'res-main' }, titleEl, h('span', { class: 'res-meta' }, [TYPE[r.type] || r.type, host].filter(Boolean).join(' · '))));
+    h('div', { class: 'res-main' }, titleEl, metaText ? h('span', { class: 'res-meta' }, metaText) : null, external ? sourceBadges(r) : null),
+    seenBtn);
   const why = r.why && h('span', { class: 'why' }, r.why);
   const link = () => h('a', { href: r.url, target: '_blank', rel: 'noopener noreferrer' }, r.title);
   const yt = external && youtubeId(r.url);
@@ -1443,6 +1861,57 @@ function resourceCard(r, ctx = {}) {
       ctx.slug && h('div', {}, h('button', { class: 'btn small', type: 'button', onclick: () => chatAction({ action: 'interactive', brief: r.why || '' }, t('Simulación: {title}', { title: ctx.title })) }, t('Generar'))));
   }
   return h('li', { class: 'res' }, head(h('strong', {}, r.title)), why);
+}
+
+const FIND_FILTERS = [
+  { id: 'all', label: t('Todo'), req: {} },
+  { id: 'video', label: t('Videos'), req: { kinds: ['video'] } },
+  { id: 'read', label: t('Lecturas'), req: { kinds: ['web', 'book'] } },
+  { id: 'paper', label: t('Papers'), req: { kinds: ['paper'] } },
+  { id: 'easy', label: t('Más fácil'), req: { easy: true } },
+];
+
+// External sources section for a guide or concept, with «Buscar más material» and filter chips.
+function resourcesSection(note, kind, title) {
+  const res = note.resources || note.meta.resources || [];
+  let picked = 'all';
+  const status = h('span', { class: 'hint res-find-status', role: 'status' });
+  const chips = FIND_FILTERS.map((f) => {
+    const b = h('button', {
+      type: 'button', 'aria-pressed': String(f.id === picked),
+      onclick: () => {
+        picked = f.id;
+        chips.forEach((el, i) => el.setAttribute('aria-pressed', String(FIND_FILTERS[i].id === picked)));
+      },
+    }, f.label);
+    return b;
+  });
+  const findBtn = h('button', {
+    class: 'btn small', type: 'button',
+    onclick: async () => {
+      const f = FIND_FILTERS.find((x) => x.id === picked) || FIND_FILTERS[0];
+      findBtn.disabled = true;
+      status.textContent = t('Buscando material…');
+      try {
+        const r = await api(`/api/notes/${encodeURIComponent(note.slug)}/sources`, { method: 'POST', body: { kind, ...f.req } });
+        note.resources = r.resources || [];
+        const nAdded = (r.added || []).length;
+        toast(tn(nAdded, 'Agregué {n} fuente nueva.', 'Agregué {n} fuentes nuevas.'));
+        if (kind === 'guide') renderReader(note);
+        else renderConcepts();
+      } catch (err) {
+        status.textContent = err.message;
+      }
+      findBtn.disabled = false;
+    },
+  }, icon('search'), t('Buscar más material'));
+
+  return h('section', { class: 'r-resources' },
+    h('h2', {}, t('Para seguir explorando')),
+    res.length ? h('ul', { class: 'res-list' }, res.map((r) => resourceCard(r, { slug: note.slug, title }))) : h('p', { class: 'hint' }, t('Aún no hay fuentes guardadas para este tema.')),
+    h('div', { class: 'res-find' },
+      h('div', { class: 'seg', role: 'group', 'aria-label': t('Tipo de material') }, ...chips),
+      findBtn, status));
 }
 
 /* ---------- Conceptos: the iceberg ---------- */
@@ -1466,9 +1935,19 @@ const levelName = (l) => (l === 1 ? t('Lo que el tema usa directamente') : l ===
 function renderConcepts() {
   const root = PANE_EL.concepts;
   if (!root) return;
+  if (root._rpClean) { root._rpClean(); root._rpClean = null; }
   if (S.bergObs) { S.bergObs.disconnect(); S.bergObs = null; }
   root.replaceChildren();
-  if (S.concept) { root.append(conceptReader(S.concept)); return; }
+  if (S.concept) {
+    const rp = S.concept.meta.readProgress || 0;
+    const barFill = h('i', { style: `width:${rp}%` });
+    const barPct = h('span', { class: `read-bar-pct${rp >= 100 ? ' done' : ''}` }, rp >= 100 ? '✓ 100%' : `${rp}%`);
+    const readBar = h('div', { class: 'read-bar', role: 'progressbar', 'aria-label': t('Progreso de lectura'), 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(rp) },
+      h('div', { class: 'read-bar-track' }, barFill), barPct);
+    root.append(readBar, conceptReader(S.concept));
+    bindReadProgress(root, S.concept, 'concept', barFill, barPct, null, null);
+    return;
+  }
   const n = S.note;
   const box = h('div', { class: 'concepts-wrap' });
   const pending = (n && n.meta.pending) || [];
@@ -1772,7 +2251,8 @@ function conceptReader(c) {
       h('div', { class: 'actions' }, notesButton(c.slug, m.title || c.slug, c.apunte),
         h('button', { class: 'btn small ghost', type: 'button', onclick: () => askAbout(t('Sobre «{title}»:', { title: m.title }) + ' ') }, icon('message-circle'), t('Preguntar')),
         h('button', { class: 'btn small ghost ghost-danger', type: 'button', title: t('Borrar {title}', { title: m.title || c.slug }), onclick: () => deleteNote(c.slug, m.title || c.slug, 'concept') }, icon('trash-2'), t('Borrar')))),
-    h('article', { class: 'r-article' }, mdBlock(stripSection(body, 'Aparece en'), { viz: vizCtx(c.slug) }),
+    h('article', { class: 'r-article' }, mdBlock(stripSection(stripSection(body, 'Aparece en'), 'Recursos'), { viz: vizCtx(c.slug) }),
+      resourcesSection(c, 'concept', m.title || c.slug),
       (c.guides || []).length ? h('section', { class: 'r-next' }, h('h2', {}, t('Aparece en')),
         c.guides.map((g) => h('button', { class: 'neighbor', type: 'button', onclick: () => openNote(g.slug) }, h('small', {}, t('Guía')), h('strong', {}, g.title)))) : null));
 }
@@ -1918,9 +2398,9 @@ async function attachToNotes(files, editor) {
 }
 
 /* ---------- Vault: your vaults, and every note in the one in use ---------- */
-const DIRS = { guias: t('Guía'), conceptos: t('Concepto'), apuntes: t('Apuntes'), flashcards: t('Tarjetas'), roadmaps: t('Roadmap'), daily: t('Diario') };
-const DIRS_PLURAL = { guias: t('guías'), conceptos: t('conceptos'), apuntes: t('apuntes'), flashcards: t('tarjetas'), roadmaps: t('roadmaps'), daily: t('días') };
-const VLT = { info: null, files: [], materials: [], hits: null, q: '', dir: '', adding: false, edit: null, timer: 0 };
+const DIRS = { guias: t('Guía'), conceptos: t('Concepto'), fuentes: t('Fuente'), apuntes: t('Apuntes'), flashcards: t('Tarjetas'), roadmaps: t('Roadmap'), daily: t('Diario') };
+const DIRS_PLURAL = { guias: t('guías'), conceptos: t('conceptos'), fuentes: t('fuentes'), apuntes: t('apuntes'), flashcards: t('tarjetas'), roadmaps: t('roadmaps'), daily: t('días') };
+const VLT = { info: null, files: [], materials: [], sources: [], srcFilter: { type: '', level: '', area: '', seen: '' }, hits: null, q: '', dir: '', adding: false, edit: null, timer: 0 };
 
 function fmtBytes(n) {
   if (n < 1024) return `${n} B`;
@@ -1933,7 +2413,8 @@ async function renderVault() {
   if (!root) return;
   if (VLT.edit) { drawEditor(); return; }
   try {
-    [VLT.info, VLT.files, VLT.materials] = await Promise.all([api('/api/vaults'), api('/api/vault/files'), api('/api/vault/materials')]);
+    const [info, files, materials, srcRes] = await Promise.all([api('/api/vaults'), api('/api/vault/files'), api('/api/vault/materials'), api('/api/sources')]);
+    VLT.info = info; VLT.files = files; VLT.materials = materials; VLT.sources = srcRes.sources || [];
   } catch (err) { root.replaceChildren(h('p', { class: 'hint', style: 'padding:24px' }, err.message)); return; }
   drawVault();
 }
@@ -1958,7 +2439,7 @@ function drawVault() {
   const root = PANE_EL.vault;
   const { vaults, root: abs, stats, canPick } = VLT.info;
   const cur = vaults.find((v) => v.current) || { name: abs.split(/[\\/]/).pop() };
-  const ONE = { guias: t('guía'), conceptos: t('concepto'), apuntes: t('nota de apuntes'), flashcards: t('mazo de tarjetas'), roadmaps: t('roadmap'), daily: t('día') };
+  const ONE = { guias: t('guía'), conceptos: t('concepto'), fuentes: t('fuente'), apuntes: t('nota de apuntes'), flashcards: t('mazo de tarjetas'), roadmaps: t('roadmap'), daily: t('día') };
   const counts = Object.keys(DIRS).filter((d) => stats.notes[d]).map((d) => `${stats.notes[d]} ${stats.notes[d] === 1 ? ONE[d] : DIRS_PLURAL[d]}`);
   if (VLT.materials.length) counts.push(tn(VLT.materials.length, '{n} archivo de material', '{n} archivos de material'));
 
@@ -2026,6 +2507,12 @@ function drawVault() {
 function drawNoteList() {
   const ul = $('#v-notes');
   if (!ul) return;
+  const oldFilters = PANE_EL.vault && PANE_EL.vault.querySelector('.src-filters');
+  if (oldFilters) oldFilters.remove();
+  if (VLT.dir === 'fuentes') {
+    drawSourcesLibrary(ul);
+    return;
+  }
   if (VLT.dir === 'material') {
     const q = slugify(VLT.q);
     const mats = VLT.materials.filter((m) => !q || slugify(`${m.topic} ${m.name}`).includes(q));
@@ -2053,6 +2540,79 @@ function drawNoteList() {
       h('button', { class: 'icon-btn', type: 'button', title: t('Editar el Markdown'), 'aria-label': t('Editar {title}', { title: f.title }), onclick: () => editVaultFile(f) }, icon('file-pen-line')),
       h('button', { class: 'icon-btn', type: 'button', title: t('Abrir en Obsidian'), 'aria-label': t('Abrir {title} en Obsidian', { title: f.title }), onclick: () => openOutside('obsidian', f) }, icon('external-link')),
       h('button', { class: 'icon-btn', type: 'button', title: t('Mostrar en la carpeta'), 'aria-label': t('Mostrar {title} en la carpeta', { title: f.title }), onclick: () => openOutside('folder', f) }, icon('folder-open'))))));
+}
+
+function drawSourcesLibrary(ul) {
+  const f = VLT.srcFilter;
+  const areas = [...new Set(VLT.sources.map((s) => s.meta.area).filter(Boolean))].sort();
+  const sel = (aria, val, opts, on) => h('select', { 'aria-label': aria, onchange: (e) => { on(e.target.value); drawNoteList(); } },
+    opts.map(([v, label]) => h('option', { value: v, selected: v === val || null }, label)));
+  const filters = h('div', { class: 'src-filters' },
+    sel(t('Tipo'), f.type, [['', t('Todos los tipos')], ['video', t('Video')], ['web', t('Web')], ['book', t('Libro')], ['paper', t('Paper')]], (v) => { f.type = v; }),
+    sel(t('Nivel'), f.level, [['', t('Todos los niveles')], ['introductorio', t('Introductorio')], ['intermedio', t('Intermedio')], ['avanzado', t('Avanzado')]], (v) => { f.level = v; }),
+    areas.length ? sel(t('Área'), f.area, [['', t('Todas las áreas')], ...areas.map((a) => [a, AREA_NAME[a] || a])], (v) => { f.area = v; }) : null,
+    sel(t('Estado'), f.seen, [['', t('Todos')], ['unseen', t('Por ver')], ['seen', t('Vistos')]], (v) => { f.seen = v; }));
+  ul.before(filters);
+
+  const q = slugify(VLT.q);
+  const list = VLT.sources.filter((s) => {
+    const m = s.meta;
+    if (f.type && m.type !== f.type) return false;
+    if (f.level && m.level !== f.level) return false;
+    if (f.area && m.area !== f.area) return false;
+    if (f.seen === 'seen' && !m.seen) return false;
+    if (f.seen === 'unseen' && m.seen) return false;
+    if (q && !slugify(`${m.title} ${m.author} ${m.summary} ${m.url}`).includes(q)) return false;
+    return true;
+  });
+  if (!list.length) {
+    ul.replaceChildren(h('li', { class: 'hint' }, (VLT.q || f.type || f.level || f.area || f.seen) ? t('Nada coincide.') : t('Aún no hay fuentes guardadas.')));
+    return;
+  }
+  ul.replaceChildren(...list.map((s) => {
+    const m = s.meta;
+    const host = m.url ? hostOf(m.url) : '';
+    const yt = m.url && youtubeId(m.url);
+    const metaLine = [m.author, m.year ? String(m.year) : '', m.area ? (AREA_NAME[m.area] || m.area) : '', host].filter(Boolean).join(' · ');
+    const titleEl = m.url && /^https?:\/\//i.test(m.url)
+      ? h('a', { class: 'src-title', href: m.url, target: '_blank', rel: 'noopener noreferrer' }, m.title || s.slug)
+      : h('strong', { class: 'src-title' }, m.title || s.slug);
+    const fileRef = { dir: 'fuentes', slug: s.slug, title: m.title || s.slug };
+    const trashSource = async () => {
+      const cited = (s.citedBy || []).map((c) => c.title).join(', ');
+      const msg = cited
+        ? t('Esta fuente se cita en: {notes}. Se moverá a la papelera y se quitará de sus enlaces.', { notes: cited })
+        : t('Se moverá a la papelera (puedes restaurarla durante 30 días).');
+      if (!await askConfirm(t('¿Mover «{title}» a la papelera?', { title: m.title || s.slug }), msg, t('Mover a la papelera'))) return;
+      try {
+        const r = await api(`/api/sources/${encodeURIComponent(s.slug)}`, { method: 'DELETE' });
+        VLT.sources = VLT.sources.filter((x) => x.slug !== s.slug);
+        drawNoteList();
+        const tid = r.trash && r.trash.id;
+        toast(t('Fuente movida a la papelera.'), tid ? {
+          label: t('Deshacer'),
+          onClick: async () => {
+            await api(`/api/trash/${encodeURIComponent(tid)}/restore`, { method: 'POST', body: {} });
+            renderVault();
+          },
+        } : undefined);
+      } catch (err) { toast(err.message); }
+    };
+    return h('li', { class: 'src-item' },
+      h('div', { class: 'src-body' },
+        h('div', { class: 'res-head' },
+          h('div', { class: 'res-main' }, titleEl, metaLine ? h('span', { class: 'res-meta' }, metaLine) : null, sourceBadges(m)),
+          seenToggle(s.slug, m.seen, (v) => { m.seen = v; })),
+        m.summary ? h('p', { class: 'src-sum' }, m.summary) : null,
+        yt ? videoPlayer(m, yt) : null,
+        (s.citedBy || []).length ? h('div', { class: 'src-cites' },
+          h('span', { class: 'hint' }, t('Citado en')),
+          ...s.citedBy.map((c) => h('button', { type: 'button', class: 'src-cite-btn', onclick: () => openNote(c.slug) }, c.title))) : null,
+        h('div', { class: 'src-actions' },
+          h('button', { class: 'btn small ghost', type: 'button', onclick: () => editVaultFile(fileRef) }, icon('file-pen-line'), t('Editar')),
+          h('button', { class: 'btn small ghost', type: 'button', onclick: () => openOutside('obsidian', fileRef) }, icon('external-link'), 'Obsidian'),
+          h('button', { class: 'btn small ghost ghost-danger', type: 'button', onclick: trashSource }, icon('trash-2'), t('Papelera')))));
+  }));
 }
 
 function openVaultFile(f) {
@@ -2238,9 +2798,12 @@ function drawProgress() {
   const calDays = st.calendar || [];
   const cells = [];
   for (const d of calDays) {
-    const tip = d.frozen
+    let tip = d.frozen
       ? t('{date} · protegido con congelador', { date: d.date })
       : t('{date} · {xp} XP', { date: d.date, xp: d.xp });
+    // the grades of that day, one per line
+    for (const gd of d.grades || []) tip += `
+${gd.score}/100 · ${GR_KIND[gd.kind] || gd.kind} · ${gd.title}${gd.partial ? ` (${t('incompleta')})` : ''}`;
     cells.push(h('span', {
       class: `cal-cell l${d.level || 0}${d.frozen ? ' frozen' : ''}`,
       title: tip,
@@ -2337,8 +2900,217 @@ function drawProgress() {
     kpis,
     cardsSec,
     calendarSec,
+    gradesSection(),
     areasSec,
     recentSec));
+}
+
+/* ---------- Progreso → Calificaciones: every quiz and explanation, over time ---------- */
+const GR = { data: null, topic: '', kind: '', range: '90', all: false, loading: false, host: null, error: '' };
+const GR_KIND = { quiz: t('Preguntas'), feynman: t('Explicación') };
+const GR_RANGES = [['30', t('30 días')], ['90', t('90 días')], ['all', t('Todo')]];
+const SVGNS = 'http://www.w3.org/2000/svg';
+const svgEl = (tag, attrs = {}) => { const el = document.createElementNS(SVGNS, tag); for (const [k, v] of Object.entries(attrs)) if (v != null) el.setAttribute(k, v); return el; };
+const fmtDate = (iso) => new Date(iso).toLocaleDateString(LOCALE, { day: 'numeric', month: 'short' });
+const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+async function loadGrades() {
+  const q = new URLSearchParams();
+  if (GR.topic) q.set('topic', GR.topic);
+  if (GR.kind) q.set('kind', GR.kind);
+  if (GR.range !== 'all') { const d = new Date(); d.setDate(d.getDate() - Number(GR.range) + 1); q.set('from', isoDay(d)); }
+  GR.loading = true;
+  if (GR.host) GR.host.classList.add('refetch'); // the previous render stays, dimmed, while it reloads
+  try {
+    GR.data = await api(`/api/stats/grades?${q}`);
+    GR.error = '';
+  } catch (err) { GR.error = err.message; }
+  GR.loading = false;
+  if (GR.host && GR.host.isConnected) drawGrades(GR.host);
+}
+
+// the guide, scrolled to its test or its explanation
+async function openGrade(g) {
+  if (!nodeOf(g.topic)) { toast(t('Esa guía ya no está en tu vault.')); return; }
+  await openNote(g.topic, { quiet: true });
+  show('guide');
+  const want = SECTION[g.kind === 'feynman' ? 'Feynman' : 'Prueba'];
+  // the reader draws the note a moment later: wait for the heading, then bring it up
+  for (let i = 0; i < 20; i++) {
+    const hd = $$('#reader h2').find((x) => x.textContent === want);
+    if (hd && hd.offsetParent) { hd.scrollIntoView({ behavior: smoothness(), block: 'start' }); return; }
+    await sleep(50);
+  }
+}
+
+const gradeTone = (score, pass) => (score >= pass ? 'good' : score >= pass * 0.6 ? 'mid' : 'low');
+
+const grResize = new ResizeObserver(() => {
+  clearTimeout(GR.resizeTimer);
+  GR.resizeTimer = setTimeout(() => { if (GR.host && GR.host.isConnected && GR.data && GR.host.clientWidth !== GR.width) drawGrades(GR.host); }, 120);
+});
+function gradesSection() {
+  const host = h('div', { class: 'grades-host' });
+  GR.host = host;
+  grResize.observe(host);
+  drawGrades(host);
+  if (!GR.loading) loadGrades();
+  return h('section', { class: 'prog-sec grades' },
+    h('div', { class: 'prog-sec-head' }, h('h3', {}, t('Calificaciones')), h('span', { class: 'hint' }, t('Preguntas y explicaciones'))),
+    host);
+}
+
+function drawGrades(host) {
+  host.classList.remove('refetch');
+  GR.width = host.clientWidth;
+  const g = GR.data;
+  if (!g) { host.replaceChildren(h('p', { class: 'hint' }, GR.error || t('Cargando…'))); return; }
+  const everything = (g.topicOptions || []).reduce((n, o) => n + o.count, 0);
+  if (!everything) {
+    host.replaceChildren(h('p', { class: 'hint' }, t('Cuando respondas preguntas o expliques un tema, tus notas aparecerán aquí.')));
+    return;
+  }
+  // filters: one row, above everything they scope; the range first
+  const sel = (label, value, opts, on) => h('select', { 'aria-label': label, onchange: (e) => on(e.target.value) },
+    opts.map(([v, txt]) => h('option', { value: v, selected: v === value || null }, txt)));
+  const filters = h('div', { class: 'gr-filters' },
+    h('div', { class: 'seg', role: 'group', 'aria-label': t('Período') }, GR_RANGES.map(([v, txt]) => h('button', {
+      type: 'button', 'aria-pressed': String(GR.range === v), onclick: () => { GR.range = v; loadGrades(); },
+    }, txt))),
+    sel(t('Tema'), GR.topic, [['', t('Todos los temas')], ...(g.topicOptions || []).map((o) => [o.id, o.title])], (v) => { GR.topic = v; loadGrades(); }),
+    sel(t('Tipo'), GR.kind, [['', t('Preguntas y explicaciones')], ['quiz', GR_KIND.quiz], ['feynman', GR_KIND.feynman]], (v) => { GR.kind = v; loadGrades(); }));
+
+  if (!g.count) {
+    host.replaceChildren(filters, h('p', { class: 'hint' }, t('No hay notas con estos filtros.')));
+    return;
+  }
+  const trend = g.hasTrend
+    ? h('small', { class: `gr-trend ${g.trend > 0 ? 'up' : g.trend < 0 ? 'down' : ''}` }, g.trend > 0 ? '▲ ' : g.trend < 0 ? '▼ ' : '', t('{delta} frente a los 30 días anteriores', { delta: `${g.trend > 0 ? '+' : ''}${g.trend}` }))
+    : h('small', {}, t('Hace falta un mes de notas para ver la tendencia'));
+  const kpis = h('div', { class: 'gr-kpis' },
+    h('div', {}, h('span', { class: 'prog-label' }, t('Promedio')), h('strong', {}, `${g.average}`), h('small', {}, t('de 100'))),
+    h('div', {}, h('span', { class: 'prog-label' }, t('Mejor nota')), h('strong', {}, `${g.best}`), h('small', {}, t('de 100'))),
+    h('div', {}, h('span', { class: 'prog-label' }, t('Intentos')), h('strong', {}, `${g.count}`), h('small', {}, t('para avanzar: {pass}', { pass: g.passScore }))),
+    h('div', {}, h('span', { class: 'prog-label' }, t('Últimos 30 días')), h('strong', {}, g.last30 ? `${g.last30}` : '—'), trend));
+
+  host.replaceChildren(filters, kpis, gradeChart(g), gradeList(g), topicGrades(g));
+}
+
+// Scores over time: one series (the accent), a reference line at the pass score, round markers for
+// questions and diamonds for explanations, hollow when the attempt was left incomplete.
+function gradeChart(g) {
+  const pts = [...g.attempts].reverse(); // oldest first
+  // drawn at the width it gets, so its text stays at its real size on a phone too
+  const W = Math.max(280, Math.round((GR.host && GR.host.clientWidth) || 640)), H = W < 480 ? 180 : 220, L = 34, R = 14, T = 14, B = 26;
+  const t0 = new Date(pts[0].at).getTime(), t1 = new Date(pts[pts.length - 1].at).getTime();
+  const span = Math.max(1, t1 - t0);
+  const x = (p) => (pts.length === 1 ? (L + W - R) / 2 : L + ((new Date(p.at).getTime() - t0) / span) * (W - L - R));
+  const y = (s) => T + (1 - s / 100) * (H - T - B);
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, class: 'gr-chart', role: 'img', 'aria-label': t('Notas en el tiempo: promedio {avg}, mejor {best}, {n} intentos', { avg: g.average, best: g.best, n: g.count }) });
+  for (const v of [0, 25, 50, 75, 100]) {
+    svg.append(svgEl('line', { x1: L, x2: W - R, y1: y(v), y2: y(v), class: 'gr-grid' }));
+    if (Math.abs(v - g.passScore) < 8) continue; // the pass score takes this spot on the axis
+    const lab = svgEl('text', { x: L - 6, y: y(v) + 4, class: 'gr-axis', 'text-anchor': 'end' }); lab.textContent = String(v); svg.append(lab);
+  }
+  // the pass score: a reference line, its value marked on the axis (the key names it)
+  svg.append(svgEl('line', { x1: L, x2: W - R, y1: y(g.passScore), y2: y(g.passScore), class: 'gr-pass' }));
+  const passLab = svgEl('text', { x: L - 6, y: y(g.passScore) + 4, class: 'gr-pass-label', 'text-anchor': 'end' });
+  passLab.textContent = String(g.passScore);
+  svg.append(passLab);
+  // dates at both ends of the axis
+  for (const [p, anchor] of [[pts[0], 'start'], [pts[pts.length - 1], 'end']]) {
+    if (pts.length === 1 && anchor === 'end') break;
+    const d = svgEl('text', { x: pts.length === 1 ? x(p) : anchor === 'start' ? L : W - R, y: H - 6, class: 'gr-axis', 'text-anchor': pts.length === 1 ? 'middle' : anchor });
+    d.textContent = fmtDate(p.at); svg.append(d);
+  }
+  if (pts.length > 1) svg.append(svgEl('polyline', { points: pts.map((p) => `${x(p)},${y(p.score)}`).join(' '), class: 'gr-line' }));
+  const cross = svgEl('line', { y1: T, y2: H - B, class: 'gr-cross', visibility: 'hidden' });
+  svg.append(cross);
+  const marks = pts.map((p) => {
+    const cx = x(p), cy = y(p.score);
+    const m = p.kind === 'feynman'
+      ? svgEl('rect', { x: cx - 4.5, y: cy - 4.5, width: 9, height: 9, transform: `rotate(45 ${cx} ${cy})` })
+      : svgEl('circle', { cx, cy, r: 4.5 });
+    m.setAttribute('class', `gr-dot${p.partial ? ' partial' : ''}`);
+    svg.append(m);
+    return { p, cx, cy, m };
+  });
+  const tip = h('div', { class: 'gr-tip', hidden: true });
+  const box = h('div', { class: 'gr-chart-box' }, svg, tip);
+  // the crosshair finds the nearest attempt in time; the tooltip leads with the score
+  let on = null;
+  const showAt = (k) => {
+    if (on) on.m.classList.remove('on');
+    on = marks[k];
+    on.m.classList.add('on');
+    cross.setAttribute('x1', on.cx); cross.setAttribute('x2', on.cx); cross.setAttribute('visibility', 'visible');
+    const p = on.p;
+    tip.replaceChildren(
+      h('strong', {}, `${p.score}/100`, p.partial ? h('span', { class: 'gr-badge' }, t('incompleta')) : null),
+      h('span', {}, p.title),
+      h('small', {}, [GR_KIND[p.kind] || p.kind, p.difficulty ? t(p.difficulty) : '', p.questions ? t('{c} de {n} bien', { c: p.correct, n: p.questions }) : '', fmtDate(p.at)].filter(Boolean).join(' · ')));
+    tip.hidden = false;
+    const r = svg.getBoundingClientRect(), k2 = r.width / W;
+    const left = Math.min(Math.max(on.cx * k2 - 90, 0), Math.max(0, r.width - 180));
+    tip.style.left = `${left}px`;
+    tip.style.top = `${Math.max(0, on.cy * k2 - 74)}px`;
+  };
+  const hide = () => { if (on) on.m.classList.remove('on'); on = null; tip.hidden = true; cross.setAttribute('visibility', 'hidden'); };
+  svg.addEventListener('pointermove', (e) => {
+    const r = svg.getBoundingClientRect();
+    const px = ((e.clientX - r.left) / r.width) * W;
+    let best = 0;
+    marks.forEach((mk, i) => { if (Math.abs(mk.cx - px) < Math.abs(marks[best].cx - px)) best = i; });
+    showAt(best);
+  });
+  svg.addEventListener('pointerleave', hide);
+  svg.addEventListener('click', () => { if (on) openGrade(on.p); });
+  // the same details from the keyboard: arrows walk the attempts
+  svg.setAttribute('tabindex', '0');
+  svg.addEventListener('keydown', (e) => {
+    const i = on ? marks.indexOf(on) : marks.length;
+    if (e.key === 'ArrowLeft') { e.preventDefault(); showAt(Math.max(0, i - 1)); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); showAt(Math.min(marks.length - 1, on ? i + 1 : marks.length - 1)); }
+    else if (e.key === 'Enter' && on) openGrade(on.p);
+    else if (e.key === 'Escape') hide();
+  });
+  svg.addEventListener('blur', hide);
+  const key = h('div', { class: 'gr-key' },
+    h('span', {}, h('i', { class: 'gr-k-dot' }), GR_KIND.quiz),
+    h('span', {}, h('i', { class: 'gr-k-dia' }), GR_KIND.feynman),
+    h('span', {}, h('i', { class: 'gr-k-dot hollow' }), t('incompleta')),
+    h('span', {}, h('i', { class: 'gr-k-pass' }), t('nota para avanzar ({pass})', { pass: g.passScore })));
+  return h('div', { class: 'gr-chart-wrap' }, box, key);
+}
+
+// every attempt, newest first: the table view of the chart
+function gradeList(g) {
+  const list = GR.all ? g.attempts : g.attempts.slice(0, 8);
+  const rows = list.map((a) => h('li', {},
+    h('span', { class: `gr-score tone-${gradeTone(a.score, g.passScore)}` }, String(a.score)),
+    h('button', { class: 'gr-what', type: 'button', onclick: () => openGrade(a), title: t('Abrir en la guía') },
+      h('strong', {}, a.title),
+      h('small', {}, [GR_KIND[a.kind] || a.kind, a.difficulty ? t(a.difficulty) : '', a.questions ? t('{c} de {n} bien', { c: a.correct, n: a.questions }) : '', fmtDate(a.at)].filter(Boolean).join(' · '))),
+    a.partial ? h('span', { class: 'gr-badge' }, t('incompleta')) : null));
+  return h('div', { class: 'gr-block' },
+    h('h4', {}, t('Intentos')),
+    h('ul', { class: 'gr-list' }, rows),
+    g.attempts.length > 8 ? h('button', { class: 'btn small ghost', type: 'button', onclick: () => { GR.all = !GR.all; drawGrades(GR.host); } },
+      GR.all ? t('Ver menos') : t('Ver los {n}', { n: g.attempts.length })) : null);
+}
+
+// each topic: its last grade against the pass score, the best one and how many tries
+function topicGrades(g) {
+  if (!g.topics || !g.topics.length) return null;
+  return h('div', { class: 'gr-block' },
+    h('h4', {}, t('Por tema')),
+    h('ul', { class: 'gr-topics' }, g.topics.map((tp) => h('li', {},
+      h('button', { class: 'gr-what', type: 'button', onclick: () => openGrade({ topic: tp.topic, kind: 'quiz' }) },
+        h('strong', {}, tp.title),
+        h('small', {}, [t('última {n}', { n: tp.last }), t('mejor {n}', { n: tp.best }), tn(tp.attempts, '{n} intento', '{n} intentos')].join(' · '))),
+      tp.passed
+        ? h('span', { class: 'gr-status ok' }, icon('check'), t('Aprobado'))
+        : h('span', { class: 'gr-status' }, icon('clock'), t('Aún no'))))));
 }
 
 /* ---------- Practicar & Collectible FSRS Flashcards ---------- */
@@ -2349,13 +3121,18 @@ const RARITY_LABEL = {
   legendary: t('Legendaria'),
 };
 const RARITY_XP = { common: 5, rare: 8, epic: 12, legendary: 18 };
-const CARDS = { data: null, scope: 'guide', revealed: false, busy: false, expanded: null };
+const CARDS = { data: null, scope: 'guide', revealed: false, busy: false, expanded: null, collapsed: !!store.get('fc-collapsed', false) };
 
 /* ---------- Practical Activities (checklist in note + optional AI feedback) ---------- */
 const ACT_LEVEL = { easy: t('Fácil'), medium: t('Media'), challenge: t('Reto') };
 const ACTS = { busySlug: '', openKey: '', sendingKey: '', drafts: {} };
 
 function syncActivities(slug, list) {
+  const nd = nodeOf(slug);
+  if (nd) {
+    nd.activitiesTotal = (list || []).length;
+    nd.activitiesDone = (list || []).filter((a) => a.done).length;
+  }
   if (!S.note || S.note.slug !== slug) return;
   S.note.activities = list || [];
   renderReader(S.note);
@@ -2390,10 +3167,11 @@ function activitiesSection(n, { inPractice = false } = {}) {
     onclick: () => generateActivitiesFor(n.slug),
   }, icon('sparkles'), busy ? t('Proponiendo actividades…') : list.length ? t('Regenerar actividades') : t('Proponer actividades'));
 
+  const actPct = list.length ? Math.round((doneCount / list.length) * 100) : 0;
   const head = h('div', { class: 'act-head' },
     h('div', { class: 'act-title' },
       inPractice ? h('h3', {}, t('Actividades prácticas')) : h('h2', {}, t('Actividades prácticas')),
-      list.length ? h('span', { class: 'chip act-prog' }, t('{done} de {total} hechas', { done: doneCount, total: list.length })) : null),
+      list.length ? h('span', { class: `chip act-prog${actPct >= 100 ? ' done' : ''}` }, `${t('{done} de {total} hechas', { done: doneCount, total: list.length })} · ${actPct}%`) : null),
     genBtn);
 
   if (list.length === 0) {
@@ -2401,6 +3179,8 @@ function activitiesSection(n, { inPractice = false } = {}) {
       head,
       h('p', { class: 'hint' }, t('Propón 3–5 ejercicios prácticos, experimentos o mini-proyectos graduados para poner este tema a prueba. Se guardan como checklist en tu nota.')));
   }
+  const actBar = h('div', { class: 'act-bar', role: 'progressbar', 'aria-label': t('Progreso de actividades'), 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(actPct) },
+    h('i', { class: actPct >= 100 ? 'done' : '', style: `width:${actPct}%` }));
 
   const updateItem = async (idx, payload, key) => {
     ACTS.sendingKey = key;
@@ -2503,7 +3283,7 @@ function activitiesSection(n, { inPractice = false } = {}) {
       drawer);
   }));
 
-  return h('section', { class: cls }, head, itemsEl);
+  return h('section', { class: cls }, head, actBar, itemsEl);
 }
 
 function fmtInterval(mins) {
@@ -2519,8 +3299,12 @@ function renderPractice() {
   root.replaceChildren();
   const n = S.note;
   const fcHost = h('div', { id: 'fc-host' });
+  const pending = h('div', { class: 'pr-pending-host' });
+  drawPending(pending);
+  if (!PR.loaded) loadPracticeList();
   if (!n) {
     root.append(h('div', { class: 'practice' },
+      pending,
       h('div', { class: 'panel-empty', style: 'padding-top:12px;padding-bottom:18px' }, h('h3', {}, t('Practicar y tarjetas')),
         h('p', {}, t('Abre una guía para preguntas y método Feynman, o repasa tus tarjetas coleccionables e importa mazos de Anki.')), guideList() || ''),
       fcHost));
@@ -2543,20 +3327,21 @@ function renderPractice() {
       m.mastery ? h('div', { class: 'mastery' }, h('div', { class: 'row' }, h('span', {}, t('Lo que llevas')), h('span', {}, `${m.mastery}/100`)), h('div', { class: 'bar' }, h('i', { style: `width:${m.mastery}%` }))) : null),
     h('ol', { class: 'sequence', 'aria-label': t('Cómo afianzarlo') }, steps.map((s, i) => h('li', {},
       h('span', { class: `step${i === current ? ' go' : ''}`, 'data-state': s.done ? 'done' : i === current ? 'current' : 'todo' }, h('span', { class: 'step-n' }, s.done ? '✓' : String(i + 1)), s.label)))),
+    pending,
     fcHost,
     activitiesSection(n, { inPractice: true }),
     h('section', { class: 'p-card' },
       h('h3', {}, t('Preguntas')),
-      h('p', { class: 'hint' }, t('Piden razonar o predecir, no memorizar. Se corrigen al final y el resultado queda en la guía.')),
+      h('p', { class: 'hint' }, t('Piden razonar o predecir, no memorizar. Se corrigen al final y el resultado queda en la guía. Se abren en su pestaña: puedes dejarlas en pausa y seguir después.')),
       h('div', { class: 'quiz-opts' }, nInput, 'preguntas, dificultad', diff,
         h('button', { class: 'btn primary small', type: 'button', onclick: () => {
           const q = Number(nInput.value) || 5;
-          chatAction({ action: 'quiz', n: q, difficulty: diff.value }, t('Quiz de «{title}»: {n} preguntas, {difficulty}', { title, n: q, difficulty: t(diff.value) }));
+          startPractice({ kind: 'quiz', slug: n.slug, n: q, difficulty: diff.value });
         } }, t('Empezar')))),
     h('section', { class: 'p-card' },
       h('h3', {}, t('Explícamelo tú')),
       h('p', { class: 'hint' }, t('Me lo explicas como a alguien que no sabe nada. Te señalo los huecos y te pregunto lo que preguntaría un novato.')),
-      h('button', { class: 'btn primary small', type: 'button', onclick: () => chatAction({ action: 'feynman' }, t('Quiero explicar «{title}»', { title })) }, t('Empezar a explicar'))),
+      h('button', { class: 'btn primary small', type: 'button', onclick: () => startPractice({ kind: 'feynman', slug: n.slug }) }, t('Empezar a explicar'))),
     h('section', { class: 'p-card' },
       h('h3', {}, t('Simulación')),
       h('p', { class: 'hint' }, t('Una página interactiva para jugar con el tema, aparte de los visuales de la guía.')),
@@ -2726,6 +3511,7 @@ function drawFlashcards(host, note) {
     stage = h('div', { class: 'cromo-stage' },
       h('div', { class: 'cromo-queue-bar' },
         h('span', { class: 'fc-meta' }, tn(queue.length, '{n} para hoy', '{n} para hoy')),
+        host !== PR.reviewHost ? h('button', { class: 'btn small ghost', type: 'button', onclick: openReview }, icon('panel-right-open'), t('Repasar en una pestaña')) : null,
         h('button', { class: 'btn small ghost', type: 'button', onclick: toggleFlip }, icon('rotate-ccw'), t('Dar la vuelta'))),
       cromoTilt,
       ratingsBar);
@@ -2801,10 +3587,35 @@ function drawFlashcards(host, note) {
         onclick: () => chatAction({ action: 'deck-guide', deck: d.slug }, t('Crear guía desde el mazo «{title}»', { title: d.title })),
       }, icon('sparkles'), t('Crear guía'))))));
 
-  host.replaceChildren(h('section', { class: 'p-card fc-studio' },
-    h('div', { class: 'fc-head' },
+  const toggleBtn = h('button', {
+    class: 'btn small ghost fc-toggle', type: 'button', 'aria-expanded': String(!CARDS.collapsed),
+    onclick: () => {
+      CARDS.collapsed = !CARDS.collapsed;
+      store.set('fc-collapsed', CARDS.collapsed);
+      drawFlashcards(host, note);
+    },
+  }, CARDS.collapsed ? t('Mostrar') : t('Ocultar'));
+
+  const summaryBits = [];
+  if (queue.length > 0) summaryBits.push(t('{n} para hoy', { n: queue.length }));
+  if (cards.length > 0) summaryBits.push(`${collected}/${cards.length}`);
+
+  const head = h('div', { class: 'fc-head' },
+    h('div', { class: 'fc-head-left' },
       h('h3', {}, t('Tarjetas coleccionables')),
-      scopeSeg),
+      summaryBits.length ? h('span', { class: 'chip fc-summary' }, summaryBits.join(' · ')) : null),
+    h('div', { class: 'fc-head-right' },
+      CARDS.collapsed && queue.length > 0 ? h('button', { class: 'btn small primary', type: 'button', onclick: () => openReview() }, t('Repasar')) : null,
+      CARDS.collapsed ? null : scopeSeg,
+      toggleBtn));
+
+  if (CARDS.collapsed) {
+    host.replaceChildren(h('section', { class: 'p-card fc-studio fc-collapsed' }, head));
+    return;
+  }
+
+  host.replaceChildren(h('section', { class: 'p-card fc-studio' },
+    head,
     h('div', { class: 'actions fc-tools' },
       genBtn,
       h('button', { class: 'btn small', type: 'button', onclick: () => importInput.click() }, icon('download'), t('Importar Anki')),
@@ -3077,32 +3888,43 @@ function applyFilters() {
 $('#search').addEventListener('input', applyFilters);
 
 /* ---------- chat ---------- */
-const T = { raw: '', bubble: null, timer: null, auto: true, progress: null, plan: null, echo: null, choiceCard: null, anim: null };
+/* ---------- run views: a transcript, a busy line and a composer; the chat has one, each practice another ---------- */
+const VIEWS = new Set();
+function makeView(els, kind) {
+  const v = { ...els, kind, run: null, working: false, timer: 0,
+    T: { raw: '', bubble: null, timer: null, auto: true, progress: null, plan: null, echo: null, choiceCard: null, anim: null } };
+  v.transcript.addEventListener('scroll', () => {
+    const box = v.transcript;
+    v.T.auto = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  });
+  VIEWS.add(v);
+  return v;
+}
+const CHAT = makeView({
+  transcript: $('#transcript'), busyEl: $('#working'), busyText: $('#working-text'), composer: $('#composer'), reply: $('#reply'),
+  quick: $('#quick'), freeform: $('#freeform'), label: $('#composer-label'), hint: $('#composer-hint'), finish: $('#btn-finish'),
+  cancel: $('#btn-cancel'), send: $('#btn-send'),
+}, 'chat');
 
 // lists that move get AutoAnimate once it has loaded (an ES module, so it may come after this script)
 function withAutoAnimate(fn) {
   if (window.autoAnimate) fn(window.autoAnimate); else window.addEventListener('autoanimate-ready', () => fn(window.autoAnimate), { once: true });
 }
 withAutoAnimate((aa) => {
-  T.anim = aa($('#transcript'), { duration: 220 });
+  CHAT.T.anim = aa($('#transcript'), { duration: 220 });
   aa($('#chat-list'), { duration: 200 });
 });
 
-function scrollDown() {
-  const box = $('#transcript');
-  if (T.auto) box.scrollTop = box.scrollHeight;
+function scrollDown(v) {
+  if (v.T.auto) v.transcript.scrollTop = v.transcript.scrollHeight;
 }
-$('#transcript').addEventListener('scroll', () => {
-  const box = $('#transcript');
-  T.auto = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
-});
 
-function resetTranscript() {
-  clearTimeout(T.timer);
-  T.anim?.disable(); // a new conversation replaces the old one at once, without every message flying out
-  $('#transcript').replaceChildren();
-  Object.assign(T, { raw: '', bubble: null, progress: null, plan: null, choiceCard: null, echo: null, auto: true });
-  requestAnimationFrame(() => T.anim?.enable());
+function resetTranscript(v) {
+  clearTimeout(v.T.timer);
+  v.T.anim?.disable(); // a new conversation replaces the old one at once, without every message flying out
+  v.transcript.replaceChildren();
+  Object.assign(v.T, { raw: '', bubble: null, progress: null, plan: null, choiceCard: null, echo: null, auto: true });
+  requestAnimationFrame(() => v.T.anim?.enable());
 }
 
 /* ---------- Narval mascot state & onboarding tutorial ---------- */
@@ -3292,52 +4114,55 @@ $('#btn-plus').addEventListener('click', (e) => {
   $('#btn-plus').setAttribute('aria-expanded', 'true');
 });
 
-function botText(text) {
-  T.raw += text;
-  if (!T.bubble) {
-    T.bubble = h('div', { class: 'msg bot streaming' });
-    $('#transcript').append(T.bubble);
+function botText(v, text) {
+  v.T.raw += text;
+  if (!v.T.bubble) {
+    v.T.bubble = h('div', { class: 'msg bot streaming' });
+    v.transcript.append(v.T.bubble);
   }
-  clearTimeout(T.timer);
-  T.timer = setTimeout(() => flushBot(true), 60);
+  clearTimeout(v.T.timer);
+  v.T.timer = setTimeout(() => flushBot(v, true), 60);
 }
-function flushBot(streaming) {
-  clearTimeout(T.timer);
-  if (!T.bubble) return;
-  T.bubble.classList.toggle('streaming', streaming);
-  T.bubble.replaceChildren(mdBlock(T.raw, { breaks: true, streaming }));
-  scrollDown();
+function flushBot(v, streaming) {
+  clearTimeout(v.T.timer);
+  if (!v.T.bubble) return;
+  v.T.bubble.classList.toggle('streaming', streaming);
+  v.T.bubble.replaceChildren(mdBlock(v.T.raw, { breaks: true, streaming }));
+  scrollDown(v);
 }
 // the bubble is complete: drawn once more with its widgets
-function closeBubble() {
-  if (!T.bubble) return;
-  if (T.raw.trim()) flushBot(false); else T.bubble.remove();
-  T.raw = ''; T.bubble = null;
+function closeBubble(v) {
+  if (!v.T.bubble) return;
+  if (v.T.raw.trim()) flushBot(v, false); else v.T.bubble.remove();
+  v.T.raw = ''; v.T.bubble = null;
 }
 
-function addMsg(cls, content) {
-  closeBubble();
-  $('.chat-empty')?.remove();
+function addMsg(v, cls, content) {
+  closeBubble(v);
+  v.transcript.querySelector('.chat-empty')?.remove();
   const m = h('div', { class: `msg ${cls}` });
   if (typeof content === 'string') m.textContent = content; else m.append(content);
-  $('#transcript').append(m);
-  scrollDown();
+  v.transcript.append(m);
+  scrollDown(v);
   return m;
 }
 
-let workingTimer;
-function setWorking(on, text) {
-  S.working = !!on;
-  if (!on) NARVAL.phase = '';
-  $('#working').hidden = !on;
-  if (text) $('#working-text').textContent = text;
-  // a long wait reads better when the phrase changes now and then
-  clearInterval(workingTimer);
-  if (on && Phrases.has('thinking', $('#working-text').textContent)) {
-    workingTimer = setInterval(() => { $('#working-text').textContent = Phrases.pick('thinking'); }, 6000);
+function setWorking(v, on, text) {
+  v.working = !!on;
+  if (v === CHAT) {
+    S.working = v.working;
+    if (!on) NARVAL.phase = '';
   }
-  $('#btn-cancel').hidden = !on;
-  $('#session-dot').hidden = !on;
+  v.busyEl.hidden = !on;
+  if (text) v.busyText.textContent = text;
+  // a long wait reads better when the phrase changes now and then
+  clearInterval(v.timer);
+  if (on && Phrases.has('thinking', v.busyText.textContent)) {
+    v.timer = setInterval(() => { v.busyText.textContent = Phrases.pick('thinking'); }, 6000);
+  }
+  if (v.cancel) v.cancel.hidden = !on;
+  $('#session-dot').hidden = ![...VIEWS].some((x) => x.working);
+  if (v.kind === 'practice') drawPracticeHead(v);
   renderNarval();
 }
 
@@ -3358,60 +4183,65 @@ function quickOptions(e) {
   return null;
 }
 
-// The composer follows what the run waits for: a chat message, a short answer, an explanation, or nothing.
-function setComposer(mode, e = {}) {
-  const form = $('#composer'), ta = $('#reply');
+// The composer follows what the run waits for: a chat message, a short answer, an explanation, or
+// nothing. A practice that is over has no composer ("off").
+function setComposer(v, mode, e = {}) {
+  const form = v.composer, ta = v.reply;
   form.dataset.kind = mode;
+  form.hidden = mode === 'off';
   // a yes/no question gets buttons: its "(s/n)" ending, in whatever language, is not shown
   const label = (e.label || '').replace(/\s*\([^()]{1,9}\)\s*$/, (m) => (/\(s\/n\)\s*$/i.test(e.key || e.label || '') ? '' : m)).trim();
   const opts = mode === 'line' ? quickOptions(e) : null;
-  $('#composer-label').textContent = mode === 'line' ? label : '';
-  $('#composer-label').hidden = mode !== 'line' || !label;
-  $('#quick').replaceChildren(...(opts || []).map((o) => h('button', {
-    type: 'button', class: `btn${o.primary ? ' primary' : ''}`, onclick: () => { T.echo = o; sendReply(o.reply); },
+  v.label.textContent = mode === 'line' ? label : '';
+  v.label.hidden = mode !== 'line' || !label;
+  v.quick.replaceChildren(...(opts || []).map((o) => h('button', {
+    type: 'button', class: `btn${o.primary ? ' primary' : ''}`, onclick: () => { v.T.echo = o; sendReply(v.run, o.reply); },
   }, o.label)));
-  $('#quick').hidden = !opts;
-  $('#freeform').hidden = !!opts;
-  $('#depth').hidden = mode !== 'chat';
-  $('#btn-attach').hidden = mode !== 'chat';
-  $('#btn-plus').hidden = mode !== 'chat';
-  if (mode !== 'chat') closePlus();
-  $('#btn-finish').hidden = mode !== 'block';
-  ta.disabled = $('#btn-send').disabled = mode === 'busy';
+  v.quick.hidden = !opts;
+  v.freeform.hidden = !!opts;
+  if (v === CHAT) {
+    $('#depth').hidden = mode !== 'chat';
+    $('#btn-attach').hidden = mode !== 'chat';
+    $('#btn-plus').hidden = mode !== 'chat';
+    if (mode !== 'chat') closePlus();
+  }
+  v.finish.hidden = mode !== 'block';
+  ta.disabled = v.send.disabled = mode === 'busy' || mode === 'off';
   ta.rows = mode === 'block' ? 6 : 2;
   ta.placeholder = {
     chat: t('Pregunta lo que quieras, o pide una guía: «Explícame la transformada de Fourier, enfocada en audio»'),
     line: e.def ? t('Enter para usar «{answer}»', { answer: e.def }) : t('Escribe tu respuesta'),
     block: t('Explícalo con tus palabras, como si el otro no supiera nada…'),
-    busy: t('Espera a que termine, o detenlo.'),
+    busy: v === CHAT ? t('Espera a que termine, o detenlo.') : t('Espera a que termine.'),
+    off: '',
   }[mode];
-  $('#composer-hint').textContent = mode === 'block' ? t('Ctrl + Enter para enviar') : '';
-  if (mode !== 'busy' && !isPhone() && ta.isConnected) (opts ? $('#quick .primary') : ta)?.focus({ preventScroll: true });
+  v.hint.textContent = mode === 'block' ? t('Ctrl + Enter para enviar') : '';
+  if ((mode === 'line' || mode === 'block' || mode === 'chat') && !isPhone() && ta.isConnected && v.transcript.offsetParent) (opts ? v.quick.querySelector('.primary') : ta)?.focus({ preventScroll: true });
 }
 
 // What the learner sends goes to the live chat, or starts one (continuing the chat on screen, if any).
 async function chatSend(body) {
-  const run = S.run;
+  const run = CHAT.run;
   body = { depth: S.depth, guide: S.guide || '', ...body };
   if (run && !run.done && run.waiting === 'chat') {
     run.waiting = '';
-    setComposer('busy');
-    setWorking(true, Phrases.pick('thinking'));
+    setComposer(CHAT, 'busy');
+    setWorking(CHAT, true, Phrases.pick('thinking'));
     try { await api(`/api/runs/${run.id}/input`, { method: 'POST', body }); return true; } catch (err) {
-      toast(err.message); run.waiting = 'chat'; setComposer('chat'); setWorking(false); return false;
+      toast(err.message); run.waiting = 'chat'; setComposer(CHAT, 'chat'); setWorking(CHAT, false); return false;
     }
   }
   if (run && !run.done) { toast(t('Espera a que termine lo que está en curso, o detenlo.')); return false; }
   try {
     const req = { cmd: 'chat', chat: body, guide: S.guide || '' };
     if (run && run.done) req.resume = run.id;
-    setComposer('busy');
-    setWorking(true, Phrases.pick('thinking'));
+    setComposer(CHAT, 'busy');
+    setWorking(CHAT, true, Phrases.pick('thinking'));
     const { id } = await api('/api/runs', { method: 'POST', body: req });
     attachRun(id, run && run.done ? run.title : null);
     loadChats();
     return true;
-  } catch (err) { toast(err.message); setComposer('chat'); setWorking(false); return false; }
+  } catch (err) { toast(err.message); setComposer(CHAT, 'chat'); setWorking(CHAT, false); return false; }
 }
 
 // a button that asks the chat to do something, without going through the model
@@ -3420,13 +4250,23 @@ function chatAction(action, label) {
   chatSend({ text: '', action, label });
 }
 
-async function sendReply(text, finish = false) {
-  const run = S.run;
+async function sendReply(run, text, finish = false) {
   if (!run || run.done) return;
+  const v = run.view;
   run.waiting = '';
-  setComposer('busy');
-  setWorking(true, Phrases.pick('thinking'));
-  try { await api(`/api/runs/${run.id}/input`, { method: 'POST', body: { text, finish } }); } catch (err) { toast(err.message); setWorking(false); }
+  setComposer(v, 'busy');
+  setWorking(v, true, Phrases.pick('thinking'));
+  try { await api(`/api/runs/${run.id}/input`, { method: 'POST', body: { text, finish } }); } catch (err) { toast(err.message); setWorking(v, false); }
+}
+
+// Enter sends a line; an explanation (block) is sent with Ctrl + Enter
+function composerKeys(v) {
+  v.reply.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.isComposing) return;
+    const block = v.composer.dataset.kind === 'block';
+    if (block ? (e.ctrlKey || e.metaKey) : !e.shiftKey) { e.preventDefault(); v.composer.requestSubmit(); }
+  });
+  v.finish.addEventListener('click', () => { const text = v.reply.value; v.reply.value = ''; sendReply(v.run, text, true); });
 }
 
 $('#composer').addEventListener('submit', async (e) => {
@@ -3434,7 +4274,7 @@ $('#composer').addEventListener('submit', async (e) => {
   const ta = $('#reply');
   const mode = $('#composer').dataset.kind || 'chat';
   const text = ta.value;
-  if (mode === 'busy') return;
+  if (mode === 'busy' || mode === 'off') return;
   if (mode === 'chat') {
     if (!text.trim() && !STAGED.length) return;
     const files = takeStaged();
@@ -3445,17 +4285,12 @@ $('#composer').addEventListener('submit', async (e) => {
   }
   if (mode === 'block' && !text.trim()) { toast(t('Escribe tu explicación antes de enviar.')); return; }
   ta.value = '';
-  sendReply(text, false);
+  sendReply(CHAT.run, text, false);
 });
-$('#reply').addEventListener('keydown', (e) => {
-  if (e.key !== 'Enter' || e.isComposing) return;
-  const block = $('#composer').dataset.kind === 'block';
-  if (block ? (e.ctrlKey || e.metaKey) : !e.shiftKey) { e.preventDefault(); $('#composer').requestSubmit(); }
-});
-$('#btn-finish').addEventListener('click', () => { const text = $('#reply').value; $('#reply').value = ''; sendReply(text, true); });
+composerKeys(CHAT);
 $('#btn-cancel').addEventListener('click', async () => {
-  if (!S.run || S.run.done) return;
-  try { await api(`/api/runs/${S.run.id}/cancel`, { method: 'POST', body: {} }); } catch (err) { toast(err.message); }
+  if (!CHAT.run || CHAT.run.done) return;
+  try { await api(`/api/runs/${CHAT.run.id}/cancel`, { method: 'POST', body: {} }); } catch (err) { toast(err.message); }
 });
 
 // Attachments of a message: picked, pasted or dropped, uploaded at once and sent with the next message.
@@ -3516,10 +4351,10 @@ $('#material-input').addEventListener('change', async (e) => {
   const fd = new FormData();
   for (const f of files) fd.append('files', f);
   try {
-    setWorking(true, Phrases.pick('uploading'));
+    setWorking(CHAT, true, Phrases.pick('uploading'));
     const up = await api('/api/upload', { method: 'POST', body: fd });
     await chatSend({ text: '', files: up.files, material: true, label: t('Mis apuntes: {files}', { files: [...files].map((f) => f.name).join(', ') }) });
-  } catch (err) { toast(err.message); setWorking(false); } finally { e.target.value = ''; }
+  } catch (err) { toast(err.message); setWorking(CHAT, false); } finally { e.target.value = ''; }
 });
 
 // "write now": 0 (the guide alone) to 4 levels of concept notes; the iceberg maps that far, and digging goes further
@@ -3536,16 +4371,17 @@ function renderDepth() {
 function scoreTone(score) { return score >= 70 ? 'good' : score >= 40 ? 'mid' : 'low'; }
 
 function renderCard(c, run) {
+  const v = run.view;
   switch (c.kind) {
     case 'phase':
       if (!run.replay) { NARVAL.phase = c.phase || ''; renderNarval(); }
       break;
-    case 'status': if (!run.replay && !run.done) setWorking(true, c.detail); break;
-    case 'plan': T.plan = planCard(c.plan, run); addMsg('card', T.plan.el); break;
-    case 'progress': progressCard(c.items); break;
+    case 'status': if (!run.replay && !run.done) setWorking(v, true, c.detail); break;
+    case 'plan': v.T.plan = planCard(c.plan, run); addMsg(v, 'card', v.T.plan.el); break;
+    case 'progress': progressCard(v, c.items); break;
     case 'guide':
-      T.progress = null;
-      addMsg('card', h('div', { class: 'rich rich-guide' },
+      v.T.progress = null;
+      addMsg(v, 'card', h('div', { class: 'rich rich-guide' },
         h('div', { class: 'rich-eyebrow' }, t('Guía lista')),
         h('h3', {}, c.topic),
         h('div', { class: 'actions' },
@@ -3564,7 +4400,7 @@ function renderCard(c, run) {
       break;
     case 'roadmap': {
       const rm = { slug: c.slug, title: c.topic, pass: c.score, steps: c.steps || [] };
-      addMsg('card', h('div', { class: 'rich rich-roadmap' },
+      addMsg(v, 'card', h('div', { class: 'rich rich-roadmap' },
         h('div', { class: 'rich-eyebrow' }, icon('map'), `Ruta · ${rm.steps.length} temas`),
         h('h3', {}, rm.title),
         h('p', { class: 'hint' }, t('Se estudia en orden: cada tema se desbloquea con {pass}/100 en el anterior, y su guía se escribe entonces.', { pass: rm.pass })),
@@ -3573,20 +4409,20 @@ function renderCard(c, run) {
       break;
     }
     case 'concept':
-      addMsg('card', h('div', { class: 'rich' }, h('div', { class: 'rich-eyebrow' }, t('Nota de concepto')), h('h3', {}, c.topic),
+      addMsg(v, 'card', h('div', { class: 'rich' }, h('div', { class: 'rich-eyebrow' }, t('Nota de concepto')), h('h3', {}, c.topic),
         h('button', { class: 'btn small', type: 'button', onclick: () => openNote(c.slug) }, t('Abrir la nota'))));
       if (!run.replay) loadGraph().catch(() => {}).then(() => reloadGuide());
       break;
     case 'daily':
-      addMsg('card', h('div', { class: 'rich' },
+      addMsg(v, 'card', h('div', { class: 'rich' },
         h('div', { class: 'rich-eyebrow' }, t('Para descubrir hoy'), c.field && h('span', { class: 'chip' }, c.field)),
         h('h3', {}, c.topic), c.hook && h('p', { class: 'hint' }, c.hook)));
       break;
-    case 'question': addMsg('card', questionCard(c, run)); break;
+    case 'question': addMsg(v, 'card', questionCard(c, run)); break;
     case 'score': {
       const tone = scoreTone(c.score);
       const verdict = tone === 'good' ? t('Lo entendiste bien') : tone === 'mid' ? t('Vas por buen camino') : t('Buen punto de partida: quedan cosas por aclarar');
-      addMsg('card', h('div', { class: `rich rich-score tone-${tone}` },
+      addMsg(v, 'card', h('div', { class: `rich rich-score tone-${tone}` },
         h('div', { class: 'score-ring', style: `--p:${Math.max(0, Math.min(100, c.score))}`, role: 'img', 'aria-label': t('{score} de 100', { score: c.score }) }, h('span', {}, c.score)),
         h('div', {}, h('strong', {}, `${c.label}: ${verdict}`), c.detail && h('div', { class: 'hint' }, c.detail))));
       if (!run.replay) {
@@ -3597,8 +4433,16 @@ function renderCard(c, run) {
       }
       break;
     }
+    case 'practice':
+      addMsg(v, 'card', h('div', { class: 'rich rich-practice' },
+        h('div', { class: 'rich-eyebrow' }, icon(PR_ICON[c.phase] || 'target'), c.phase === 'feynman' ? t('Explicación aparte') : t('Preguntas aparte')),
+        h('h3', {}, c.topic),
+        h('p', { class: 'hint' }, t('Va en su propia pestaña: el chat sigue libre mientras respondes.')),
+        h('button', { class: 'btn small primary', type: 'button', onclick: () => openPractice(c.practice) }, icon('external-link'), t('Abrir práctica'))));
+      if (!run.replay) { NARVAL.phase = c.phase || ''; loadPracticeList().then(() => openPractice(c.practice)); }
+      break;
     case 'resources':
-      addMsg('card', h('details', { class: 'rich rich-resources' },
+      addMsg(v, 'card', h('details', { class: 'rich rich-resources' },
         h('summary', { class: 'rich-eyebrow' }, t('Para seguir explorando ({n})', { n: (c.resources || []).length })),
         h('ul', { class: 'res-list' }, (c.resources || []).map((r) => resourceCard(r)))));
       break;
@@ -3607,6 +4451,7 @@ function renderCard(c, run) {
 
 // The plan: what gets a note now, and the part under water, mapped and left to explain on demand.
 function planCard(p, run) {
+  const v = run.view;
   const byLevel = (list) => { const out = []; for (const c of list || []) (out[c.level - 1] ||= []).push(c); return out; };
   const above = byLevel(p.concepts), below = byLevel(p.pending);
   const boxes = new Map(), promote = new Map();
@@ -3664,12 +4509,12 @@ function planCard(p, run) {
       onclick: (e) => { const open = el.classList.toggle('expanded'); e.currentTarget.textContent = open ? t('Ocultar el plan') : t('Ver el plan'); } }, t('Ver el plan')));
   };
   function answer(reply, label) {
-    if (state.answered || S.run !== run || run.done || !state.live) return;
+    if (state.answered || run.view.run !== run || run.done || !state.live) return;
     state.answered = true;
     $$('button, input', el).forEach((x) => { x.disabled = true; });
     fold();
-    T.echo = { reply, label };
-    sendReply(reply);
+    v.T.echo = { reply, label };
+    sendReply(run, reply);
   }
   go.addEventListener('click', () => {
     const skip = [...boxes].filter(([, cb]) => !cb.checked).map(([id]) => id);
@@ -3691,7 +4536,7 @@ function writtenSummary(items) {
 }
 
 // One card per guide being written, redrawn in place as each note finishes.
-function progressCard(items) {
+function progressCard(v, items) {
   const state = { pending: t('en cola'), working: t('escribiendo…'), done: t('lista'), linked: t('ya estaba'), error: t('falló') };
   const done = items.filter((i) => i.state !== 'pending' && i.state !== 'working').length;
   const failed = items.filter((i) => i.state === 'error').length;
@@ -3708,12 +4553,13 @@ function progressCard(items) {
     : [h('div', { class: 'rich-eyebrow' }, t('Escribiendo · {done} de {total}', { done, total: items.length })),
       h('div', { class: 'bar' }, h('i', { style: `width:${Math.round((100 * done) / items.length)}%` })),
       list];
-  if (T.progress && T.progress.isConnected) { T.progress.replaceChildren(...body); return; }
-  T.progress = h('div', { class: 'rich rich-progress' }, ...body);
-  addMsg('card', T.progress);
+  if (v.T.progress && v.T.progress.isConnected) { v.T.progress.replaceChildren(...body); return; }
+  v.T.progress = h('div', { class: 'rich rich-progress' }, ...body);
+  addMsg(v, 'card', v.T.progress);
 }
 
 function questionCard(c, run) {
+  const v = run.view;
   const qEl = mdBlock(c.question || '', { breaks: true });
   qEl.classList.add('q-text');
   const card = h('div', { class: `rich rich-question${c.label ? ' is-exercise' : ''}` },
@@ -3728,102 +4574,405 @@ function questionCard(c, run) {
     const chEl = mdBlock(choice, { breaks: false });
     chEl.classList.add('choice-md');
     const b = h('button', { type: 'button', class: 'choice', disabled: run.replay || null, onclick: () => {
-      if (state.answered || S.run !== run || run.done) return;
+      if (state.answered || run.view.run !== run || run.done) return;
       state.answered = true;
       b.classList.add('picked');
       state.buttons.forEach((x) => { x.disabled = true; });
-      sendReply(choice);
+      sendReply(run, choice);
     } }, chEl);
     state.buttons.push(b);
     list.append(b);
   }
   card.append(list);
-  T.choiceCard = state;
+  v.T.choiceCard = state;
   return card;
 }
 
 // once the learner has answered, or the run is over, earlier buttons are no longer live
-function closeChoices() {
-  if (T.choiceCard) { T.choiceCard.answered = true; T.choiceCard.buttons.forEach((x) => { x.disabled = true; }); }
-  if (T.plan && !T.plan.answered) { T.plan.answered = true; $$('button, input', T.plan.el).forEach((x) => { x.disabled = true; }); }
+function closeChoices(v) {
+  if (v.T.choiceCard) { v.T.choiceCard.answered = true; v.T.choiceCard.buttons.forEach((x) => { x.disabled = true; }); }
+  if (v.T.plan && !v.T.plan.answered) { v.T.plan.answered = true; $$('button, input', v.T.plan.el).forEach((x) => { x.disabled = true; }); }
 }
 
 /* ---------- runs ---------- */
 // Shows a chat: a live one streams in, a stored one replays from its first event.
 function attachRun(id, title, { replay = false } = {}) {
-  if (S.run && S.run.es) S.run.es.close();
-  resetTranscript();
-  const run = { id, done: false, replay, waiting: '', title: title || t('Chat'), es: new EventSource(`/api/runs/${id}/events?from=0`) };
+  const run = attachView(CHAT, id, title || t('Chat'), { replay });
   S.run = run;
   $('#chat-title').textContent = run.title;
   if (S.mapScope === 'chat') drawMap();
-  setComposer('busy');
-  setWorking(!replay, Phrases.pick('thinking'));
-  run.es.onmessage = (ev) => handleEvent(run, JSON.parse(ev.data));
-  run.es.onerror = () => { if (run.done) run.es.close(); }; // otherwise the browser reconnects with Last-Event-ID
   markActiveChat();
 }
 
+// a view follows a run: its events stream in from the first one
+function attachView(v, id, title, { replay = false } = {}) {
+  if (v.run && v.run.es) v.run.es.close();
+  resetTranscript(v);
+  const run = { id, done: false, replay, waiting: '', title, view: v, es: new EventSource(`/api/runs/${id}/events?from=0`) };
+  v.run = run;
+  setComposer(v, 'busy');
+  setWorking(v, !replay, Phrases.pick('thinking'));
+  run.es.onmessage = (ev) => handleEvent(run, JSON.parse(ev.data));
+  run.es.onerror = () => { if (run.done) run.es.close(); }; // otherwise the browser reconnects with Last-Event-ID
+  return run;
+}
+
 function handleEvent(run, e) {
-  if (run !== S.run) return;
+  const v = run.view;
+  if (run !== v.run) return;
   switch (e.type) {
-    case 'out': $('.chat-empty')?.remove(); botText(e.text); break;
+    case 'out': v.transcript.querySelector('.chat-empty')?.remove(); botText(v, e.text); break;
     case 'in': {
-      closeChoices();
+      closeChoices(v);
       // a button answers with a short code ("s", "media"); show what the learner actually clicked
-      const known = (T.echo && T.echo.reply === e.text && T.echo) || ((run.lastAsk && quickOptions(run.lastAsk)) || []).find((o) => o.reply === e.text);
-      T.echo = null;
+      const known = (v.T.echo && v.T.echo.reply === e.text && v.T.echo) || ((run.lastAsk && quickOptions(run.lastAsk)) || []).find((o) => o.reply === e.text);
+      v.T.echo = null;
       const shown = known ? known.label : /^\{.*"go":true/.test(e.text) ? t('Escribir con estos cambios') : e.text;
-      const msg = addMsg('user', mdBlock(shown, { breaks: true }));
+      const msg = addMsg(v, 'user', mdBlock(shown, { breaks: true }));
       if (e.params && e.params.length) {
         msg.append(h('div', { class: 'msg-params' }, e.params.map((p) => h('span', { class: 'msg-param' },
           p.icon ? icon(p.icon) : null, h('span', {}, p.text)))));
       }
-      if (!run.replay) setWorking(true, Phrases.pick('thinking'));
+      if (!run.replay) setWorking(v, true, Phrases.pick('thinking'));
       break;
     }
-    case 'card': closeBubble(); renderCard(e.card, run); break;
+    case 'card': closeBubble(v); renderCard(e.card, run); break;
     case 'ask':
-      closeBubble();
+      closeBubble(v);
       run.lastAsk = e;
       run.waiting = e.kind;
       if (run.replay) break;
-      setWorking(false);
-      if (e.kind === 'line' && T.plan && !T.plan.answered && /genero la guía/i.test(e.key || e.label || '')) {
-        T.plan.live = true;
-        setComposer('busy');
-        $('#reply').placeholder = t('Elige en el plan de arriba.');
-        T.plan.el.scrollIntoView({ behavior: smoothness(), block: 'nearest' });
+      setWorking(v, false);
+      if (v.kind === 'practice') loadPracticeList(); // its progress: one more answered
+      if (e.kind === 'line' && v.T.plan && !v.T.plan.answered && /genero la guía/i.test(e.key || e.label || '')) {
+        v.T.plan.live = true;
+        setComposer(v, 'busy');
+        v.reply.placeholder = t('Elige en el plan de arriba.');
+        v.T.plan.el.scrollIntoView({ behavior: smoothness(), block: 'nearest' });
         break;
       }
-      if (e.kind === 'line' && T.choiceCard && !T.choiceCard.answered && /^respuesta$/i.test(e.key || e.label || '')) {
-        setComposer('busy');
-        $('#reply').placeholder = t('Elige una opción de la pregunta.');
+      if (e.kind === 'line' && v.T.choiceCard && !v.T.choiceCard.answered && /^respuesta$/i.test(e.key || e.label || '')) {
+        setComposer(v, 'busy');
+        v.reply.placeholder = t('Elige una opción de la pregunta.');
         break;
       }
-      setComposer(e.kind, e);
+      setComposer(v, e.kind, e);
       break;
     case 'done': finishRun(run, e); break;
   }
 }
 
 function finishRun(run, e) {
+  const v = run.view;
   run.done = true;
   run.waiting = '';
   run.es.close();
-  closeBubble();
-  closeChoices();
-  setWorking(false);
+  closeBubble(v);
+  closeChoices(v);
+  setWorking(v, false);
   if (e.error) {
-    addMsg('bot error', t(e.error));
+    addMsg(v, 'bot error', t(e.error));
     if (!run.replay) {
       flashNarval('sorprendido', 7000);
       narvalSay('sorprendido', Phrases.pick('error'));
     }
   }
-  if (!$('#transcript').children.length) $('#transcript').append(emptyState());
-  setComposer('chat'); // writing again continues this chat
+  if (v.kind === 'practice') {
+    setComposer(v, 'off');
+    practiceEnded(v, run);
+    if (!run.replay) { loadChats(); refresh(); }
+    return;
+  }
+  if (!v.transcript.children.length) v.transcript.append(emptyState());
+  setComposer(v, 'chat'); // writing again continues this chat
   if (!run.replay) { loadChats(); refresh(); }
+}
+
+/* ---------- practice tabs: a quiz or a Feynman in its own tab, several at a time ---------- */
+const PR = { open: [], recent: [], loaded: false, reviewHost: null };
+const PR_TABS = new Map(); // practice id -> its view
+const PR_KIND = { quiz: t('Preguntas'), feynman: t('Explicación') };
+const PR_ICON = { quiz: 'target', feynman: 'message-circle' };
+const prPanel = (id) => `practice-${id}`;
+const prTitle = (info) => `${PR_KIND[info.kind] || info.kind} · ${info.title || info.slug}`;
+const prFind = (id) => PR.open.find((p) => p.id === id) || PR.recent.find((p) => p.id === id);
+
+async function loadPracticeList() {
+  try {
+    const res = await api('/api/practice');
+    PR.open = res.open || [];
+    PR.recent = res.recent || [];
+    PR.loaded = true;
+  } catch { /* the list stays as it was */ }
+  for (const v of PR_TABS.values()) {
+    const info = prFind(v.practiceId);
+    if (info) { v.info = info; drawPracticeHead(v); }
+  }
+  drawPendingCount();
+  if (PR.pendingHost && PR.pendingHost.isConnected) drawPending(PR.pendingHost);
+}
+
+// "3/5 respondidas", "2 explicaciones": how far a practice got
+function prProgress(p) {
+  if (p.kind === 'feynman') return tn(p.answered, '{n} explicación', '{n} explicaciones');
+  return p.total ? t('{done}/{total} respondidas', { done: p.answered, total: p.total }) : t('Preparando las preguntas');
+}
+function prStatus(p) {
+  switch (p.status) {
+    case 'running': return p.waiting ? t('Esperando tu respuesta') : t('En curso');
+    case 'paused': return t('En pausa');
+    case 'done': return t('Terminada · {score}/100', { score: p.score });
+    case 'partial': return t('Incompleta · {score}/100', { score: p.score });
+    case 'discarded': return t('Cerrada sin nota');
+  }
+  return '';
+}
+
+// The panel of one practice: its header (state and actions), the transcript and its own composer.
+function practiceView(panelId) {
+  const id = panelId.replace(/^practice-/, '');
+  const reply = h('textarea', { rows: 2, 'aria-label': t('Tu respuesta') });
+  const label = h('div', { class: 'composer-label', hidden: true });
+  const quick = h('div', { class: 'quick', hidden: true });
+  const hint = h('span', { class: 'hint' });
+  const finish = h('button', { class: 'btn small', type: 'button', hidden: true }, t('Terminar y evaluar'));
+  const send = h('button', { class: 'send-btn', type: 'submit', 'aria-label': t('Enviar') }, icon('send'));
+  const freeform = h('div', { class: 'freeform' }, h('div', { class: 'composer-box' }, reply, h('div', { class: 'composer-row' }, finish, send)), hint);
+  const composer = h('form', { class: 'composer', hidden: true }, label, quick, freeform);
+  const transcript = h('div', { class: 'transcript', 'aria-live': 'polite' });
+  const busyText = h('span', {}, t('Pensando…'));
+  const busyEl = h('div', { class: 'working', hidden: true }, h('span', { class: 'working-narval', 'aria-hidden': 'true' }, window.Narval ? Narval.svg('concentrado') : null), busyText);
+  const titleEl = h('h2', {});
+  const metaEl = h('span', { class: 'pr-meta' });
+  const actionsEl = h('div', { class: 'pr-actions' });
+  const root = h('section', { class: 'pane chat practice-pane' }, h('div', { class: 'chat-head pr-head' }, h('div', { class: 'pr-title' }, titleEl, metaEl), actionsEl), transcript, busyEl, composer);
+  const v = makeView({ transcript, busyEl, busyText, composer, reply, quick, freeform, label, hint, finish, send, cancel: null }, 'practice');
+  Object.assign(v, { root, practiceId: id, titleEl, metaEl, actionsEl, info: null });
+  composer.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const mode = composer.dataset.kind;
+    if (mode === 'busy' || mode === 'off') return;
+    const text = reply.value;
+    if (mode === 'block' && !text.trim()) { toast(t('Escribe tu explicación antes de enviar.')); return; }
+    reply.value = '';
+    sendReply(v.run, text, false);
+  });
+  composerKeys(v);
+  PR_TABS.set(id, v);
+  return v;
+}
+
+// the header says where the practice is and offers what can be done with it now
+function drawPracticeHead(v) {
+  const info = v.info;
+  if (!info || !v.titleEl) return;
+  const live = !!(v.run && !v.run.done && !v.run.replay);
+  const st = live ? { ...info, status: 'running', waiting: !!v.run.waiting } : info;
+  v.titleEl.textContent = prTitle(info);
+  const parts = [prStatus(st), (st.status === 'running' || st.status === 'paused') ? prProgress(info) : ''].filter(Boolean);
+  v.metaEl.textContent = parts.join(' · ');
+  const btn = (label, ic, act, cls = '') => h('button', { class: `btn small ${cls}`.trim(), type: 'button', onclick: () => practiceAct(info.id, act) }, ic ? icon(ic) : null, label);
+  const acts = live
+    ? [btn(t('Pausar'), 'clock', 'pause', 'ghost'), btn(t('Terminar ahora'), 'check', 'finish')]
+    : st.status === 'paused'
+      ? [btn(t('Retomar'), 'rotate-ccw', 'resume', 'primary'), btn(t('Terminar ahora'), 'check', 'finish'), btn(t('Descartar'), 'trash-2', 'discard', 'ghost')]
+      : [];
+  v.actionsEl.replaceChildren(...acts);
+  const tab = S.dock && S.dock.getPanel(prPanel(info.id));
+  if (tab && tab.title !== prTitle(info)) tab.api.setTitle(prTitle(info));
+}
+
+// a practice run ended: paused, finished or cut; the list knows what it became
+async function practiceEnded(v, run) {
+  if (!run.replay) NARVAL.phase = '';
+  await loadPracticeList();
+  drawPracticeHead(v);
+}
+
+// the dock's tab of a practice: its kind, its title and a close button that asks first
+function practiceTab(panelId) {
+  const id = panelId.replace(/^practice-/, '');
+  const content = h('div', { class: 'dv-default-tab-content' });
+  const close = h('div', { class: 'dv-default-tab-action', role: 'button', tabindex: '-1', 'aria-label': t('Cerrar') }, icon('x'));
+  const element = h('div', { class: 'dv-default-tab pr-tab' }, content, close);
+  close.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); });
+  close.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); closePracticeTab(id); });
+  return {
+    element,
+    init(params) {
+      content.textContent = params.title || '';
+      params.api.onDidTitleChange?.((e) => { content.textContent = e.title; });
+    },
+  };
+}
+
+// Opens (or brings forward) the tab of a practice, following its live run or replaying its last one.
+async function openPractice(id, { info, run, focus = true } = {}) {
+  const dock = S.dock;
+  if (!dock) return;
+  if (!info) info = prFind(id);
+  if (!info) { await loadPracticeList(); info = prFind(id); }
+  if (!info) { toast(t('esa práctica ya no existe')); return; }
+  let p = dock.getPanel(prPanel(id));
+  if (!p) {
+    const near = [...NEAR_STUDY, 'review', ...[...PR_TABS.keys()].map(prPanel)].map((x) => dock.getPanel(x)).find(Boolean);
+    const chat = dock.getPanel('chat');
+    const position = near ? { referencePanel: near.id, direction: 'within' }
+      : chat ? { referencePanel: 'chat', direction: isPhone() ? 'within' : 'right' } : undefined;
+    p = dock.addPanel({ id: prPanel(id), component: 'practiceRun', tabComponent: 'practiceTab', title: prTitle(info), position, inactive: !focus });
+    if (!near && !isPhone()) { sizeStudy(p.group); slide(p.group.element, 'slide-in'); }
+  }
+  const v = PR_TABS.get(id);
+  v.info = info;
+  const runID = run || info.run;
+  const live = !!run || info.status === 'running';
+  if (runID && (!v.run || v.run.id !== runID)) attachView(v, runID, prTitle(info), { replay: !live });
+  else if (!runID) setComposer(v, 'off');
+  drawPracticeHead(v);
+  if (focus) p.api.setActive();
+}
+
+function closePracticePanel(id) {
+  const p = S.dock && S.dock.getPanel(prPanel(id));
+  if (p) p.api.close();
+}
+
+// a practice tab is gone: stop following its run
+function forgetPracticeView(panelId) {
+  const id = panelId.replace(/^practice-/, '');
+  const v = PR_TABS.get(id);
+  if (!v) return;
+  if (v.run && v.run.es) v.run.es.close();
+  v.working = false;
+  clearInterval(v.timer);
+  VIEWS.delete(v);
+  PR_TABS.delete(id);
+  $('#session-dot').hidden = ![...VIEWS].some((x) => x.working);
+}
+
+// Starts a practice on a guide. One already put aside on the same guide is offered first.
+async function startPractice(body) {
+  const same = PR.open.find((p) => p.slug === body.slug && p.kind === body.kind);
+  if (same) {
+    if (same.status === 'running') { openPractice(same.id); return; }
+    const pick = await askChoice(t('Tienes una práctica en pausa de este tema'), t('{what}: {progress}. ¿La retomas o empiezas otra?', { what: prTitle(same), progress: prProgress(same) }),
+      [{ value: 'new', label: t('Empezar otra') }, { value: 'resume', label: t('Retomar'), primary: true }]);
+    if (!pick) return;
+    if (pick === 'resume') { practiceAct(same.id, 'resume'); return; }
+  }
+  try {
+    const res = await api('/api/practice', { method: 'POST', body });
+    NARVAL.phase = body.kind;
+    await openPractice(res.practice.id, { info: res.practice, run: res.run });
+    loadPracticeList();
+    loadChats();
+  } catch (err) { toast(err.message); }
+}
+
+// Pausar / Retomar / Terminar ahora / Descartar
+async function practiceAct(id, act, { confirmed = false } = {}) {
+  try {
+    if (act === 'discard') {
+      if (!confirmed && !(await askConfirm(t('¿Descartar esta práctica?'), t('No se corrige ni cuenta para tu progreso. Queda en la papelera por si cambias de idea.'), t('Descartar')))) return false;
+      const res = await api(`/api/practice/${id}`, { method: 'DELETE' });
+      closePracticePanel(id);
+      undoToast(t('Práctica descartada.'), res.trash && res.trash.id);
+    } else {
+      const res = await api(`/api/practice/${id}/${act}`, { method: 'POST', body: {} });
+      if (res.empty) toast(t('No había nada respondido: se cerró sin nota.'));
+      if (res.run) await openPractice(id, { info: res.practice, run: res.run });
+      else if (PR_TABS.has(id) && res.practice) { const v = PR_TABS.get(id); v.info = res.practice; drawPracticeHead(v); }
+      if (act === 'pause') toast(t('Práctica en pausa: la retomas desde Practicar cuando quieras.'));
+    }
+    await loadPracticeList();
+    loadChats();
+    return true;
+  } catch (err) { toast(err.message); return false; }
+}
+
+// Closing the tab of a practice in progress asks what to do with it.
+async function closePracticeTab(id) {
+  const v = PR_TABS.get(id);
+  const live = v && v.run && !v.run.done && !v.run.replay;
+  if (!live) { closePracticePanel(id); return; }
+  const pick = await askChoice(t('¿Qué hacemos con esta práctica?'), t('Puedes dejarla en pausa y seguir después, corregir ya lo que respondiste (cuenta como incompleta) o descartarla.'), [
+    { value: 'discard', label: t('Descartar'), danger: true },
+    { value: 'finish', label: t('Terminar ahora') },
+    { value: 'pause', label: t('Pausar'), primary: true },
+  ]);
+  if (!pick) return;
+  if (pick === 'finish') { practiceAct(id, 'finish'); return; } // the tab stays to show the score
+  if (await practiceAct(id, pick, { confirmed: true }) && pick === 'pause') closePracticePanel(id);
+}
+
+// A dialog with several answers; resolves with the value picked, or null.
+function askChoice(title, body, options) {
+  return new Promise((resolve) => {
+    const dlg = h('dialog', { class: 'choice-dialog', 'aria-label': title });
+    const done = (val) => { if (dlg.open) dlg.close(); dlg.remove(); resolve(val); };
+    dlg.append(
+      h('div', { class: 'dlg-head' }, h('strong', {}, title), h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('Cerrar'), onclick: () => done(null) }, icon('x'))),
+      h('p', { class: 'confirm-body' }, body),
+      h('div', { class: 'confirm-foot' },
+        h('button', { class: 'btn small ghost', type: 'button', onclick: () => done(null) }, t('Cancelar')),
+        ...options.map((o) => h('button', { class: `btn small${o.primary ? ' primary' : ''}${o.danger ? ' danger' : ''}`, type: 'button', onclick: () => done(o.value) }, o.label))));
+    dlg.addEventListener('cancel', (e) => { e.preventDefault(); done(null); });
+    document.body.append(dlg);
+    dlg.showModal();
+    dlg.querySelector('.btn.primary')?.focus();
+  });
+}
+
+// "Prácticas pendientes": the ones open or put aside, to resume, finish or discard
+function drawPending(host) {
+  PR.pendingHost = host;
+  const list = PR.open;
+  if (!list.length) { host.replaceChildren(); return; }
+  host.replaceChildren(h('section', { class: 'p-card pr-pending' },
+    h('h3', {}, t('Prácticas pendientes')),
+    h('ul', { class: 'pr-list' }, list.map((p) => {
+      const btn = (label, act, cls = '') => h('button', { class: `btn small ${cls}`.trim(), type: 'button', onclick: () => practiceAct(p.id, act) }, label);
+      const pct = p.total > 0 ? Math.min(100, Math.round((p.answered / p.total) * 100)) : null;
+      return h('li', {},
+        h('span', { class: 'pr-ic', 'aria-hidden': 'true' }, icon(PR_ICON[p.kind] || 'target')),
+        h('div', { class: 'pr-what' },
+          h('strong', {}, prTitle(p)),
+          h('small', {}, [prStatus(p), prProgress(p), pct !== null ? `${pct}%` : '', when(p.updated)].filter(Boolean).join(' · ')),
+          pct !== null ? h('div', { class: 'pr-bar' }, h('i', { style: `width:${pct}%` })) : null,
+          p.error ? h('small', { class: 'pr-error' }, p.error) : null),
+        h('div', { class: 'pr-btns' }, p.status === 'running'
+          ? [h('button', { class: 'btn small primary', type: 'button', onclick: () => openPractice(p.id) }, t('Abrir'))]
+          : [btn(t('Retomar'), 'resume', 'primary'), btn(t('Terminar ahora'), 'finish'), btn(t('Descartar'), 'discard', 'ghost')]));
+    }))));
+}
+
+// the count next to the conversations: practices waiting to be resumed
+function drawPendingCount() {
+  const b = $('#pending-practice');
+  if (!b) return;
+  const n = PR.open.length;
+  b.hidden = !n;
+  b.querySelector('span').textContent = tn(n, '{n} práctica pendiente', '{n} prácticas pendientes');
+}
+
+// the flashcard review in a tab of its own, next to the practices
+function openReview() {
+  const dock = S.dock;
+  if (!dock) return;
+  let p = dock.getPanel('review');
+  if (!p) {
+    const near = [...NEAR_STUDY, ...[...PR_TABS.keys()].map(prPanel)].map((x) => dock.getPanel(x)).find(Boolean);
+    const chat = dock.getPanel('chat');
+    const position = near ? { referencePanel: near.id, direction: 'within' } : chat ? { referencePanel: 'chat', direction: isPhone() ? 'within' : 'right' } : undefined;
+    p = dock.addPanel({ id: 'review', component: 'review', title: t('Repaso de tarjetas'), position });
+    if (!near && !isPhone()) { sizeStudy(p.group); slide(p.group.element, 'slide-in'); }
+  }
+  p.api.setActive();
+  loadFlashcards(PR.reviewHost, S.note);
+}
+function reviewPane() {
+  PR.reviewHost = h('div', { class: 'fc-review-host' });
+  return h('section', { class: 'pane practice-pane review-pane' }, h('div', { class: 'practice' }, PR.reviewHost));
 }
 
 /* ---------- chat history ---------- */
@@ -3845,40 +4994,335 @@ function renderChats() {
     const node = r.slug && nodeOf(r.slug);
     ul.append(h('li', { class: `chat-item${S.run && S.run.id === r.id ? ' on' : ''}`, 'data-id': r.id, style: node ? `--lc: ${lineColor(node.group)}` : null },
       h('button', { class: 'ci-open', type: 'button', onclick: () => openChat(r) },
-        h('span', { class: 'ci-title' }, r.title || t('Chat')),
-        h('span', { class: 'ci-meta' }, r.status === 'running' ? t('En curso') : when(r.started), node ? ` · ${node.label}` : '')),
-      r.status !== 'running' && h('button', { class: 'ci-del', type: 'button', 'aria-label': t('Eliminar «{title}»', { title: r.title }), title: t('Eliminar'), onclick: async () => {
+        h('span', { class: 'ci-title' }, r.practice ? icon(PR_ICON[r.cmd] || 'target') : null, r.practice ? `${PR_KIND[r.cmd] || ''} · ${r.title}` : (r.title || t('Chat'))),
+        h('span', { class: 'ci-meta' }, r.status === 'running' ? t('En curso') : r.status === 'paused' ? t('En pausa') : when(r.started), node ? ` · ${node.label}` : '')),
+      r.status !== 'running' && !(r.practice && PR.open.some((p) => p.id === r.practice)) && h('button', { class: 'ci-del', type: 'button', 'aria-label': t('Eliminar «{title}»', { title: r.title }), title: t('Eliminar'), onclick: async () => {
         if (!confirm(t('¿Eliminar la conversación «{title}»? Tus notas se conservan.', { title: r.title }))) return;
         try {
-          await api(`/api/sessions/${r.id}`, { method: 'DELETE' });
+          const res = await api(`/api/sessions/${r.id}`, { method: 'DELETE' });
           if (S.run && S.run.id === r.id) newChat();
           loadChats();
+          undoToast(t('Conversación movida a la papelera.'), res.trash && res.trash.id);
         } catch (err) { toast(err.message); }
       } }, icon('trash-2'))));
   }
 }
 $('#chat-search').addEventListener('input', renderChats);
+$('#pending-practice').addEventListener('click', () => show('practice'));
 function markActiveChat() { $$('.chat-item', PANE_EL.chats || document).forEach((li) => li.classList.toggle('on', !!S.run && String(S.run.id) === li.dataset.id)); }
 
 function openChat(r) {
+  if (r.practice) {
+    const info = prFind(r.practice) || { id: r.practice, kind: r.cmd, slug: r.slug, title: r.title, status: r.status === 'running' ? 'running' : 'ended', run: r.id };
+    openPractice(r.practice, { info: { ...info, run: info.run || r.id } });
+    return;
+  }
   attachRun(r.id, r.title, { replay: r.status !== 'running' });
   if (r.slug && r.slug !== S.guide && nodeOf(r.slug)) openNote(r.slug, { quiet: true });
   show('chat');
 }
 
 function newChat() {
-  if (S.run && S.run.es) S.run.es.close();
-  S.run = null;
+  if (CHAT.run && CHAT.run.es) CHAT.run.es.close();
+  S.run = CHAT.run = null;
   if (S.mapScope === 'chat') drawMap();
-  resetTranscript();
+  resetTranscript(CHAT);
   $('#transcript').append(emptyState());
   $('#chat-title').textContent = t('Nueva conversación');
-  setWorking(false);
-  setComposer('chat');
+  setWorking(CHAT, false);
+  setComposer(CHAT, 'chat');
   markActiveChat();
 }
 $('#btn-new').addEventListener('click', () => { newChat(); show('chat'); });
 $('#brand').addEventListener('click', (e) => { e.preventDefault(); newChat(); show('chat'); });
+
+/* ---------- explain anything: a word, a group of words or a sentence, from a selection or the search ---------- */
+const DF = { dlg: null, req: null, def: null, existing: null, deeper: '', history: [], busy: false, ctrl: null, saveGuide: '', saved: '' };
+const MAX_SELECT = 800;
+
+// where a selection may be explained: the readers, the learner's notes and every conversation
+const EXPLAINABLE = '#reader, .reader-wrap.concept, .notes-view, .transcript .msg, .editor-view';
+
+function selectionInfo() {
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed || !sel.rangeCount) return null;
+  const text = sel.toString().replace(/\s+/g, ' ').trim();
+  if (!text || text.length > MAX_SELECT) return null;
+  const range = sel.getRangeAt(0);
+  const node = range.commonAncestorContainer.nodeType === 1 ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement;
+  if (!node || node.closest('input, textarea, [contenteditable="true"], .define-dialog, .search-dialog')) return null;
+  const host = node.closest(EXPLAINABLE);
+  if (!host) return null;
+  // the paragraph around it gives the meaning it has there
+  const block = node.closest('p, li, td, th, blockquote, .msg, h1, h2, h3, h4, figcaption, .callout') || host;
+  const context = (block.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 2500);
+  const inConcept = node.closest('.reader-wrap.concept');
+  const ctxNote = inConcept && S.concept ? S.concept.slug : S.guide || '';
+  return { text, context, ctxNote, rect: range.getBoundingClientRect() };
+}
+
+// the floating «Explicar» button next to what is selected
+const selBtn = h('button', { class: 'sel-explain', type: 'button', hidden: true }, icon('sparkles'), t('Explicar'));
+document.body.append(selBtn);
+let selInfo = null, selTimer = 0;
+function placeSelButton() {
+  selInfo = selectionInfo();
+  if (!selInfo || !selInfo.rect || !selInfo.rect.width) { selBtn.hidden = true; return; }
+  selBtn.hidden = false;
+  const r = selInfo.rect, bw = selBtn.offsetWidth || 96, bh = selBtn.offsetHeight || 32;
+  const above = r.top - bh - 8 > 4;
+  selBtn.style.left = `${Math.round(Math.min(Math.max(8, r.left + r.width / 2 - bw / 2), innerWidth - bw - 8))}px`;
+  selBtn.style.top = `${Math.round(above ? r.top - bh - 8 : Math.min(innerHeight - bh - 8, r.bottom + 8))}px`;
+}
+document.addEventListener('selectionchange', () => { clearTimeout(selTimer); selTimer = setTimeout(placeSelButton, 180); });
+document.addEventListener('scroll', () => { if (!selBtn.hidden) placeSelButton(); }, true);
+// pressing the button must not clear the selection before it is read
+selBtn.addEventListener('pointerdown', (e) => e.preventDefault());
+selBtn.addEventListener('click', () => {
+  const info = selInfo || selectionInfo();
+  selBtn.hidden = true;
+  if (!info) return;
+  window.getSelection()?.removeAllRanges();
+  openDefine({ text: info.text, context: info.context, guide: info.ctxNote }, { saveGuide: S.guide || '' });
+});
+
+function defineDialog() {
+  if (DF.dlg) return DF.dlg;
+  const dlg = h('dialog', { class: 'define-dialog', 'aria-labelledby': 'define-title' });
+  dlg.addEventListener('cancel', (e) => { e.preventDefault(); closeDefine(); });
+  dlg.addEventListener('click', (e) => { if (e.target === dlg) closeDefine(); }); // the backdrop
+  document.body.append(dlg);
+  DF.dlg = dlg;
+  return dlg;
+}
+function closeDefine() {
+  if (DF.ctrl) DF.ctrl.abort();
+  DF.ctrl = null;
+  if (DF.dlg && DF.dlg.open) DF.dlg.close();
+}
+
+// Opens the explanation of a selection or a search. A term the vault already has a note for
+// shows that note first; force asks for a fresh explanation of it in this context.
+async function openDefine(req, { saveGuide = S.guide || '', force = false } = {}) {
+  Object.assign(DF, { req, def: null, existing: null, deeper: '', history: [], saveGuide, saved: '' });
+  if (SR.dlg && SR.dlg.open) SR.dlg.close(); // one dialog at a time
+  const dlg = defineDialog();
+  if (!dlg.open) dlg.showModal();
+  await defineCall({ ...req, force });
+}
+
+async function defineCall(body, { kind = 'first' } = {}) {
+  if (DF.ctrl) DF.ctrl.abort();
+  const ctrl = new AbortController();
+  DF.ctrl = ctrl;
+  DF.busy = kind;
+  drawDefine();
+  try {
+    const res = await api('/api/define', { method: 'POST', body, signal: ctrl.signal });
+    if (DF.ctrl !== ctrl) return;
+    if (kind === 'first') {
+      DF.existing = res.existing || null;
+      DF.def = res.definition || null;
+    } else if (kind === 'deeper') DF.deeper = res.definition.text;
+    else DF.history.push({ q: body.question, a: res.definition.text });
+  } catch (err) {
+    if (err.name === 'AbortError' || DF.ctrl !== ctrl) return;
+    toast(err.message);
+    if (kind === 'first' && !DF.def && !DF.existing) { closeDefine(); return; }
+  } finally {
+    if (DF.ctrl === ctrl) { DF.ctrl = null; DF.busy = false; drawDefine(); }
+  }
+}
+
+// everything explained so far, as Markdown: the explanation, the deeper one and the follow-ups
+function defineMarkdown() {
+  const d = DF.def;
+  if (!d) return '';
+  const parts = [d.text];
+  if (DF.deeper) parts.push(`**${t('Más a fondo')}**\n\n${DF.deeper}`);
+  for (const x of DF.history) parts.push(`**${x.q}**\n\n${x.a}`);
+  return parts.join('\n\n');
+}
+
+function drawDefine() {
+  const dlg = DF.dlg;
+  if (!dlg) return;
+  const { req, def, existing } = DF;
+  const title = (def && def.title) || (existing && existing.title) || req.text;
+  const showQuote = req.text && req.text.toLowerCase() !== String(title).toLowerCase();
+  const thinking = (label) => h('div', { class: 'df-busy', role: 'status' },
+    h('span', { class: 'working-narval', 'aria-hidden': 'true' }, window.Narval ? Narval.svg('estudiando') : null), label);
+  const head = h('div', { class: 'dlg-head df-head' },
+    h('div', {}, h('div', { class: 'rich-eyebrow' }, icon('sparkles'), def ? (def.kind === 'term' ? t('Qué significa') : t('Qué quiere decir')) : t('Explicar')),
+      h('h2', { id: 'define-title' }, title)),
+    h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('Cerrar'), onclick: closeDefine }, icon('x')));
+  const quote = showQuote ? h('blockquote', { class: 'df-quote' }, req.text) : null;
+  const body = h('div', { class: 'df-body' });
+
+  if (DF.busy === 'first') body.append(thinking(Phrases.pick('thinking')));
+  else if (existing && !def) {
+    body.append(
+      h('p', { class: 'df-existing' }, icon('book-open'), t('Ya tienes una nota de esto en tu vault.')),
+      existing.summary ? h('p', {}, existing.summary) : null,
+      h('div', { class: 'actions' },
+        h('button', { class: 'btn small primary', type: 'button', onclick: () => { closeDefine(); openNote(existing.slug); } }, icon('book-open'), t('Abrir la nota')),
+        h('button', { class: 'btn small', type: 'button', onclick: () => defineCall({ ...req, force: true }) }, icon('sparkles'), t('Explicarlo en este contexto'))));
+  } else if (def) {
+    body.append(mdBlock(def.text, { breaks: true }));
+    if (DF.deeper) body.append(h('section', { class: 'df-more' }, h('h3', {}, t('Más a fondo')), mdBlock(DF.deeper, { breaks: true })));
+    else if (DF.busy === 'deeper') body.append(thinking(t('Profundizando…')));
+    for (const x of DF.history) body.append(h('section', { class: 'df-turn' }, h('p', { class: 'df-q' }, x.q), mdBlock(x.a, { breaks: true })));
+    if (DF.busy === 'ask') body.append(thinking(Phrases.pick('thinking')));
+  }
+
+  let foot = null;
+  if (def) {
+    const ask = h('input', { type: 'text', maxlength: 1500, placeholder: t('Pregunta algo más sobre esto…'), 'aria-label': t('Preguntar más'), disabled: DF.busy || null });
+    const send = () => {
+      const q = ask.value.trim();
+      if (!q || DF.busy) return;
+      defineCall({ text: req.text, context: req.context, guide: req.guide, question: q, history: [{ q: '', a: def.text }, ...DF.history] }, { kind: 'ask' });
+    };
+    ask.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); send(); } });
+    const busy = !!DF.busy;
+    foot = h('div', { class: 'df-foot' },
+      h('div', { class: 'df-ask' }, ask, h('button', { class: 'btn small', type: 'button', disabled: busy || null, onclick: send }, icon('send'), t('Preguntar'))),
+      h('div', { class: 'df-actions' },
+        h('button', { class: 'btn small primary', type: 'button', disabled: busy || !!DF.saved || null, onclick: saveDefinedConcept }, icon('plus'), DF.saved ? t('Guardado') : t('Guardar como concepto')),
+        h('button', { class: 'btn small', type: 'button', disabled: busy || null, onclick: (e) => saveDefinedNotes(e.currentTarget) }, icon('notebook-pen'), t('Guardar en apuntes')),
+        DF.deeper ? null : h('button', { class: 'btn small', type: 'button', disabled: busy || null, onclick: () => defineCall({ text: req.text, context: req.context, guide: req.guide, deeper: true, previous: def.text }, { kind: 'deeper' }) }, icon('layers'), t('Profundizar')),
+        h('button', { class: 'btn small ghost', type: 'button', disabled: busy || null, onclick: () => { closeDefine(); chatAction({ action: 'guide', topic: def.title }, t('Escríbeme una guía de «{title}»', { title: def.title })); } }, icon('book-open'), t('Escribir una guía')),
+        h('button', { class: 'btn small ghost', type: 'button', onclick: async () => {
+          try { await navigator.clipboard.writeText(`${def.title}\n\n${defineMarkdown()}`); toast(t('Copiado.')); } catch { toast(t('No pude copiarlo.')); }
+        } }, icon('copy'), t('Copiar'))));
+  }
+  const scroller = h('div', { class: 'df-scroll' }, quote, body);
+  dlg.replaceChildren(head, scroller, foot || '');
+  if (DF.busy === 'ask' || DF.busy === 'deeper' || DF.history.length) scroller.scrollTop = scroller.scrollHeight;
+}
+
+async function saveDefinedConcept() {
+  const d = DF.def;
+  if (!d) return;
+  try {
+    const res = await api('/api/concepts', { method: 'POST', body: { title: d.title, summary: d.summary, text: defineMarkdown(), guide: DF.saveGuide } });
+    DF.saved = res.slug;
+    drawDefine();
+    toast(res.created ? t('Concepto «{title}» guardado.', { title: d.title }) : t('Ya tenías «{title}»: quedó enlazado.', { title: d.title }), { label: t('Abrir'), onClick: () => { closeDefine(); openNote(res.slug); } });
+    loadGraph().catch(() => {}).then(() => reloadGuide());
+  } catch (err) { toast(err.message); }
+}
+
+// «Guardar en apuntes»: the learner's notes of the guide open now, of another, or of any guide
+async function saveDefinedNotes(anchor) {
+  const d = DF.def;
+  if (!d) return;
+  let list = [];
+  try { list = await api('/api/apuntes'); } catch { /* the guides are still offered */ }
+  const opts = new Map();
+  if (DF.saveGuide) opts.set(DF.saveGuide, (nodeOf(DF.saveGuide) || {}).label || DF.saveGuide);
+  for (const a of list) opts.set(a.slug, a.title);
+  for (const n of (S.graph && S.graph.nodes) || []) if (n.kind === 'guide' && !opts.has(n.id)) opts.set(n.id, n.label);
+  if (!opts.size) { toast(t('Primero abre o genera una guía.')); return; }
+  const pick = h('select', { 'aria-label': t('Apuntes de') }, [...opts].map(([slug, title]) => h('option', { value: slug }, title)));
+  const pop = h('div', { class: 'df-pick' },
+    h('label', {}, t('Añadir a los apuntes de'), pick),
+    h('div', { class: 'actions' },
+      h('button', { class: 'btn small ghost', type: 'button', onclick: () => pop.remove() }, t('Cancelar')),
+      h('button', { class: 'btn small primary', type: 'button', onclick: async () => {
+        const quote = DF.req.text && DF.req.text !== d.title ? `> ${DF.req.text}\n\n` : '';
+        try {
+          const res = await api(`/api/apuntes/${encodeURIComponent(pick.value)}/append`, { method: 'POST', body: { text: `### ${d.title}\n\n${quote}${defineMarkdown()}` } });
+          pop.remove();
+          toast(t('Guardado en los apuntes de «{title}».', { title: res.title }), { label: t('Abrir'), onClick: () => { closeDefine(); openNotes(res.slug, res.title); } });
+        } catch (err) { toast(err.message); }
+      } }, t('Guardar'))));
+  anchor.closest('.df-foot').append(pop);
+  pick.focus();
+}
+
+/* ---------- search: the vault, and «explain this» when there is no note ---------- */
+const SR = { dlg: null, q: '', hits: null, recent: [], timer: 0, ctrl: null, active: 0 };
+const SR_DIR = { guias: t('Guía'), conceptos: t('Concepto'), apuntes: t('Apuntes'), flashcards: t('Tarjetas'), roadmaps: t('Roadmap'), daily: t('Diario') };
+
+function openSearch() {
+  if (!SR.dlg) {
+    const input = h('input', { type: 'text', class: 'sr-input', enterkeyhint: 'search', placeholder: t('Busca en tu vault o escribe algo para que te lo explique…'), 'aria-label': t('Buscar'), autocomplete: 'off' });
+    const list = h('ul', { class: 'sr-list', role: 'listbox' });
+    SR.dlg = h('dialog', { class: 'search-dialog', 'aria-label': t('Buscar') }, h('div', { class: 'sr-box' }, icon('search'), input, h('kbd', {}, 'Esc')), list);
+    SR.input = input; SR.list = list;
+    input.addEventListener('input', () => {
+      SR.q = input.value.trim();
+      SR.active = 0;
+      clearTimeout(SR.timer);
+      if (!SR.q) { SR.hits = null; drawSearch(); return; }
+      drawSearch();
+      SR.timer = setTimeout(searchVault, 160);
+    });
+    input.addEventListener('keydown', (e) => {
+      const rows = $$('.sr-row', list);
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        SR.active = (SR.active + (e.key === 'ArrowDown' ? 1 : rows.length - 1)) % Math.max(1, rows.length);
+        drawSearch();
+      } else if (e.key === 'Enter') { e.preventDefault(); rows[SR.active]?.click(); }
+    });
+    SR.dlg.addEventListener('click', (e) => { if (e.target === SR.dlg) SR.dlg.close(); });
+    document.body.append(SR.dlg);
+  }
+  SR.input.value = ''; SR.q = ''; SR.hits = null; SR.active = 0;
+  api('/api/lookups').then((l) => { SR.recent = l || []; drawSearch(); }).catch(() => {});
+  drawSearch();
+  SR.dlg.showModal();
+  SR.input.focus();
+}
+
+async function searchVault() {
+  if (SR.ctrl) SR.ctrl.abort();
+  const ctrl = new AbortController();
+  SR.ctrl = ctrl;
+  const q = SR.q;
+  try {
+    const hits = await api(`/api/vault/search?q=${encodeURIComponent(q)}`, { signal: ctrl.signal });
+    if (SR.q === q) { SR.hits = hits.slice(0, 12); drawSearch(); }
+  } catch { /* a newer search replaced it */ }
+}
+
+function drawSearch() {
+  const rows = [];
+  const row = (ic, main, sub, onclick, cls = '') => h('li', {}, h('button', { class: `sr-row ${cls}`.trim(), type: 'button', role: 'option', onclick }, icon(ic), h('span', { class: 'sr-main' }, h('strong', {}, main), sub ? h('small', {}, sub) : null)));
+  const explain = (text) => row('sparkles', t('Explicar «{text}»', { text }), t('Con la IA, aquí mismo; luego puedes guardarlo'), () => { SR.dlg.close(); openDefine({ text, context: '', guide: S.guide || '' }); }, 'sr-explain');
+  if (!SR.q) {
+    if (SR.recent.length) rows.push(h('li', { class: 'sr-label' }, t('Búsquedas recientes')));
+    for (const l of SR.recent.slice(0, 10)) {
+      rows.push(row(l.concept ? 'book-open' : 'clock', l.title || l.text, l.title && l.title !== l.text ? l.text : '', () => {
+        SR.dlg.close();
+        if (l.concept && nodeOf(l.concept)) openNote(l.concept);
+        else openDefine({ text: l.text, context: '', guide: l.guide || '' }, { saveGuide: l.guide || S.guide || '' });
+      }));
+    }
+    if (!SR.recent.length) rows.push(h('li', { class: 'sr-label' }, t('Escribe una palabra, una frase o un tema.')));
+  } else {
+    const hits = SR.hits || [];
+    const exact = hits.some((x) => (x.title || '').toLowerCase() === SR.q.toLowerCase());
+    if (!exact) rows.push(explain(SR.q));
+    for (const x of hits) rows.push(row(x.dir === 'conceptos' ? 'mountain-snow' : x.dir === 'apuntes' ? 'notebook-pen' : 'book-open', x.title, [SR_DIR[x.dir] || x.dir, x.snippet].filter(Boolean).join(' · '), () => { SR.dlg.close(); openVaultFile(x); }));
+    if (exact) rows.push(explain(SR.q));
+    if (SR.hits && !hits.length) rows.push(h('li', { class: 'sr-label' }, t('No hay notas con eso en tu vault.')));
+  }
+  SR.list.replaceChildren(...rows);
+  const btns = $$('.sr-row', SR.list);
+  btns.forEach((b, i) => b.setAttribute('aria-selected', String(i === SR.active)));
+  btns[SR.active]?.scrollIntoView({ block: 'nearest' });
+}
+
+$('#btn-search').addEventListener('click', openSearch);
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    if (SR.dlg && SR.dlg.open) SR.dlg.close(); else openSearch();
+  }
+});
 
 /* ---------- boot ---------- */
 async function refresh() {
@@ -3925,6 +5369,9 @@ async function boot() {
       await openNote(decodeURIComponent(m[1]), { quiet: !!m[2] });
       if (m[2]) show(m[2]);
     }
+    // practices still running come back as tabs, next to the study panel
+    await loadPracticeList();
+    for (const p of PR.open) if (p.status === 'running') await openPractice(p.id, { info: p, focus: false });
   } catch (err) { toast(err.message); }
 }
 boot();

@@ -43,7 +43,7 @@ func TestDeleteGuideAndDeleteConceptCleanReferences(t *testing.T) {
 	_ = v.SaveInteractive("fisica", "<html></html>")
 
 	// Delete guide "fisica" -> removes guide + companions, cleans references in "vectores" and "algebra".
-	if err := v.DeleteGuide("fisica"); err != nil {
+	if _, err := v.DeleteGuide("fisica", nil, nil); err != nil {
 		t.Fatalf("DeleteGuide: %v", err)
 	}
 	if v.Exists("fisica") {
@@ -68,7 +68,7 @@ func TestDeleteGuideAndDeleteConceptCleanReferences(t *testing.T) {
 	}
 
 	// Delete concept "vectores" -> removes concept and cleans references from "algebra" and "producto-punto".
-	if err := v.DeleteConcept("vectores"); err != nil {
+	if _, err := v.DeleteConcept("vectores"); err != nil {
 		t.Fatalf("DeleteConcept: %v", err)
 	}
 	if v.ConceptExists("vectores") {

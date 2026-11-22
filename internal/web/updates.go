@@ -50,12 +50,9 @@ func (s *Server) version() string {
 	return "dev"
 }
 
-// busy reports whether a study flow is running, which a restart would cut short.
-func (s *Server) busy() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.active != nil && !s.active.isDone()
-}
+// busy reports whether a flow is working right now, which a restart would cut short. A chat
+// waiting for a message and a practice waiting for an answer can be resumed, so they do not count.
+func (s *Server) busy() bool { return s.working() }
 
 // installUpdate downloads, verifies and installs the new version, then restarts the app.
 // While something is running it refuses unless the browser confirms with force.

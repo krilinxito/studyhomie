@@ -21,7 +21,7 @@ type Vault struct {
 	mu sync.Mutex // serializes Update
 }
 
-var subdirs = []string{GuidesDir, ConceptsDir, "roadmaps", "daily", "interactive"}
+var subdirs = []string{GuidesDir, ConceptsDir, SourcesDir, "roadmaps", "daily", "interactive"}
 
 // Open creates the vault layout if needed, moving notes from the old layout.
 func Open(root string) (*Vault, error) {
@@ -138,13 +138,12 @@ func (v *Vault) LoadMaterial(slug string) string {
 
 // AppendSection adds a "## heading" section to an existing note, replacing a
 // previous section with the same heading so re-running a phase does not pile up.
+// It holds the same lock as Update, so two practices finishing together do not overwrite each other.
 func (v *Vault) AppendSection(slug, heading, content string) error {
-	n, err := v.Load(slug)
-	if err != nil {
-		return err
-	}
-	n.Body = ReplaceSection(n.Body, heading, content)
-	return v.Save(n)
+	return v.Update(slug, func(n *Note) error {
+		n.Body = ReplaceSection(n.Body, heading, content)
+		return nil
+	})
 }
 
 // demoteHeadings turns "#" and "##" headings into "###" outside code fences, so

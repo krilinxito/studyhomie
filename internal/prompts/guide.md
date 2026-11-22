@@ -60,6 +60,6 @@ Output format, exactly:
 2. Then a single fenced ```json block, and nothing after it, with this shape:
 {
   "area": "one of: matematicas | fisica | electronica | quimica | biologia | medicina | informatica | musica | historia | ciencias-sociales | economia | lenguas | arte | filosofia | general",
-  "resources": [{"type": "video|web|book|paper|interactive", "title": "...", "url": "https://...", "why": "one sentence on what the learner gets from it"}],
+  "resources": [{"type": "video|web|book|paper|interactive", "title": "...", "url": "https://...", "why": "one sentence on what the learner gets from it", "level": "introductorio|intermedio|avanzado (how hard it is to read or follow)"}],
   "handoff": "A compact summary (max 150 words) of the key ideas, the examples and visuals used and likely misconceptions, for the quiz and explanation phases."
 }

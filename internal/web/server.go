@@ -29,6 +29,7 @@ import (
 	"github.com/krilinxito/studyhomie/internal/provider"
 	"github.com/krilinxito/studyhomie/internal/roadmap"
 	"github.com/krilinxito/studyhomie/internal/session"
+	"github.com/krilinxito/studyhomie/internal/sources"
 	"github.com/krilinxito/studyhomie/internal/update"
 	"github.com/krilinxito/studyhomie/internal/vault"
 )
@@ -59,20 +60,29 @@ type Server struct {
 	Open       func(kind, target string) error
 	// CheckLinks verifies cited URLs; nil uses the real check. Tests replace it.
 	CheckLinks func(ctx context.Context, urls []string) map[string]bool
+	// Sources finds and checks external material; nil builds one from Cfg. Tests replace it.
+	Sources *sources.Client
 	// Updater finds and installs new versions; nil (or a development build) turns updates off.
 	Updater *update.Updater
 	// Restart starts the app again on the installed version; nil when it cannot (tests).
 	Restart func()
 
-	mu     sync.Mutex
-	runs   map[int]*Run
-	active *Run
-	seq    int
-	store  *store // nil when the sessions folder cannot be created: they then live in memory only
+	mu        sync.Mutex
+	runs      map[int]*Run
+	main      *Run                    // the chat (or roadmap, material…): one at a time
+	practices map[string]*practiceRec // practices a run is showing now, by id
+	seq       int
+	store     *store // nil when the sessions folder cannot be created: they then live in memory only
+
+	prMu  sync.Mutex // guards the practice records and their files
+	slots slots      // AI calls in flight across flows (max_parallel)
 }
 
 func New(cfg config.Config, v *vault.Vault, p provider.Provider) *Server {
-	s := &Server{Cfg: cfg, V: v, P: p, Now: time.Now, runs: map[int]*Run{}}
+	s := &Server{Cfg: cfg, V: v, P: p, Now: time.Now, runs: map[int]*Run{}, practices: map[string]*practiceRec{}}
+	_, _ = v.MigrateSources()
+	go purgeTrash(v)
+	s.pauseStalePractices()
 	if st, err := newStore(s.sessionsDir()); err == nil {
 		s.store = st
 		s.loadSessions()
@@ -98,7 +108,17 @@ func (s *Server) loadSessions() {
 	for _, sf := range s.store.load() {
 		run := restore(sf)
 		run.store = s.store
-		if sf.Status == statusRunning || len(sf.Events) == 0 || sf.Events[len(sf.Events)-1].Type != "done" {
+		cut := sf.Status == statusRunning || len(sf.Events) == 0 || sf.Events[len(sf.Events)-1].Type != "done"
+		if cut && sf.Practice != "" {
+			// a practice cut by closing the app is only paused: it can be resumed
+			run.status = statusPaused
+			run.errMsg = ""
+			run.events = append(run.events, Event{Type: "done"})
+			if run.Ended.IsZero() {
+				run.Ended = run.Started
+			}
+			s.store.save(run)
+		} else if cut {
 			run.status = statusInterrupted
 			run.errMsg = interruptedMsg
 			run.events = append(run.events, Event{Type: "done", Error: interruptedMsg})
@@ -126,6 +146,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/settings/models", s.listModels)
 	mux.HandleFunc("POST /api/settings/test", s.testSettings)
 	mux.HandleFunc("POST /api/settings/study", s.saveStudySettings)
+	mux.HandleFunc("POST /api/settings/sources", s.saveSourceSettings)
 	mux.HandleFunc("POST /api/settings/language", s.setLanguage)
 	mux.HandleFunc("GET /api/update", s.getUpdate)
 	mux.HandleFunc("POST /api/update", s.installUpdate)
@@ -143,6 +164,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/notes/{slug}/dig", s.dig)
 	mux.HandleFunc("POST /api/notes/{slug}/activities", s.generateActivities)
 	mux.HandleFunc("POST /api/notes/{slug}/activities/{index}", s.updateActivity)
+	mux.HandleFunc("POST /api/notes/{slug}/progress", s.saveReadProgress)
+	mux.HandleFunc("POST /api/notes/{slug}/sources", s.findSources)
+	mux.HandleFunc("GET /api/sources", s.listSources)
+	mux.HandleFunc("GET /api/sources/{slug}", s.getSource)
+	mux.HandleFunc("POST /api/sources/{slug}", s.updateSource)
+	mux.HandleFunc("DELETE /api/sources/{slug}", s.deleteSource)
 	mux.HandleFunc("GET /api/vaults", s.vaults)
 	mux.HandleFunc("POST /api/vaults", s.addVault)
 	mux.HandleFunc("POST /api/vaults/use", s.useVault)
@@ -155,6 +182,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/vault/raw/{dir}/{slug}", s.readRaw)
 	mux.HandleFunc("PUT /api/vault/raw/{dir}/{slug}", s.writeRaw)
 	mux.HandleFunc("GET /api/material/{topic}/{file}", s.materialFile)
+	mux.HandleFunc("POST /api/define", s.define)
+	mux.HandleFunc("GET /api/lookups", s.lookups)
+	mux.HandleFunc("POST /api/concepts", s.newConcept)
+	mux.HandleFunc("GET /api/apuntes", s.apuntesList)
+	mux.HandleFunc("POST /api/apuntes/{slug}/append", s.appendApunte)
 	mux.HandleFunc("GET /api/apuntes/{slug}", s.getApunte)
 	mux.HandleFunc("PUT /api/apuntes/{slug}", s.saveApunte)
 	mux.HandleFunc("POST /api/adjuntos", s.attach)
@@ -167,9 +199,26 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/roadmaps", s.roadmaps)
 	mux.HandleFunc("GET /api/daily", s.daily)
 	mux.HandleFunc("GET /api/stats", s.stats)
+	mux.HandleFunc("GET /api/stats/grades", s.grades)
 	mux.HandleFunc("POST /api/tutorial/seen", s.tutorialSeen)
 	mux.HandleFunc("GET /api/sessions", s.sessions)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.deleteSession)
+	mux.HandleFunc("GET /api/data", s.dataOverview)
+	mux.HandleFunc("GET /api/data/{cat}", s.dataItems)
+	mux.HandleFunc("DELETE /api/data/{cat}/{id}", s.dataDelete)
+	mux.HandleFunc("POST /api/data/{cat}/empty", s.dataEmpty)
+	mux.HandleFunc("GET /api/orphans", s.dataOrphans)
+	mux.HandleFunc("POST /api/orphans/clean", s.cleanOrphans)
+	mux.HandleFunc("GET /api/trash", s.trashList)
+	mux.HandleFunc("POST /api/trash/{id}/restore", s.trashRestore)
+	mux.HandleFunc("DELETE /api/trash/{id}", s.trashPurge)
+	mux.HandleFunc("POST /api/trash/empty", s.trashEmpty)
+	mux.HandleFunc("GET /api/practice", s.listPractices)
+	mux.HandleFunc("POST /api/practice", s.newPractice)
+	mux.HandleFunc("POST /api/practice/{id}/resume", s.resumePractice)
+	mux.HandleFunc("POST /api/practice/{id}/pause", s.pausePractice)
+	mux.HandleFunc("POST /api/practice/{id}/finish", s.finishPractice)
+	mux.HandleFunc("DELETE /api/practice/{id}", s.discardPractice)
 	mux.HandleFunc("POST /api/upload", s.upload)
 	mux.HandleFunc("POST /api/runs", s.startRun)
 	mux.HandleFunc("GET /api/runs/{id}/events", s.events)
@@ -237,8 +286,8 @@ func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	active := 0
 	s.mu.Lock()
-	if s.active != nil && !s.active.isDone() {
-		active = s.active.ID
+	if s.main != nil && !s.main.isDone() {
+		active = s.main.ID
 	}
 	s.mu.Unlock()
 	p, cfg, warning := s.backend()
@@ -262,11 +311,20 @@ func (s *Server) errText(err error) string {
 	return session.ErrorText(err, i18n.UI(cfg.Language))
 }
 
+// sourcesClient returns the catalogue client in use (the test override if set, else built from config).
+func (s *Server) sourcesClient() *sources.Client {
+	if s.Sources != nil {
+		return s.Sources
+	}
+	_, cfg, _ := s.backend()
+	return sources.New(cfg.YouTubeKey, cfg.BraveKey)
+}
+
 // shortSession is a session for actions that do not need a conversation with the learner:
 // they take their input from the request and send the result back in the response.
 func (s *Server) shortSession() *session.Session {
 	p, cfg, _ := s.backend()
-	return &session.Session{P: p, V: s.vault(), Cfg: cfg, CheckLinks: s.CheckLinks}
+	return &session.Session{P: s.limit(p, nil, nil), V: s.vault(), Cfg: cfg, CheckLinks: s.CheckLinks, Sources: s.sourcesClient()}
 }
 
 // drain reads what is left of the request body. Go only notices that the browser closed the connection
@@ -501,19 +559,17 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusConflict, "la sesión sigue en curso; cancélala primero")
 		return
 	}
-	s.mu.Lock()
-	delete(s.runs, run.ID)
-	if s.active == run {
-		s.active = nil
-	}
-	s.mu.Unlock()
+	var item vault.TrashItem
 	if s.store != nil {
-		if err := s.store.remove(run.ID); err != nil {
+		var err error
+		item, err = s.vault().RemoveItem(vault.CatSessions, strconv.Itoa(run.ID), nil)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			fail(w, 500, err.Error())
 			return
 		}
 	}
-	writeJSON(w, 200, map[string]bool{"ok": true})
+	s.forgetSessions([]int{run.ID})
+	writeJSON(w, 200, map[string]any{"ok": true, "trash": item})
 }
 
 func (s *Server) startRun(w http.ResponseWriter, r *http.Request) {

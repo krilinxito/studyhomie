@@ -257,10 +257,16 @@ func (s *Session) runAction(ctx context.Context, a ChatAction, guide string, dep
 		if diff == "" {
 			diff = "media"
 		}
+		if s.StartPractice != nil {
+			return guide, s.handOff(Practice{Kind: PracticeQuiz, Slug: guide, N: n, Difficulty: diff})
+		}
 		return guide, s.Quiz(ctx, guide, n, diff)
 	case "feynman":
 		if err := needGuide(); err != nil {
 			return guide, err
+		}
+		if s.StartPractice != nil {
+			return guide, s.handOff(Practice{Kind: PracticeFeynman, Slug: guide})
 		}
 		return guide, s.Feynman(ctx, guide)
 	case "interactive":
@@ -305,6 +311,26 @@ func (s *Session) runAction(ctx context.Context, a ChatAction, guide string, dep
 	}
 	return guide, failf("acción desconocida %q", a.Action)
 }
+
+// handOff starts a practice on its own, next to the chat, and leaves a card to open it: the chat
+// stays free while the learner answers.
+func (s *Session) handOff(p Practice) error {
+	id, err := s.StartPractice(p)
+	if err != nil {
+		return err
+	}
+	title := p.Slug
+	if n, err := s.V.Load(p.Slug); err == nil && n.Meta.Title != "" {
+		title = n.Meta.Title
+	}
+	if !s.card(Card{Kind: CardPractice, Practice: id, Phase: p.Kind, Slug: p.Slug, Topic: title}) {
+		s.printf("Abrí la práctica aparte.\n")
+	}
+	return nil
+}
+
+// CardPractice says a practice started apart from the chat (Practice, Phase: quiz | feynman, Slug, Topic).
+const CardPractice = "practice"
 
 // CardConcept says a concept note is ready (Slug, Topic).
 const CardConcept = "concept"

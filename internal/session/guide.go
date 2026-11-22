@@ -687,16 +687,41 @@ func (s *Session) writeGuide(ctx context.Context, note *vault.Note, req GuideReq
 		s.termf("Aviso: la respuesta no incluyó recursos estructurados; guardo solo la guía.\n")
 	}
 
-	resources := s.verified(ctx, out.Resources)
+	resources := s.enrich(ctx, s.verified(ctx, out.Resources))
+	// external material goes to fuentes/; simulations (and a proposed one) stay in the guide
+	var external, local []vault.Resource
+	for _, r := range resources {
+		if vault.External(r) {
+			external = append(external, r)
+		} else {
+			local = append(local, r)
+		}
+	}
 	// keep simulations generated earlier, and do not propose building another one
 	if have := localInteractive(note.Meta.Resources); len(have) > 0 {
 		var rest []vault.Resource
-		for _, r := range resources {
-			if r.Type != "interactive" || r.URL != "" {
+		for _, r := range local {
+			if r.URL != "" {
 				rest = append(rest, r)
 			}
 		}
-		resources = append(rest, have...)
+		local = append(rest, have...)
+	}
+	srcArea := plan.Area
+	if srcArea == "" {
+		srcArea = vault.NormalizeArea(out.Area)
+	}
+	if srcArea == "" {
+		srcArea = area
+	}
+	for i := range external {
+		if external[i].Area == "" {
+			external[i].Area = srcArea
+		}
+	}
+	refs, ferr := s.V.FileSources(external)
+	if ferr != nil {
+		s.termf("Aviso: no pude guardar todas las fuentes: %v\n", ferr)
 	}
 
 	if disk, err := s.V.Load(note.Slug); err == nil {
@@ -705,7 +730,8 @@ func (s *Session) writeGuide(ctx context.Context, note *vault.Note, req GuideReq
 	if note.Meta.Status == "" || note.Meta.Status == "new" {
 		note.Meta.Status = "prepared" // re-preparing a guide must not undo later progress
 	}
-	note.Meta.Resources = resources
+	note.Meta.Resources = local
+	note.Meta.Sources = refs // writing the guide again replaces what it cites
 	note.Meta.Depth, note.Meta.Focus = req.Depth, req.Focus
 	if plan.Area != "" {
 		note.Meta.Area = plan.Area
@@ -723,7 +749,7 @@ func (s *Session) writeGuide(ctx context.Context, note *vault.Note, req GuideReq
 			note.Meta.Pending = append(note.Meta.Pending, vault.PendingConcept{ID: c.ID, Title: c.Title, Summary: c.Summary, Category: c.Category, Requires: c.Requires, Level: c.Level})
 		}
 	}
-	note.Body = s.guideBody(note.Body, guide, resources)
+	note.Body = s.guideBody(note.Body, guide, refs, local)
 	if len(req.Files) > 0 {
 		seen := map[string]bool{}
 		for _, m := range note.Meta.Materials {
@@ -756,8 +782,8 @@ func (s *Session) writeGuide(ctx context.Context, note *vault.Note, req GuideReq
 		Area:    noteArea(*note),
 		Seconds: int(s.now().Sub(started).Seconds()),
 	})
-	if len(resources) > 0 {
-		s.card(Card{Kind: CardResources, Resources: resources})
+	if shown := append(s.V.Expand(refs), local...); len(shown) > 0 {
+		s.card(Card{Kind: CardResources, Resources: shown})
 	}
 	if s.Card == nil {
 		// a UI shows the guide in its reading panel; the terminal prints it, and where it lives

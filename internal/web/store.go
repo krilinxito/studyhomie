@@ -23,6 +23,7 @@ const (
 	statusError       = "error"
 	statusCancelled   = "cancelled"
 	statusInterrupted = "interrupted" // the app closed while it was running
+	statusPaused      = "paused"      // a practice put aside (or cut by closing the app), to resume
 )
 
 var interruptedMsg = i18n.N("La sesión se interrumpió al cerrar la aplicación.")
@@ -37,7 +38,9 @@ type sessionFile struct {
 	Ended   time.Time `json:"ended,omitzero"`
 	Status  string    `json:"status"`
 	Error   string    `json:"error,omitempty"`
-	Events  []Event   `json:"events"`
+	// Practice is the quiz or Feynman this session runs (.studyhomie/practice/<id>.json).
+	Practice string  `json:"practice,omitempty"`
+	Events   []Event `json:"events"`
 }
 
 // store keeps sessions on disk so they survive a restart.
@@ -139,7 +142,7 @@ func mergeOut(evs []Event) []Event {
 // restore turns a stored session back into a finished Run.
 func restore(sf sessionFile) *Run {
 	r := &Run{
-		ID: sf.ID, Cmd: sf.Cmd, Title: sf.Title, Slug: sf.Slug, Started: sf.Started, Ended: sf.Ended,
+		ID: sf.ID, Cmd: sf.Cmd, Title: sf.Title, Slug: sf.Slug, Started: sf.Started, Ended: sf.Ended, Practice: sf.Practice,
 		status: sf.Status, errMsg: sf.Error, events: sf.Events,
 		cancel: func() {}, in: newInputBuf(), done: true,
 	}
@@ -157,12 +160,14 @@ type summary struct {
 	Ended   time.Time `json:"ended,omitzero"`
 	Status  string    `json:"status"`
 	Error   string    `json:"error,omitempty"`
+	// Practice is the quiz or Feynman it runs: the browser opens it in its own tab.
+	Practice string `json:"practice,omitempty"`
 }
 
 func (r *Run) summary() summary {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return summary{ID: r.ID, Cmd: r.Cmd, Title: r.Title, Slug: r.Slug, Started: r.Started, Ended: r.Ended, Status: r.status, Error: r.errMsg}
+	return summary{ID: r.ID, Cmd: r.Cmd, Title: r.Title, Slug: r.Slug, Started: r.Started, Ended: r.Ended, Status: r.status, Error: r.errMsg, Practice: r.Practice}
 }
 
 func (r *Run) snapshot() sessionFile {
@@ -170,7 +175,7 @@ func (r *Run) snapshot() sessionFile {
 	defer r.mu.Unlock()
 	return sessionFile{
 		ID: r.ID, Cmd: r.Cmd, Title: r.Title, Slug: r.Slug, Started: r.Started, Ended: r.Ended,
-		Status: r.status, Error: r.errMsg, Events: mergeOut(r.events),
+		Status: r.status, Error: r.errMsg, Practice: r.Practice, Events: mergeOut(r.events),
 	}
 }
 

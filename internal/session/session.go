@@ -12,10 +12,9 @@ import (
 	"time"
 
 	"github.com/krilinxito/studyhomie/internal/config"
-	"github.com/krilinxito/studyhomie/internal/i18n"
 	"github.com/krilinxito/studyhomie/internal/links"
-	"github.com/krilinxito/studyhomie/internal/prompts"
 	"github.com/krilinxito/studyhomie/internal/provider"
+	"github.com/krilinxito/studyhomie/internal/sources"
 	"github.com/krilinxito/studyhomie/internal/stats"
 	"github.com/krilinxito/studyhomie/internal/vault"
 )
@@ -41,6 +40,15 @@ type Session struct {
 	// Card, if set, receives structured output a UI draws as rich elements. Where a
 	// card replaces text, the text is not printed; the terminal leaves this nil.
 	Card func(Card)
+	// Sources finds and checks material in public catalogues; nil leaves what the model proposed
+	// as it is and turns «Buscar más material» off.
+	Sources *sources.Client
+	// Checkpoint, if set, receives a quiz or Feynman session after every step (questions
+	// generated, an answer given), so a UI can save it and resume it later.
+	Checkpoint func(Practice)
+	// StartPractice, if set, runs the quiz and Feynman the chat asks for on their own, next to
+	// the chat, instead of inside it. It returns the practice id; title is the guide's.
+	StartPractice func(p Practice) (id string, err error)
 }
 
 func (s *Session) now() time.Time {
@@ -131,6 +139,9 @@ func (s *Session) readLine(label, def string) (string, error) {
 		return "", err
 	}
 	line = strings.TrimSpace(line)
+	if line == FinishNow {
+		return "", errFinishNow
+	}
 	if line == "" {
 		return def, nil
 	}
@@ -147,6 +158,8 @@ func (s *Session) readBlock() (text string, finished bool, err error) {
 		line, rerr := s.In.ReadString('\n')
 		t := strings.TrimSpace(line)
 		switch {
+		case t == FinishNow:
+			return "", false, errFinishNow
 		case t == ".":
 			return strings.TrimSpace(b.String()), false, nil
 		case t == "/fin":
@@ -188,33 +201,36 @@ func (s *Session) verified(ctx context.Context, in []vault.Resource) []vault.Res
 	return out
 }
 
-func (s *Session) guideBody(existing, guide string, res []vault.Resource) string {
+func (s *Session) guideBody(existing, guide string, refs []vault.SourceRef, local []vault.Resource) string {
 	body := vault.ReplaceSection(existing, s.h("Guía"), guide)
-	if lines := resourceLines(res); lines != "" {
-		body = vault.ReplaceSection(body, s.h("Recursos"), lines)
-	}
-	return body
+	return s.V.SetRecursos(body, s.h("Recursos"), refs, local)
 }
 
-// resourceLines renders resources as a Markdown list. Vault-relative links
-// (generated simulations) are written relative to the topics folder.
-func resourceLines(res []vault.Resource) string {
-	var b strings.Builder
-	for _, r := range res {
-		line := fmt.Sprintf("- **%s** (%s)", r.Title, r.Type)
-		if r.URL != "" {
-			u := r.URL
-			if !strings.HasPrefix(u, "http") {
-				u = "../" + u
-			}
-			line = fmt.Sprintf("- [%s](%s) (%s)", r.Title, u, r.Type)
-		}
-		if r.Why != "" {
-			line += " — " + r.Why
-		}
-		b.WriteString(line + "\n")
+// enrich checks the material the model proposed against its catalogue (a video must exist, a DOI
+// must resolve) and completes it: real title, author or channel, year, reliability. Without a
+// catalogue client (the terminal offline, tests) it is kept as it is.
+func (s *Session) enrich(ctx context.Context, in []vault.Resource) []vault.Resource {
+	if s.Sources == nil {
+		return in
 	}
-	return b.String()
+	var out []vault.Resource
+	for _, r := range in {
+		if !vault.External(r) {
+			out = append(out, r)
+			continue
+		}
+		checked, ok := s.Sources.Verify(ctx, r)
+		if !ok {
+			s.termf("Descarté una fuente que no existe: %s\n", r.URL)
+			continue
+		}
+		checked.Why = r.Why
+		if checked.Lang == "" && vault.YouTubeID(checked.URL) == "" {
+			checked.Lang = s.lang()
+		}
+		out = append(out, checked)
+	}
+	return out
 }
 
 // localInteractive returns the simulations already generated for a note.
@@ -226,246 +242,6 @@ func localInteractive(res []vault.Resource) []vault.Resource {
 		}
 	}
 	return out
-}
-
-type question struct {
-	ID       int      `json:"id"`
-	Type     string   `json:"type"`
-	Question string   `json:"question"`
-	Choices  []string `json:"choices"`
-	Answer   string   `json:"answer"`
-}
-
-type grading struct {
-	Score   int `json:"score"`
-	Results []struct {
-		ID       int    `json:"id"`
-		Correct  bool   `json:"correct"`
-		Feedback string `json:"feedback"`
-	} `json:"results"`
-	Gaps []string `json:"gaps"`
-}
-
-// difficulties are the levels of a test, as the chat and the UI name them.
-var difficulties = []string{i18n.N("básica"), i18n.N("media"), i18n.N("avanzada")}
-
-// Quiz generates a test, collects answers and grades them. On a roadmap, passing it writes the
-// next topic's guide.
-func (s *Session) Quiz(ctx context.Context, slug string, n int, difficulty string) error {
-	if err := s.quiz(ctx, slug, n, difficulty); err != nil {
-		return err
-	}
-	return s.advance(ctx, slug)
-}
-
-func (s *Session) quiz(ctx context.Context, slug string, n int, difficulty string) error {
-	started := s.now()
-	note, err := s.V.Load(slug)
-	if err != nil {
-		return failf("no hay guía para «%s»; ejecuta primero la preparación: %w", slug, err)
-	}
-	system := prompts.Get("quiz", s.aiLang())
-	var gp strings.Builder
-	fmt.Fprintf(&gp, "GENERATE a test.\nTopic: %s\n", note.Meta.Title)
-	if area := noteArea(note); area != "" {
-		fmt.Fprintf(&gp, "Area: %s\n", area)
-	}
-	fmt.Fprintf(&gp, "What the learner studied: %s\n", s.V.LoadHandoff(slug))
-	if guideSec := strings.TrimSpace(vault.Section(note.Body, "Guía")); guideSec != "" {
-		fmt.Fprintf(&gp, "Guide excerpt (formulas/examples): %s\n", head(guideSec, 2200))
-	}
-	fmt.Fprintf(&gp, "Number of questions: %d\nDifficulty: %s", n, difficulty)
-	genPrompt := gp.String()
-	s.card(Card{Kind: CardPhase, Phase: "quiz"})
-	s.status("Generando la prueba")
-	resp, err := s.convo(system).Say(ctx, genPrompt, nil)
-	if err != nil {
-		return err
-	}
-	var gen struct {
-		Questions []question `json:"questions"`
-	}
-	if err := decodeJSON(resp.Text, &gen); err != nil {
-		return err
-	}
-	if len(gen.Questions) == 0 {
-		return failf("la prueba salió vacía")
-	}
-
-	answers := make(map[int]string)
-	for i, q := range gen.Questions {
-		qLabel := ""
-		if strings.EqualFold(q.Type, "exercise") {
-			qLabel = s.tr("Ejercicio")
-		}
-		if !s.card(Card{Kind: CardQuestion, N: i + 1, Total: len(gen.Questions), Label: qLabel, Question: q.Question, Choices: q.Choices}) {
-			s.printf("\n%d/%d. %s\n", i+1, len(gen.Questions), q.Question)
-			for _, ch := range q.Choices {
-				s.printf("   %s\n", ch)
-			}
-		}
-		a, err := s.readLine("Respuesta", "")
-		if err != nil {
-			return err
-		}
-		answers[q.ID] = a
-	}
-
-	var gb strings.Builder
-	gb.WriteString("GRADE this test.\nTopic: " + note.Meta.Title + "\n")
-	for _, q := range gen.Questions {
-		fmt.Fprintf(&gb, "\nQuestion %d: %s\nReference answer: %s\nLearner's answer: %s\n", q.ID, q.Question, q.Answer, answers[q.ID])
-	}
-	s.status("Corrigiendo")
-	resp, err = s.convo(system).Say(ctx, gb.String(), nil)
-	if err != nil {
-		return err
-	}
-	var g grading
-	if err := decodeJSON(resp.Text, &g); err != nil {
-		return err
-	}
-
-	header := s.trf("Puntaje: **%d/100** (dificultad: %s)", g.Score, s.tr(difficulty)) + "\n\n"
-	var rep strings.Builder
-	byID := map[int]question{}
-	for _, q := range gen.Questions {
-		byID[q.ID] = q
-	}
-	for _, r := range g.Results {
-		mark := "✗"
-		if r.Correct {
-			mark = "✓"
-		}
-		fmt.Fprintf(&rep, "- %s **%s**\n  - %s %s\n  - %s\n", mark, byID[r.ID].Question, s.tr("Tu respuesta:"), answers[r.ID], r.Feedback)
-	}
-	if len(g.Gaps) > 0 {
-		rep.WriteString("\n" + s.tr("Para repasar:") + " " + strings.Join(g.Gaps, "; ") + "\n")
-	}
-	if s.card(Card{Kind: CardScore, Label: s.tr("Preguntas"), Score: g.Score, Detail: s.trf("dificultad %s", s.tr(difficulty))}) {
-		s.printf("\n%s", rep.String()) // the card already shows the score
-	} else {
-		s.printf("\n%s%s", header, rep.String())
-	}
-
-	if err := s.V.AppendSection(slug, s.h("Prueba"), header+rep.String()); err != nil {
-		return err
-	}
-	note, _ = s.V.Load(slug)
-	note.Meta.Status = "tested"
-	note.Meta.Mastery = g.Score
-	if err := s.V.Save(note); err != nil {
-		return err
-	}
-	s.recordEvent(stats.Event{
-		Kind:    stats.KindQuiz,
-		Topic:   slug,
-		Title:   note.Meta.Title,
-		Area:    noteArea(note),
-		Score:   g.Score,
-		Seconds: int(s.now().Sub(started).Seconds()),
-	})
-	if len(g.Gaps) > 0 {
-		h := s.V.LoadHandoff(slug) + "\n\nGaps found in the test: " + strings.Join(g.Gaps, "; ")
-		return s.V.SaveHandoff(slug, h)
-	}
-	return nil
-}
-
-// Feynman lets the learner explain the topic and critiques each round. On a roadmap, passing it
-// writes the next topic's guide.
-func (s *Session) Feynman(ctx context.Context, slug string) error {
-	if err := s.feynman(ctx, slug); err != nil {
-		return err
-	}
-	return s.advance(ctx, slug)
-}
-
-func (s *Session) feynman(ctx context.Context, slug string) error {
-	started := s.now()
-	note, err := s.V.Load(slug)
-	if err != nil {
-		return failf("no hay guía para «%s»; ejecuta primero la preparación: %w", slug, err)
-	}
-	c := s.convo(prompts.Get("feynman", s.aiLang()))
-	header := fmt.Sprintf("Topic: %s\nStudy summary (ground truth): %s\n\n", note.Meta.Title, s.V.LoadHandoff(slug))
-
-	s.card(Card{Kind: CardPhase, Phase: "feynman"})
-	s.printf("\nExplícame «%s» como si yo no supiera nada.\n", note.Meta.Title)
-	if s.rich() {
-		s.printf("Escríbela con tus palabras; te iré haciendo preguntas. Cuando quieras, pulsa «Terminar y evaluar».\n\n")
-	} else {
-		s.printf("Escribe tu explicación; una línea con solo «.» la envía, «/fin» termina la sesión.\n\n")
-	}
-
-	var transcript strings.Builder
-	first := true
-	for {
-		text, finished, err := s.readBlock()
-		if err != nil {
-			return err
-		}
-		if text == "" && !finished {
-			continue
-		}
-		prompt := text
-		if finished {
-			// no leading "/": the Claude CLI would take it for a slash command
-			prompt = "FINAL EVALUATION requested: the learner ended the session. Evaluate the whole conversation now.\n" + text
-		}
-		if first {
-			prompt = header + "Learner's explanation:\n" + prompt
-			first = false
-		}
-		resp, err := c.Say(ctx, prompt, nil)
-		if err != nil {
-			return err
-		}
-		if !finished {
-			s.printf("\n%s\n\n", resp.Text)
-			fmt.Fprintf(&transcript, "**%s** %s\n\n**StudyHomie:** %s\n\n", s.tr("Tú:"), text, resp.Text)
-			continue
-		}
-		score, body, ok := extractScore(resp.Text)
-		s.printf("\n%s\n", body)
-		fmt.Fprintf(&transcript, "**%s** %s\n", s.tr("Evaluación final:"), body)
-		if ok && !s.card(Card{Kind: CardScore, Label: s.tr("Explicación"), Score: score}) {
-			s.printf("\nPuntaje Feynman: %d/100\n", score)
-		}
-		return s.saveFeynman(slug, transcript.String(), score, ok, int(s.now().Sub(started).Seconds()))
-	}
-}
-
-func (s *Session) saveFeynman(slug, transcript string, score int, scored bool, seconds int) error {
-	if err := s.V.AppendSection(slug, s.h("Feynman"), transcript); err != nil {
-		return err
-	}
-	note, err := s.V.Load(slug)
-	if err != nil {
-		return err
-	}
-	wasTested := note.Meta.Status == "tested"
-	note.Meta.Status = "explained"
-	if scored {
-		// combine with the quiz score only right after a quiz; later retries replace it
-		if wasTested {
-			note.Meta.Mastery = (note.Meta.Mastery + score) / 2
-		} else {
-			note.Meta.Mastery = score
-		}
-	}
-	if err := s.V.Save(note); err != nil {
-		return err
-	}
-	s.recordEvent(stats.Event{
-		Kind:    stats.KindFeynman,
-		Topic:   slug,
-		Title:   note.Meta.Title,
-		Area:    noteArea(note),
-		Score:   score,
-		Seconds: seconds,
-	})
-	return nil
 }
 
 // Study runs the three phases in order for one topic.

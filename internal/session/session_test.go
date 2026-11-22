@@ -133,10 +133,14 @@ func TestPrepareSavesGuideAndDropsDeadLinks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(n.Meta.Resources) != 2 || n.Meta.Resources[0].Title != "Good" || n.Meta.Resources[1].Title != "A Book" {
-		t.Errorf("resources = %+v", n.Meta.Resources)
+	// external material becomes notes of fuentes/, cited from the guide with why each one helps
+	if len(n.Meta.Resources) != 0 || len(n.Meta.Sources) != 2 || n.Meta.Sources[0].ID != "good" || n.Meta.Sources[1].ID != "a-book" || n.Meta.Sources[0].Why != "visual" {
+		t.Errorf("sources = %+v, resources = %+v", n.Meta.Sources, n.Meta.Resources)
 	}
-	if !strings.Contains(n.Body, "## Guía") || !strings.Contains(n.Body, "[Good](https://ok.example/v)") || strings.Contains(n.Body, "dead.example") {
+	if src, err := s.V.LoadSource("good"); err != nil || src.Meta.URL != "https://ok.example/v" {
+		t.Errorf("source note: %+v %v", src.Meta, err)
+	}
+	if !strings.Contains(n.Body, "## Guía") || !strings.Contains(n.Body, "[[fuentes/good|Good]] — visual") || strings.Contains(n.Body, "dead.example") {
 		t.Errorf("body wrong:\n%s", n.Body)
 	}
 	if got := s.V.LoadHandoff(slug); got != "resumen corto" {
@@ -223,5 +227,36 @@ func TestWebSessionHidesTerminalText(t *testing.T) {
 	}
 	if !strings.Contains(got, "Terminar y evaluar") {
 		t.Errorf("web transcript should point at the finish button:\n%s", got)
+	}
+}
+
+// A Feynman resumed after a pause carries its rounds to the model; closing it early evaluates what
+// was explained and leaves mastery alone.
+func TestFeynmanResumedThenFinishedEarly(t *testing.T) {
+	f := &fake{replies: []provider.Response{
+		reply(prepReply, 10),
+		reply("¿Y la prior?", 10),
+		reply("Ibas bien.\nSCORE: 60", 10),
+	}}
+	s, _ := newSession(t, f, "La prior es lo que creía antes.\n.\n"+FinishNow+"\n")
+	slug, _ := s.Prepare(context.Background(), "Bayes", "adhoc")
+	var saved []Practice
+	s.Checkpoint = func(p Practice) { saved = append(saved, p) }
+	p := &Practice{Kind: PracticeFeynman, Slug: slug, Turns: []FeynmanTurn{{Learner: "Es como un filtro.", Reply: "Bien, pero ¿por qué?"}}}
+	if err := s.FeynmanFrom(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(f.reqs[1].Prompt, "CONVERSATION SO FAR") || !strings.Contains(f.reqs[1].Prompt, "Es como un filtro.") {
+		t.Errorf("a resumed Feynman must carry its rounds: %s", f.reqs[1].Prompt)
+	}
+	if len(saved) != 1 || len(saved[0].Turns) != 2 {
+		t.Errorf("checkpoints: %+v", saved)
+	}
+	if p.Outcome != OutcomePartial || p.Score != 60 {
+		t.Errorf("outcome %q score %d", p.Outcome, p.Score)
+	}
+	n, _ := s.V.Load(slug)
+	if n.Meta.Status != "prepared" || n.Meta.Mastery != 0 || !strings.Contains(n.Body, "La prior es lo que creía antes.") {
+		t.Errorf("an incomplete Feynman must keep mastery: %+v\n%s", n.Meta, n.Body)
 	}
 }

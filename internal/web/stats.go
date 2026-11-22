@@ -2,6 +2,7 @@ package web
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/krilinxito/studyhomie/internal/cards"
 	"github.com/krilinxito/studyhomie/internal/stats"
@@ -37,4 +38,27 @@ func (s *Server) tutorialSeen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+// grades returns the grade history (quizzes and explanations), filtered by ?topic, ?area, ?kind,
+// ?from and ?to (YYYY-MM-DD).
+func (s *Server) grades(w http.ResponseWriter, r *http.Request) {
+	data, err := stats.Load(s.vault().Root)
+	if err != nil {
+		fail(w, 500, err.Error())
+		return
+	}
+	q := r.URL.Query()
+	f := stats.GradeFilter{Topic: q.Get("topic"), Area: q.Get("area"), Kind: q.Get("kind"), From: q.Get("from"), To: q.Get("to")}
+	if (f.From != "" && !isDate(f.From)) || (f.To != "" && !isDate(f.To)) {
+		fail(w, 400, "fecha inválida")
+		return
+	}
+	_, cfg, _ := s.backend()
+	writeJSON(w, 200, stats.Grades(data, f, cfg.PassScore, s.Now()))
+}
+
+func isDate(s string) bool {
+	_, err := time.Parse("2006-01-02", s)
+	return err == nil
 }

@@ -641,3 +641,86 @@ func Overview(v *vault.Vault, deckFilter string, now time.Time) (OverviewRespons
 	}
 	return res, nil
 }
+
+// TakeDeckStates removes the review state of every card of a deck from cards.json and returns it,
+// so a deleted deck can be restored with its progress (see PutStates).
+func TakeDeckStates(vaultRoot, deckSlug string) (map[string]ReviewState, error) {
+	stateMu.Lock()
+	defer stateMu.Unlock()
+	st, err := loadStatesLocked(vaultRoot)
+	if err != nil {
+		return nil, err
+	}
+	taken := map[string]ReviewState{}
+	for k, s := range st.States {
+		if strings.HasPrefix(k, deckSlug+":") {
+			taken[k] = s
+			delete(st.States, k)
+		}
+	}
+	if len(taken) == 0 {
+		return taken, nil
+	}
+	return taken, saveStatesLocked(vaultRoot, st)
+}
+
+// PutStates merges review states back into cards.json without overwriting newer ones.
+func PutStates(vaultRoot string, states map[string]ReviewState) error {
+	if len(states) == 0 {
+		return nil
+	}
+	stateMu.Lock()
+	defer stateMu.Unlock()
+	st, err := loadStatesLocked(vaultRoot)
+	if err != nil {
+		return err
+	}
+	for k, s := range states {
+		if _, ok := st.States[k]; !ok {
+			st.States[k] = s
+		}
+	}
+	return saveStatesLocked(vaultRoot, st)
+}
+
+// OrphanStates counts the review states whose deck or card no longer exists.
+func OrphanStates(vaultRoot string) int {
+	n, _ := orphanStates(vaultRoot, false)
+	return n
+}
+
+// DropOrphanStates removes the review states whose deck or card no longer exists, and returns
+// them so the cleanup can be undone with PutStates.
+func DropOrphanStates(vaultRoot string) (map[string]ReviewState, error) {
+	_, dropped := orphanStates(vaultRoot, true)
+	return dropped, nil
+}
+
+func orphanStates(vaultRoot string, drop bool) (int, map[string]ReviewState) {
+	decks, _ := ListDecks(vaultRoot)
+	live := map[string]bool{}
+	for _, d := range decks {
+		for _, c := range d.Cards {
+			live[stateKey(d.Slug, c.ID)] = true
+		}
+	}
+	stateMu.Lock()
+	defer stateMu.Unlock()
+	st, err := loadStatesLocked(vaultRoot)
+	if err != nil {
+		return 0, nil
+	}
+	dropped := map[string]ReviewState{}
+	for k, s := range st.States {
+		if !live[k] {
+			dropped[k] = s
+			if drop {
+				delete(st.States, k)
+			}
+		}
+	}
+	if drop && len(dropped) > 0 {
+		_ = saveStatesLocked(vaultRoot, st)
+	}
+	return len(dropped), dropped
+}

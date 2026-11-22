@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/krilinxito/studyhomie/internal/session"
@@ -12,20 +13,23 @@ import (
 )
 
 type gNode struct {
-	ID       string `json:"id"`
-	Label    string `json:"label"`
-	Kind     string `json:"kind"` // guide | concept
-	Status   string `json:"status"`
-	Mastery  int    `json:"mastery"`
-	Roadmap  string `json:"roadmap,omitempty"`
-	Group    string `json:"group"` // the line the node is drawn on: a roadmap, or a guide with its concepts
-	Order    int    `json:"order,omitempty"`
-	Source   string `json:"source,omitempty"`
-	Field    string `json:"field,omitempty"`
-	Category string `json:"category,omitempty"`
-	Summary  string `json:"summary,omitempty"`
-	Shared   int    `json:"shared,omitempty"`  // a concept several guides stand on: how many
-	Foreign  bool   `json:"foreign,omitempty"` // in a chat's map: a concept another conversation wrote
+	ID              string `json:"id"`
+	Label           string `json:"label"`
+	Kind            string `json:"kind"` // guide | concept
+	Status          string `json:"status"`
+	Mastery         int    `json:"mastery"`
+	ReadProgress    int    `json:"readProgress,omitempty"`
+	ActivitiesDone  int    `json:"activitiesDone,omitempty"`
+	ActivitiesTotal int    `json:"activitiesTotal,omitempty"`
+	Roadmap         string `json:"roadmap,omitempty"`
+	Group           string `json:"group"` // the line the node is drawn on: a roadmap, or a guide with its concepts
+	Order           int    `json:"order,omitempty"`
+	Source          string `json:"source,omitempty"`
+	Field           string `json:"field,omitempty"`
+	Category        string `json:"category,omitempty"`
+	Summary         string `json:"summary,omitempty"`
+	Shared          int    `json:"shared,omitempty"`  // a concept several guides stand on: how many
+	Foreign         bool   `json:"foreign,omitempty"` // in a chat's map: a concept another conversation wrote
 }
 
 type gEdge struct {
@@ -104,7 +108,15 @@ func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
 		if title == "" {
 			title = n.Slug
 		}
+		acts := vault.ParseActivities(n.Body)
+		actDone := 0
+		for _, a := range acts {
+			if a.Done {
+				actDone++
+			}
+		}
 		nodes = append(nodes, gNode{ID: n.Slug, Label: title, Kind: "guide", Status: st, Mastery: n.Meta.Mastery,
+			ReadProgress: n.Meta.ReadProgress, ActivitiesDone: actDone, ActivitiesTotal: len(acts),
 			Roadmap: n.Meta.Roadmap, Group: group[n.Slug], Order: n.Meta.Order, Source: n.Meta.Source, Field: n.Meta.Field, Summary: n.Meta.Summary})
 	}
 	var shown []vault.Concept
@@ -129,7 +141,7 @@ func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
 		if title == "" {
 			title = c.Slug
 		}
-		nodes = append(nodes, gNode{ID: c.Slug, Label: title, Kind: "concept", Status: "concept", Group: g, Category: c.Meta.Category, Summary: c.Meta.Summary, Shared: shared(c.Slug)})
+		nodes = append(nodes, gNode{ID: c.Slug, Label: title, Kind: "concept", Status: "concept", ReadProgress: c.Meta.ReadProgress, Group: g, Category: c.Meta.Category, Summary: c.Meta.Summary, Shared: shared(c.Slug)})
 	}
 	// the iceberg under each guide: mapped concepts with no note yet, once even when several
 	// guides map the same one, with what each of them says it stands on
@@ -321,8 +333,12 @@ func (s *Server) note(w http.ResponseWriter, r *http.Request) {
 				Area:  area,
 			})
 		}
+		res := s.vault().GuideResources(n)
+		if res == nil {
+			res = []vault.Resource{}
+		}
 		writeJSON(w, 200, map[string]any{
-			"slug": slug, "kind": "guide", "meta": n.Meta, "body": n.Body,
+			"slug": slug, "kind": "guide", "meta": n.Meta, "body": n.Body, "resources": res,
 			"backlinks": s.refs(back), "requires": s.refs(n.Meta.Requires), "concepts": notes, "activities": vault.ParseActivities(n.Body), "hasSimulation": simErr == nil, "apunte": s.vault().HasApunte(slug),
 		})
 		return
@@ -336,8 +352,12 @@ func (s *Server) note(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, "no existe esa nota")
 		return
 	}
+	cres := s.vault().Expand(c.Meta.Sources)
+	if cres == nil {
+		cres = []vault.Resource{}
+	}
 	writeJSON(w, 200, map[string]any{
-		"slug": id, "kind": "concept", "meta": c.Meta, "body": c.Body,
+		"slug": id, "kind": "concept", "meta": c.Meta, "body": c.Body, "resources": cres,
 		"backlinks": s.refs(back), "requires": s.refs(c.Meta.Requires), "guides": s.refs(c.Meta.Guides), "apunte": s.vault().HasApunte(id),
 	})
 }
@@ -351,11 +371,20 @@ func (s *Server) deleteNote(w http.ResponseWriter, r *http.Request) {
 	}
 	v := s.vault()
 	if v.Exists(slug) {
-		if err := v.DeleteGuide(slug); err != nil {
+		if s.inUse(vault.CatGuides, slug) {
+			fail(w, http.StatusConflict, errItemInUse.Error())
+			return
+		}
+		var with []string
+		if q := r.URL.Query().Get("with"); q != "" {
+			with = strings.Split(q, ",")
+		}
+		item, err := s.removeItem(vault.CatGuides, slug, with)
+		if err != nil {
 			fail(w, 500, err.Error())
 			return
 		}
-		writeJSON(w, 200, map[string]any{"ok": true, "kind": "guide", "slug": slug})
+		writeJSON(w, 200, map[string]any{"ok": true, "kind": "guide", "slug": slug, "trash": item.ID})
 		return
 	}
 	id := slug
@@ -363,11 +392,12 @@ func (s *Server) deleteNote(w http.ResponseWriter, r *http.Request) {
 		id = vault.ConceptID(slug)
 	}
 	if v.ConceptExists(id) {
-		if err := v.DeleteConcept(id); err != nil {
+		item, err := v.DeleteConcept(id)
+		if err != nil {
 			fail(w, 500, err.Error())
 			return
 		}
-		writeJSON(w, 200, map[string]any{"ok": true, "kind": "concept", "slug": id})
+		writeJSON(w, 200, map[string]any{"ok": true, "kind": "concept", "slug": id, "trash": item.ID})
 		return
 	}
 	fail(w, 404, "no existe esa nota")
@@ -444,4 +474,55 @@ func (s *Server) vizPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]string{"src": src})
+}
+
+// saveReadProgress stores the furthest scroll reading progress (0-100) reached on a guide or concept.
+func (s *Server) saveReadProgress(w http.ResponseWriter, r *http.Request) {
+	slug, ok := noteSlug(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Progress int    `json:"progress"`
+		Kind     string `json:"kind"` // guide | concept (optional)
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	pct := max(0, min(100, body.Progress))
+	v := s.vault()
+	isConcept := body.Kind == "concept" || (body.Kind != "guide" && !v.Exists(slug))
+	if isConcept {
+		id := slug
+		if !v.ConceptExists(id) {
+			id = vault.ConceptID(slug)
+		}
+		var saved int
+		err := v.UpdateConcept(id, func(c *vault.Concept) error {
+			if pct > c.Meta.ReadProgress {
+				c.Meta.ReadProgress = pct
+			}
+			saved = c.Meta.ReadProgress
+			return nil
+		})
+		if err != nil {
+			fail(w, 404, "no existe esa nota")
+			return
+		}
+		writeJSON(w, 200, map[string]any{"ok": true, "readProgress": saved})
+		return
+	}
+	var saved int
+	err := v.Update(slug, func(n *vault.Note) error {
+		if pct > n.Meta.ReadProgress {
+			n.Meta.ReadProgress = pct
+		}
+		saved = n.Meta.ReadProgress
+		return nil
+	})
+	if err != nil {
+		fail(w, 404, "no existe esa nota")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "readProgress": saved})
 }
