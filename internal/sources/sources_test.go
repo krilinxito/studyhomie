@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/krilinxito/studyhomie/internal/vault"
@@ -12,14 +13,20 @@ import (
 
 // fakeCatalogues answers like the real services, without the network.
 func fakeCatalogues(t *testing.T) (*Client, *[]string) {
+	var mu sync.Mutex
 	var hits []string
+	record := func(s string) {
+		mu.Lock()
+		hits = append(hits, s)
+		mu.Unlock()
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/es/w/rest.php/v1/search/page", func(w http.ResponseWriter, r *http.Request) {
-		hits = append(hits, "wikipedia:"+r.URL.Query().Get("q"))
+		record("wikipedia:" + r.URL.Query().Get("q"))
 		w.Write([]byte(`{"pages":[{"key":"Teorema_de_Bayes","title":"Teorema de Bayes","description":"resultado de probabilidad"}]}`))
 	})
 	mux.HandleFunc("/works", func(w http.ResponseWriter, r *http.Request) {
-		hits = append(hits, "openalex")
+		record("openalex")
 		w.Write([]byte(`{"results":[{"display_name":"A tutorial on Bayes","publication_year":2011,"doi":"https://doi.org/10.1000/XYZ123","cited_by_count":250,"authorships":[{"author":{"display_name":"Ana"}},{"author":{"display_name":"Luis"}}],"primary_location":{"source":{"display_name":"Journal of Stats"}}},{"display_name":"Sin enlace"}]}`))
 	})
 	mux.HandleFunc("/works/", func(w http.ResponseWriter, r *http.Request) {
@@ -30,7 +37,7 @@ func fakeCatalogues(t *testing.T) (*Client, *[]string) {
 		w.Write([]byte(`{"message":{"title":["Real title"],"issued":{"date-parts":[[2019,3]]},"author":[{"given":"Ada","family":"Lovelace"}],"is-referenced-by-count":40}}`))
 	})
 	mux.HandleFunc("/search.json", func(w http.ResponseWriter, r *http.Request) {
-		hits = append(hits, "openlibrary")
+		record("openlibrary")
 		w.Write([]byte(`{"docs":[{"key":"/works/OL1W","title":"Probability Theory","author_name":["E. T. Jaynes"],"first_publish_year":2003,"isbn":["9780521592710"],"language":["eng"]}]}`))
 	})
 	mux.HandleFunc("/oembed", func(w http.ResponseWriter, r *http.Request) {
@@ -41,7 +48,7 @@ func fakeCatalogues(t *testing.T) (*Client, *[]string) {
 		w.Write([]byte(`{"title":"Bayes theorem, the geometry of changing beliefs","author_name":"3Blue1Brown"}`))
 	})
 	mux.HandleFunc("/yt/search", func(w http.ResponseWriter, r *http.Request) {
-		hits = append(hits, "youtube")
+		record("youtube")
 		if r.URL.Query().Get("key") != "ykey" {
 			t.Errorf("youtube key missing")
 		}
@@ -51,7 +58,7 @@ func fakeCatalogues(t *testing.T) (*Client, *[]string) {
 		w.Write([]byte(`{"items":[{"id":"HZGCoVF3YvM","contentDetails":{"duration":"PT15M11S"}}]}`))
 	})
 	mux.HandleFunc("/res/v1/web/search", func(w http.ResponseWriter, r *http.Request) {
-		hits = append(hits, "brave")
+		record("brave")
 		if r.Header.Get("X-Subscription-Token") != "bkey" {
 			t.Errorf("brave key missing")
 		}
