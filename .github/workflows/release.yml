@@ -7,6 +7,12 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The tag to build, e.g. v0.6.0
+        required: true
+        type: string
   workflow_call:
     inputs:
       tag:
@@ -124,6 +130,7 @@ jobs:
           publish krilinxito/homebrew-tap out/homebrew/studyhomie.rb Formula/studyhomie.rb
 
   choco:
+    if: false # temporarily disabled while the initial package is under Chocolatey moderation
     needs: release
     runs-on: windows-latest
     permissions:
