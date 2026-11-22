@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.0](https://github.com/krilinxito/studyhomie/compare/v0.5.0...v0.6.0) (2026-11-22)
+
+
+### Novedades
+
+* fuentes fiables, búsqueda en catálogos públicos y carpeta fuentes/ ([#12](https://github.com/krilinxito/studyhomie/issues/12)) ([cdedac1](https://github.com/krilinxito/studyhomie/commit/cdedac1a74450198ad4b95e5d9f5af30cb89fc1b))
+
+
+### Arreglos
+
+* evitar condición de carrera en sources_test al registrar peticiones concurrentes ([86c014c](https://github.com/krilinxito/studyhomie/commit/86c014c20aee3a016f31be8ccc07c46cdbdb6111))
+
 ## [0.5.0](https://github.com/krilinxito/studyhomie/compare/v0.4.1...v0.5.0) (2026-11-21)
 
 
