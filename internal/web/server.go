@@ -164,6 +164,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/notes/{slug}/dig", s.dig)
 	mux.HandleFunc("POST /api/notes/{slug}/activities", s.generateActivities)
 	mux.HandleFunc("POST /api/notes/{slug}/activities/{index}", s.updateActivity)
+	mux.HandleFunc("POST /api/notes/{slug}/progress", s.saveReadProgress)
 	mux.HandleFunc("POST /api/notes/{slug}/sources", s.findSources)
 	mux.HandleFunc("GET /api/sources", s.listSources)
 	mux.HandleFunc("GET /api/sources/{slug}", s.getSource)

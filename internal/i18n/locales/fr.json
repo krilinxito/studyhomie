@@ -1088,5 +1088,13 @@
   "no sé buscar material para %q": "impossible de chercher des ressources pour %q",
   "{n} cita": "{n} citation",
   "{n} citas": "{n} citations",
-  "Área": "Domaine"
+  "Área": "Domaine",
+  "Actividades": "Activités",
+  "Actividades: {done}/{total} ({pct}%)": "Activités : {done}/{total} ({pct} %)",
+  "Lectura": "Lecture",
+  "Lectura: {pct}%": "Lecture : {pct} %",
+  "Mostrar": "Afficher",
+  "Progreso de actividades": "Progression des activités",
+  "Progreso de lectura": "Progression de lecture",
+  "Repasar": "Réviser"
 }

@@ -141,3 +141,28 @@ func TestNewServerMigratesLegacyResources(t *testing.T) {
 		t.Errorf("expected only local interactive to remain in Resources, got %+v", n.Meta.Resources)
 	}
 }
+
+func TestReadProgressEndpointPersistsMaxAndShowsInGraph(t *testing.T) {
+	s, ts := newTestServer(t, &scripted{})
+	guidedNote(t, s)
+
+	// advance reading progress to 60%
+	res, body := do(t, ts, "POST", "/api/notes/cumpleanos/progress", map[string]any{"progress": 60, "kind": "guide"}, nil)
+	if res.StatusCode != 200 || !strings.Contains(string(body), `"readProgress":60`) {
+		t.Fatalf("progress 60: %d %s", res.StatusCode, body)
+	}
+	// lower value never decreases max progress reached
+	res, body = do(t, ts, "POST", "/api/notes/cumpleanos/progress", map[string]any{"progress": 25, "kind": "guide"}, nil)
+	if res.StatusCode != 200 || !strings.Contains(string(body), `"readProgress":60`) {
+		t.Fatalf("progress monotonic: %d %s", res.StatusCode, body)
+	}
+	// 100% completes reading and appears in /api/graph
+	res, body = do(t, ts, "POST", "/api/notes/cumpleanos/progress", map[string]any{"progress": 100, "kind": "guide"}, nil)
+	if res.StatusCode != 200 || !strings.Contains(string(body), `"readProgress":100`) {
+		t.Fatalf("progress 100: %d %s", res.StatusCode, body)
+	}
+	res, body = do(t, ts, "GET", "/api/graph", nil, nil)
+	if res.StatusCode != 200 || !strings.Contains(string(body), `"readProgress":100`) {
+		t.Fatalf("graph readProgress: %d %s", res.StatusCode, body)
+	}
+}

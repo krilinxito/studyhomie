@@ -1088,5 +1088,13 @@
   "no sé buscar material para %q": "não sei buscar material para %q",
   "{n} cita": "{n} citação",
   "{n} citas": "{n} citações",
-  "Área": "Área"
+  "Área": "Área",
+  "Actividades": "Atividades",
+  "Actividades: {done}/{total} ({pct}%)": "Atividades: {done}/{total} ({pct}%)",
+  "Lectura": "Leitura",
+  "Lectura: {pct}%": "Leitura: {pct}%",
+  "Mostrar": "Mostrar",
+  "Progreso de actividades": "Progresso das atividades",
+  "Progreso de lectura": "Progresso de leitura",
+  "Repasar": "Revisar"
 }

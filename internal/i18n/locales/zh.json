@@ -1088,5 +1088,13 @@
   "no sé buscar material para %q": "无法为 %q 查找资料",
   "{n} cita": "{n} 次引用",
   "{n} citas": "{n} 次引用",
-  "Área": "领域"
+  "Área": "领域",
+  "Actividades": "实践活动",
+  "Actividades: {done}/{total} ({pct}%)": "实践活动：{done}/{total} ({pct}%)",
+  "Lectura": "阅读",
+  "Lectura: {pct}%": "阅读：{pct}%",
+  "Mostrar": "展开",
+  "Progreso de actividades": "活动进度",
+  "Progreso de lectura": "阅读进度",
+  "Repasar": "复习"
 }

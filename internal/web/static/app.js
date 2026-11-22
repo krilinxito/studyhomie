@@ -1582,13 +1582,26 @@ function guideList() {
     h('p', { class: 'rm-hint' }, roadmapHint(roadmapOf(k))),
     roadmapPath(roadmapOf(k))) : h('section', { class: 'dg' },
     h('h3', {}, k ? groupTitle(k) : t('Tus guías')),
-    h('ul', {}, groups.get(k).sort((a, b) => (a.order || 0) - (b.order || 0) || a.label.localeCompare(b.label)).map((n) => h('li', { class: 'dg-row' },
-      h('button', { class: 'dn', type: 'button', style: `--lc: ${lineColor(n.group)}`, onclick: () => openNote(n.id) },
-        h('i', { class: `st st-${n.status}`, title: STATUS[n.status] || n.status }), n.label),
-      h('button', {
-        class: 'icon-btn del-btn', type: 'button', title: t('Borrar {title}', { title: n.label }), 'aria-label': t('Borrar {title}', { title: n.label }),
-        onclick: (e) => { e.stopPropagation(); deleteNote(n.id, n.label, 'guide'); },
-      }, icon('trash-2'))))))));
+    h('ul', {}, groups.get(k).sort((a, b) => (a.order || 0) - (b.order || 0) || a.label.localeCompare(b.label)).map((n) => {
+      const rp = n.readProgress || 0;
+      const actT = n.activitiesTotal || 0;
+      const actD = n.activitiesDone || 0;
+      const pills = [];
+      if (rp > 0) pills.push(h('span', { class: `dg-pill${rp >= 100 ? ' done' : ''}`, title: t('Lectura: {pct}%', { pct: rp }) }, rp >= 100 ? '✓ 100%' : `${rp}%`));
+      if (actT > 0) {
+        const ap = Math.round((actD / actT) * 100);
+        pills.push(h('span', { class: `dg-pill${ap >= 100 ? ' done' : ''}`, title: t('Actividades: {done}/{total} ({pct}%)', { done: actD, total: actT, pct: ap }) }, `${actD}/${actT}`));
+      }
+      return h('li', { class: 'dg-row' },
+        h('button', { class: 'dn', type: 'button', style: `--lc: ${lineColor(n.group)}`, onclick: () => openNote(n.id) },
+          h('i', { class: `st st-${n.status}`, title: STATUS[n.status] || n.status }),
+          h('span', { class: 'dn-label' }, n.label),
+          pills.length ? h('span', { class: 'dg-pills' }, ...pills) : null),
+        h('button', {
+          class: 'icon-btn del-btn', type: 'button', title: t('Borrar {title}', { title: n.label }), 'aria-label': t('Borrar {title}', { title: n.label }),
+          onclick: (e) => { e.stopPropagation(); deleteNote(n.id, n.label, 'guide'); },
+        }, icon('trash-2')));
+    })))));
 }
 
 // the end of a roadmap guide: what unlocks the next topic, or the way to it
@@ -1611,8 +1624,68 @@ function pathSection(rm, st, title) {
       h('button', { class: 'btn small', type: 'button', onclick: () => show('practice') }, icon('target'), t('Practicar'))) : null);
 }
 
+// Tracks scroll reading progress (0-100%) on a scrollable pane (#p-guide or #p-concepts),
+// updates the sticky bar + header in real time, and persists the max reached to the vault.
+function bindReadProgress(paneEl, note, kind, barFill, barPct, headFill, headPct) {
+  if (!paneEl) return;
+  if (paneEl._rpClean) { paneEl._rpClean(); paneEl._rpClean = null; }
+  let best = note.meta.readProgress || 0;
+  let saved = best;
+  let timer = null;
+
+  const paint = (cur) => {
+    const shown = Math.max(best, cur);
+    if (barFill) barFill.style.width = `${cur}%`;
+    if (barPct) {
+      barPct.textContent = shown >= 100 ? '✓ 100%' : `${cur}%`;
+      barPct.classList.toggle('done', shown >= 100);
+    }
+    if (headFill) headFill.style.width = `${best}%`;
+    if (headPct) headPct.textContent = best >= 100 ? '✓ 100%' : `${best}%`;
+  };
+
+  const persist = (val) => {
+    if (val <= saved) return;
+    saved = val;
+    note.meta.readProgress = val;
+    const nd = nodeOf(note.slug);
+    if (nd) nd.readProgress = val;
+    api(`/api/notes/${encodeURIComponent(note.slug)}/progress`, { method: 'POST', body: { progress: val, kind } }).catch(() => {});
+  };
+
+  const measure = () => {
+    const maxScroll = paneEl.scrollHeight - paneEl.clientHeight;
+    let cur = 0;
+    if (maxScroll <= 8) cur = 100;
+    else if (maxScroll - paneEl.scrollTop <= 24) cur = 100;
+    else cur = Math.min(100, Math.max(0, Math.round((paneEl.scrollTop / maxScroll) * 100)));
+    if (cur > best) {
+      best = cur;
+      note.meta.readProgress = best;
+      const nd = nodeOf(note.slug);
+      if (nd) nd.readProgress = best;
+      if (best >= 100 || best - saved >= 5) {
+        clearTimeout(timer);
+        timer = setTimeout(() => persist(best), best >= 100 ? 150 : 600);
+      }
+    }
+    paint(cur);
+  };
+
+  paneEl.addEventListener('scroll', measure, { passive: true });
+  const raf = requestAnimationFrame(measure);
+  paneEl._rpClean = () => {
+    cancelAnimationFrame(raf);
+    clearTimeout(timer);
+    paneEl.removeEventListener('scroll', measure);
+    if (best > saved) persist(best);
+  };
+}
+
 function renderReader(n) {
   const root = $('#reader');
+  const pane = PANE_EL.guide;
+  if (pane && pane._rpClean) { pane._rpClean(); pane._rpClean = null; }
   root.replaceChildren();
   if (!n) {
     root.append(h('div', { class: 'panel-empty' },
@@ -1629,6 +1702,29 @@ function renderReader(n) {
   const under = (m.pending || []).length;
   const rm = m.roadmap ? roadmapOf(m.roadmap) : null;
   const rmStep = rm ? (rm.steps || []).find((s) => s.slug === n.slug) : null;
+  const acts = n.activities || [];
+  const actDone = acts.filter((a) => a.done).length;
+  const actPct = acts.length ? Math.round((actDone / acts.length) * 100) : 0;
+  const readPct = m.readProgress || 0;
+
+  const barFill = h('i', { style: `width:${readPct}%` });
+  const barPct = h('span', { class: `read-bar-pct${readPct >= 100 ? ' done' : ''}` }, readPct >= 100 ? '✓ 100%' : `${readPct}%`);
+  const readBar = h('div', { class: 'read-bar', role: 'progressbar', 'aria-label': t('Progreso de lectura'), 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(readPct) },
+    h('div', { class: 'read-bar-track' }, barFill), barPct);
+
+  const headReadFill = h('i', { style: `width:${readPct}%; background: var(--line-c)` });
+  const headReadPct = h('span', {}, readPct >= 100 ? '✓ 100%' : `${readPct}%`);
+  const progRow = h('div', { class: 'r-progress' },
+    status !== 'new' ? h('div', { class: 'mastery' },
+      h('div', { class: 'row' }, h('span', {}, t('Lectura')), headReadPct),
+      h('div', { class: 'bar' }, headReadFill)) : null,
+    acts.length ? h('div', { class: 'mastery' },
+      h('div', { class: 'row' }, h('span', {}, t('Actividades')), h('span', {}, `${actDone}/${acts.length} · ${actPct}%`)),
+      h('div', { class: 'bar' }, h('i', { style: `width:${actPct}%; background: var(--ok, #16a34a)` }))) : null,
+    m.mastery ? h('div', { class: 'mastery' },
+      h('div', { class: 'row' }, h('span', {}, t('Lo que llevas')), h('span', {}, `${m.mastery}/100`)),
+      h('div', { class: 'bar' }, h('i', { style: `width:${m.mastery}%; background: var(--line-c)` }))) : null);
+
   const wrap = h('div', { class: 'reader-wrap', style: `--line-c: ${lineColor(node ? node.group : '')}` });
   wrap.append(h('header', { class: 'r-head' },
     h('button', { class: 'crumb', type: 'button', onclick: closeGuide }, icon('arrow-left'), t('Todas las guías')),
@@ -1638,9 +1734,7 @@ function renderReader(n) {
       rmStep ? h('span', { class: 'chip' }, t('Tema {n} de {total}', { n: rmStep.n, total: rm.steps.length })) : null,
       m.focus ? h('span', { class: 'chip' }, `Foco: ${m.focus}`) : null,
       m.field ? h('span', { class: 'chip' }, m.field) : null),
-    m.mastery ? h('div', { class: 'mastery' },
-      h('div', { class: 'row' }, h('span', {}, t('Lo que llevas')), h('span', {}, `${m.mastery}/100`)),
-      h('div', { class: 'bar' }, h('i', { style: `width:${m.mastery}%; background: var(--line-c)` }))) : null,
+    progRow.childNodes.length ? progRow : null,
     h('div', { class: 'actions' },
       concepts.length || under ? h('button', { class: 'btn small yellow', type: 'button', onclick: () => show('concepts') },
         icon('mountain-snow'), tn(concepts.length, '{n} concepto', '{n} conceptos') + (under ? ' · ' + t('{n} bajo el agua', { n: under }) : '')) : null,
@@ -1687,7 +1781,9 @@ function renderReader(n) {
   }
   if (rmStep) article.append(pathSection(rm, rmStep, title));
   wrap.append(article);
+  if (status !== 'new') root.append(readBar);
   root.append(wrap);
+  if (status !== 'new' && pane) bindReadProgress(pane, n, 'guide', barFill, barPct, headReadFill, headReadPct);
 }
 
 const YOUTUBE = /^https?:\/\/(?:www\.|m\.)?(?:youtube\.com\/watch\?(?:[^#]*&)?v=|youtu\.be\/)([\w-]{11})(?![\w-])/i;
@@ -1839,9 +1935,19 @@ const levelName = (l) => (l === 1 ? t('Lo que el tema usa directamente') : l ===
 function renderConcepts() {
   const root = PANE_EL.concepts;
   if (!root) return;
+  if (root._rpClean) { root._rpClean(); root._rpClean = null; }
   if (S.bergObs) { S.bergObs.disconnect(); S.bergObs = null; }
   root.replaceChildren();
-  if (S.concept) { root.append(conceptReader(S.concept)); return; }
+  if (S.concept) {
+    const rp = S.concept.meta.readProgress || 0;
+    const barFill = h('i', { style: `width:${rp}%` });
+    const barPct = h('span', { class: `read-bar-pct${rp >= 100 ? ' done' : ''}` }, rp >= 100 ? '✓ 100%' : `${rp}%`);
+    const readBar = h('div', { class: 'read-bar', role: 'progressbar', 'aria-label': t('Progreso de lectura'), 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(rp) },
+      h('div', { class: 'read-bar-track' }, barFill), barPct);
+    root.append(readBar, conceptReader(S.concept));
+    bindReadProgress(root, S.concept, 'concept', barFill, barPct, null, null);
+    return;
+  }
   const n = S.note;
   const box = h('div', { class: 'concepts-wrap' });
   const pending = (n && n.meta.pending) || [];
@@ -3015,13 +3121,18 @@ const RARITY_LABEL = {
   legendary: t('Legendaria'),
 };
 const RARITY_XP = { common: 5, rare: 8, epic: 12, legendary: 18 };
-const CARDS = { data: null, scope: 'guide', revealed: false, busy: false, expanded: null };
+const CARDS = { data: null, scope: 'guide', revealed: false, busy: false, expanded: null, collapsed: !!store.get('fc-collapsed', false) };
 
 /* ---------- Practical Activities (checklist in note + optional AI feedback) ---------- */
 const ACT_LEVEL = { easy: t('Fácil'), medium: t('Media'), challenge: t('Reto') };
 const ACTS = { busySlug: '', openKey: '', sendingKey: '', drafts: {} };
 
 function syncActivities(slug, list) {
+  const nd = nodeOf(slug);
+  if (nd) {
+    nd.activitiesTotal = (list || []).length;
+    nd.activitiesDone = (list || []).filter((a) => a.done).length;
+  }
   if (!S.note || S.note.slug !== slug) return;
   S.note.activities = list || [];
   renderReader(S.note);
@@ -3056,10 +3167,11 @@ function activitiesSection(n, { inPractice = false } = {}) {
     onclick: () => generateActivitiesFor(n.slug),
   }, icon('sparkles'), busy ? t('Proponiendo actividades…') : list.length ? t('Regenerar actividades') : t('Proponer actividades'));
 
+  const actPct = list.length ? Math.round((doneCount / list.length) * 100) : 0;
   const head = h('div', { class: 'act-head' },
     h('div', { class: 'act-title' },
       inPractice ? h('h3', {}, t('Actividades prácticas')) : h('h2', {}, t('Actividades prácticas')),
-      list.length ? h('span', { class: 'chip act-prog' }, t('{done} de {total} hechas', { done: doneCount, total: list.length })) : null),
+      list.length ? h('span', { class: `chip act-prog${actPct >= 100 ? ' done' : ''}` }, `${t('{done} de {total} hechas', { done: doneCount, total: list.length })} · ${actPct}%`) : null),
     genBtn);
 
   if (list.length === 0) {
@@ -3067,6 +3179,8 @@ function activitiesSection(n, { inPractice = false } = {}) {
       head,
       h('p', { class: 'hint' }, t('Propón 3–5 ejercicios prácticos, experimentos o mini-proyectos graduados para poner este tema a prueba. Se guardan como checklist en tu nota.')));
   }
+  const actBar = h('div', { class: 'act-bar', role: 'progressbar', 'aria-label': t('Progreso de actividades'), 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(actPct) },
+    h('i', { class: actPct >= 100 ? 'done' : '', style: `width:${actPct}%` }));
 
   const updateItem = async (idx, payload, key) => {
     ACTS.sendingKey = key;
@@ -3169,7 +3283,7 @@ function activitiesSection(n, { inPractice = false } = {}) {
       drawer);
   }));
 
-  return h('section', { class: cls }, head, itemsEl);
+  return h('section', { class: cls }, head, actBar, itemsEl);
 }
 
 function fmtInterval(mins) {
@@ -3473,10 +3587,35 @@ function drawFlashcards(host, note) {
         onclick: () => chatAction({ action: 'deck-guide', deck: d.slug }, t('Crear guía desde el mazo «{title}»', { title: d.title })),
       }, icon('sparkles'), t('Crear guía'))))));
 
-  host.replaceChildren(h('section', { class: 'p-card fc-studio' },
-    h('div', { class: 'fc-head' },
+  const toggleBtn = h('button', {
+    class: 'btn small ghost fc-toggle', type: 'button', 'aria-expanded': String(!CARDS.collapsed),
+    onclick: () => {
+      CARDS.collapsed = !CARDS.collapsed;
+      store.set('fc-collapsed', CARDS.collapsed);
+      drawFlashcards(host, note);
+    },
+  }, CARDS.collapsed ? t('Mostrar') : t('Ocultar'));
+
+  const summaryBits = [];
+  if (queue.length > 0) summaryBits.push(t('{n} para hoy', { n: queue.length }));
+  if (cards.length > 0) summaryBits.push(`${collected}/${cards.length}`);
+
+  const head = h('div', { class: 'fc-head' },
+    h('div', { class: 'fc-head-left' },
       h('h3', {}, t('Tarjetas coleccionables')),
-      scopeSeg),
+      summaryBits.length ? h('span', { class: 'chip fc-summary' }, summaryBits.join(' · ')) : null),
+    h('div', { class: 'fc-head-right' },
+      CARDS.collapsed && queue.length > 0 ? h('button', { class: 'btn small primary', type: 'button', onclick: () => openReview() }, t('Repasar')) : null,
+      CARDS.collapsed ? null : scopeSeg,
+      toggleBtn));
+
+  if (CARDS.collapsed) {
+    host.replaceChildren(h('section', { class: 'p-card fc-studio fc-collapsed' }, head));
+    return;
+  }
+
+  host.replaceChildren(h('section', { class: 'p-card fc-studio' },
+    head,
     h('div', { class: 'actions fc-tools' },
       genBtn,
       h('button', { class: 'btn small', type: 'button', onclick: () => importInput.click() }, icon('download'), t('Importar Anki')),
@@ -4793,11 +4932,13 @@ function drawPending(host) {
     h('h3', {}, t('Prácticas pendientes')),
     h('ul', { class: 'pr-list' }, list.map((p) => {
       const btn = (label, act, cls = '') => h('button', { class: `btn small ${cls}`.trim(), type: 'button', onclick: () => practiceAct(p.id, act) }, label);
+      const pct = p.total > 0 ? Math.min(100, Math.round((p.answered / p.total) * 100)) : null;
       return h('li', {},
         h('span', { class: 'pr-ic', 'aria-hidden': 'true' }, icon(PR_ICON[p.kind] || 'target')),
         h('div', { class: 'pr-what' },
           h('strong', {}, prTitle(p)),
-          h('small', {}, [prStatus(p), prProgress(p), when(p.updated)].filter(Boolean).join(' · ')),
+          h('small', {}, [prStatus(p), prProgress(p), pct !== null ? `${pct}%` : '', when(p.updated)].filter(Boolean).join(' · ')),
+          pct !== null ? h('div', { class: 'pr-bar' }, h('i', { style: `width:${pct}%` })) : null,
           p.error ? h('small', { class: 'pr-error' }, p.error) : null),
         h('div', { class: 'pr-btns' }, p.status === 'running'
           ? [h('button', { class: 'btn small primary', type: 'button', onclick: () => openPractice(p.id) }, t('Abrir'))]
